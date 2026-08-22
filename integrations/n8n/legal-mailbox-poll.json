@@ -1,0 +1,165 @@
+{
+  "name": "Legal mailbox poll",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule",
+      "name": "Every five minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "filters": {
+          "readStatus": "unread"
+        },
+        "returnAll": false,
+        "limit": 50
+      },
+      "id": "fetch",
+      "name": "Read the approved mailbox",
+      "notes": "Point this at one named mailbox with a read-only scope. Personal mailboxes and broad archives are never ingested.",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        20,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Shape only. No decision is made here, and nothing is\n// filtered out: the platform decides what matters.\nconst messages = items.map((item) => ({\n  external_id: item.json.id,\n  mailbox: $env.LEGAL_MAILBOX,\n  sender: item.json.from?.emailAddress?.address ?? 'unknown',\n  subject: item.json.subject ?? '(no subject)',\n  body: item.json.bodyPreview ?? item.json.body?.content ?? '',\n  received_at: item.json.receivedDateTime,\n  participants: (item.json.toRecipients ?? []).map((r) => ({\n    name: r.emailAddress?.name,\n    address: r.emailAddress?.address,\n  })),\n}));\nreturn [{ json: { messages } }];"
+      },
+      "id": "shape",
+      "name": "Shape for the platform",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const crypto = require('crypto');\nconst body = JSON.stringify($json);\nconst signature = crypto\n  .createHmac('sha256', $env.DSNLAI_WEBHOOK_SECRET)\n  .update(body)\n  .digest('hex');\nreturn [{ json: { body, signature } }];"
+      },
+      "id": "sign",
+      "name": "Sign the payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://api:8000/api/v1/webhooks/mail",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Signature",
+              "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "post",
+      "name": "Hand off to the platform",
+      "notes": "The API is the only write path. n8n never touches the database, and never decides what a message means.",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Every five minutes": {
+      "main": [
+        [
+          {
+            "node": "Read the approved mailbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read the approved mailbox": {
+      "main": [
+        [
+          {
+            "node": "Shape for the platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape for the platform": {
+      "main": [
+        [
+          {
+            "node": "Sign the payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign the payload": {
+      "main": [
+        [
+          {
+            "node": "Hand off to the platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "M09"
+    }
+  ]
+}

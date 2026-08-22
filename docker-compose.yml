@@ -1,0 +1,143 @@
+name: dsn-lai
+
+services:
+  db:
+    # PostgreSQL 18 with pgvector, per PRD section 10.1. One database holds
+    # records and embeddings, which keeps permission filtering in one place.
+    image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dsn_lai}
+      POSTGRES_USER: ${POSTGRES_USER:-dsnlai_owner}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dsnlai_owner_dev_password}
+    ports:
+      - "${DSNLAI_DB_PORT:-5433}:5432"
+    volumes:
+      # PostgreSQL 18 images place the cluster in a subdirectory of this path,
+      # so the mount sits one level above the old data directory.
+      - db_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dsnlai_owner} -d ${POSTGRES_DB:-dsn_lai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${DSNLAI_REDIS_PORT:-6380}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    # Object storage for documents. Versioning and object lock back the
+    # immutable executed archive (M08).
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-dsn-lai-minio-access}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-dsn-lai-minio-secret-dev}
+    ports:
+      - "${DSNLAI_MINIO_PORT:-9100}:9000"
+      - "${DSNLAI_MINIO_CONSOLE_PORT:-9101}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    image: dsn-lai-api:latest
+    build:
+      context: ./apps/api
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+    ports:
+      - "${DSNLAI_API_PORT:-8000}:8000"
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    command: >
+      sh -c "alembic upgrade head && python -m app.seed --if-empty &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  worker:
+    image: dsn-lai-api:latest
+    build:
+      context: ./apps/api
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      api: {condition: service_healthy}
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "--beat", "--loglevel=info"]
+    # The image healthcheck probes the HTTP port, which this container does not
+    # serve. A worker is healthy when the broker answers it.
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app inspect ping -t 10 | grep -q pong"]
+      interval: 30s
+      timeout: 15s
+      start_period: 40s
+      retries: 5
+
+  web:
+    image: dsn-lai-web:latest
+    build:
+      context: ./apps/web
+      args:
+        # The browser resolves this address, not the container, so it must be
+        # reachable from wherever the browser runs.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "${DSNLAI_WEB_PORT:-3000}:3000"
+    depends_on:
+      api: {condition: service_healthy}
+
+  n8n:
+    # Plumbing, not the platform. n8n polls approved mailboxes, fans out
+    # notifications, writes calendar events and moves files. Legal decision
+    # logic, tier assignment, approval routing, model calls and direct database
+    # writes are all out of bounds for it (PRD section 11.3).
+    image: n8nio/n8n:latest
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:${DSNLAI_N8N_PORT:-5678}/
+      GENERIC_TIMEZONE: Africa/Lagos
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-change-me-in-every-environment}
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:-change-me-in-every-environment}
+      # The only address n8n needs. It calls the platform API and nothing else.
+      DSNLAI_API_BASE_URL: http://api:8000
+      DSNLAI_WEBHOOK_SECRET: ${DSNLAI_SECRET_KEY:-change-me-in-every-environment}
+    ports:
+      - "${DSNLAI_N8N_PORT:-5678}:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./integrations/n8n:/workflows:ro
+    depends_on:
+      api: {condition: service_healthy}
+
+volumes:
+  db_data:
+  redis_data:
+  minio_data:
+  n8n_data:

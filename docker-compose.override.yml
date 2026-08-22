@@ -1,0 +1,22 @@
+# Development only. Compose loads this automatically alongside
+# docker-compose.yml, and it is what lets a code change show up without a
+# rebuild. Delete it, or run with `-f docker-compose.yml` alone, to get the
+# production shape back.
+#
+# Only the source directories are mounted. The virtual environment, the
+# installed package metadata and everything else stay as the image built them.
+
+services:
+  api:
+    volumes:
+      - ./apps/api/app:/srv/app
+      - ./apps/api/alembic:/srv/alembic
+    command: >
+      sh -c "alembic upgrade head && python -m app.seed --if-empty &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+             --reload-dir /srv/app"
+
+  worker:
+    volumes:
+      - ./apps/api/app:/srv/app
+      - ./apps/api/alembic:/srv/alembic

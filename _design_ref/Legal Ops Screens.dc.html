@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas" />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+body{margin:0;background:#e9e8e4;font-family:'Geist',ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#1B8FE0;text-decoration:underline;text-underline-offset:2px}
+a:hover{color:#1A1A1A}
+.dv-turn{padding:40px 44px 34px}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 6px}
+.dv-tid{font:600 10px 'Geist Mono',monospace;padding:3px 7px;background:#18181b;color:#fff;border-radius:4px;text-decoration:none}
+.dv-tname{font:600 13px/1.2 'Geist';color:#18181b}
+.dv-sub{margin:0 0 24px;font:12.5px/1.6 'Geist';color:#6b6b66;max-width:820px}
+.dv-opts{display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start}
+.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}
+.dv-oid{font:600 10.5px 'Geist Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#18181b;border-radius:5px;text-decoration:none}
+.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11.5px/1.3 'Geist';color:#6b6b66}
+.dv-opt:target .dv-oid{background:#0A7A0A;color:#fff}
+.dv-next{margin:26px 0 0;font:12px/1.6 'Geist';color:#6b6b66}
+.win{background:#fff;border:1px solid rgba(0,0,0,.1);border-radius:11px;box-shadow:0 6px 22px -8px rgba(0,0,0,.18),0 1px 2px rgba(0,0,0,.06);overflow:hidden;display:flex;flex-direction:column;color:#1A1A1A;font-size:14px}
+.top{height:50px;flex:0 0 50px;border-bottom:1px solid #e4e4e7;display:flex;align-items:center;gap:10px;padding:0 18px}
+.mk{width:36px;flex:0 0 36px;height:auto;object-fit:contain}
+.body{padding:22px 24px;display:flex;flex-direction:column;gap:13px}
+h1.pt{margin:0 0 4px;font-size:21px;font-weight:600;letter-spacing:-.025em;color:#3E4095}
+p.ps{margin:0;font-size:12.5px;color:#71717a;line-height:1.55}
+.card{border:1px solid #e4e4e7;border-radius:11px;background:#fff;overflow:hidden}
+.ch{padding:12px 15px;border-bottom:1px solid #e4e4e7;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.ct{font-size:13px;font-weight:600}
+.cs{font-size:11px;color:#71717a;margin-top:2px}
+.mo{font-family:'Geist Mono',monospace;font-size:10.5px;color:#52525b}
+.pl{display:inline-flex;align-items:center;height:19px;padding:0 7px;border-radius:6px;font-size:10px;font-weight:500;background:#f4f4f5;color:#52525b;white-space:nowrap}
+.pl.g{background:#eaf6ea;color:#0A7A0A;border:1px solid #c3e3c3}
+.pl.w{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+.pl.r{background:#fef2f2;color:#E01B1B;border:1px solid #fecaca}
+.pl.n{background:#f5f3ff;color:#5b21b6;border:1px solid #ddd6fe}
+.btn{display:inline-flex;align-items:center;justify-content:center;height:31px;padding:0 12px;border:1px solid #e4e4e7;border-radius:8px;background:#fff;font-size:12px;font-weight:500;color:#1A1A1A;white-space:nowrap}
+.btn.sm{height:26px;padding:0 9px;font-size:11px;border-radius:7px}
+.btn.p{background:#0A7A0A;border-color:#0A7A0A;color:#fff}
+.btn.off{background:#f4f4f5;color:#a1a1aa;border-color:#e4e4e7}
+.row{display:flex;align-items:center;gap:9px}
+.fl{display:flex;flex-direction:column;gap:5px}
+.lb{font-size:11.5px;font-weight:500;color:#3f3f46}
+.in{height:34px;border:1px solid #e4e4e7;border-radius:8px;padding:0 11px;display:flex;align-items:center;font-size:12.5px;color:#1A1A1A;background:#fff}
+.in.ph{color:#a1a1aa}
+.in.err{border-color:#E01B1B}
+.ta{min-height:62px;border:1px solid #e4e4e7;border-radius:8px;padding:9px 11px;font-size:12.5px;color:#1A1A1A;line-height:1.6}
+.hint{font-size:11px;color:#a1a1aa;line-height:1.6}
+.hint.err{color:#E01B1B}
+.opt{border:1px solid #e4e4e7;border-radius:10px;padding:13px 14px;display:flex;flex-direction:column;align-items:flex-start;gap:5px;background:#fff}
+.opt.on{border-color:#0A7A0A;background:#f2fbf2;box-shadow:0 0 0 1px #0A7A0A}
+.on2{font-size:13px;font-weight:600}
+.od{font-size:11.5px;color:#71717a;line-height:1.5}
+.seg{display:flex;gap:4px;padding:3px;background:#f4f4f5;border-radius:8px;width:max-content}
+.sg{height:26px;padding:0 12px;border-radius:6px;font-size:11.5px;font-weight:500;color:#71717a;display:flex;align-items:center}
+.sg.on{background:#fff;color:#1A1A1A;box-shadow:0 1px 2px rgba(0,0,0,.09)}
+.step{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid #f4f4f5}
+.sd{width:24px;height:24px;flex:0 0 24px;border-radius:99px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;background:#f4f4f5;color:#a1a1aa}
+.sd.done{background:#0A7A0A;color:#fff}
+.sd.now{background:#fff;color:#0A7A0A;border:2px solid #0A7A0A}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid #F5F7F5;font-size:12px}
+.kv:last-child{border-bottom:none}
+.cl{border:1px solid #e4e4e7;border-radius:10px;padding:12px 13px;display:flex;flex-direction:column;gap:7px}
+.cl.appr{border-left:3px solid #0A7A0A}
+.cl.fb{border-left:3px solid #a1a1aa}
+.cl.nov{border-left:3px solid #7c3aed;background:#fbfaff}
+.clh{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.clt{font-family:'Geist Mono',monospace;font-size:11px;font-weight:500;color:#3f3f46}
+.clb{font-size:12px;color:#52525b;line-height:1.65}
+.pgl{height:6px;background:#ececeb;border-radius:3px}
+</style>
+</helmet>
+
+<section class="dv-turn" id="t2">
+<div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Static hi-fi screens: requester front door and the drafting surfaces</span></div>
+<p class="dv-sub">The six screens the clickable prototype does not cover: the requester's side of M01, deterministic generation in M04, and the AI drafting assistant in M05. Same type, colour and component vocabulary as the prototype, so these drop straight in.</p>
+<div class="dv-opts">
+
+<div class="dv-opt" id="2a"><div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>M01 · Portal landing, plain-language front door</div>
+<div class="win" style="width:720px">
+  <div class="top"><img class="mk" src="dsn-logo.png" alt="Data Science Nigeria" /><div style="font-size:12.5px;font-weight:600">Legal requests</div><div style="flex:1"></div><span class="mo">Ngozi Adeyemi · programme</span></div>
+  <div class="body">
+    <div><h1 class="pt">What do you need?</h1><p class="ps">Pick the closest thing. If none of these fit, describe it and we will route it.</p></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="opt on"><div class="on2">We want to sign an NDA</div><div class="od">Mutual or one-way confidentiality, before sharing anything sensitive.</div><span class="pl g">Usually same day</span></div>
+      <div class="opt"><div class="on2">We are engaging a consultant</div><div class="od">An individual or firm doing work for us, paid or pro bono.</div><span class="pl">2 to 5 days</span></div>
+      <div class="opt"><div class="on2">A partner sent us their contract</div><div class="od">Someone else's paper that needs reviewing before we sign.</div><span class="pl">3 to 5 days</span></div>
+      <div class="opt"><div class="on2">We are sharing or receiving data</div><div class="od">Data-sharing, processing or research collaboration terms.</div><span class="pl">3 to 5 days</span></div>
+      <div class="opt"><div class="on2">Something is going wrong</div><div class="od">A dispute, a breach, a demand letter, or a deadline you have been given.</div><span class="pl w">Same day</span></div>
+      <div class="opt"><div class="on2">Something else</div><div class="od">Describe it in your own words. Legal will triage and come back to you.</div><span class="pl">Triaged</span></div>
+    </div>
+    <div class="card" style="background:#F5F7F5;padding:13px 15px">
+      <div class="row" style="justify-content:space-between">
+        <div><div style="font-size:12px;font-weight:600">My requests · 3 open</div><div class="hint" style="margin-top:3px">REQ-2026-01184 drafting · REQ-2026-01179 in review · REQ-2026-01151 awaiting your reply</div></div>
+        <span class="btn sm">View all</span>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<div class="dv-opt" id="2b"><div class="dv-olabel"><a class="dv-oid" href="#2b">2b</a>M01 · Guided intake, conditional and blocked</div>
+<div class="win" style="width:560px">
+  <div class="top"><img class="mk" src="dsn-logo.png" alt="Data Science Nigeria" /><div style="font-size:12.5px;font-weight:600">NDA request</div><div style="flex:1"></div><span class="mo">Step 2 of 3</span></div>
+  <div class="body">
+    <div class="row" style="gap:4px"><div style="flex:1;height:4px;background:#0A7A0A;border-radius:2px"></div><div style="flex:1;height:4px;background:#0A7A0A;border-radius:2px"></div><div style="flex:1;height:4px;background:#e4e4e7;border-radius:2px"></div></div>
+    <div><h1 class="pt">Who is it with?</h1><p class="ps">Seven questions on this screen. Nothing is asked that this request type does not need.</p></div>
+    <div class="fl"><div class="lb">Counterparty legal name</div><div class="in">Harmattan Analytics Ltd</div><div class="hint">Two possible matches in our records. Legal will confirm which, or create a new counterparty.</div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px">
+      <div class="fl"><div class="lb">Entity</div><div class="seg" style="width:100%"><div class="sg on" style="flex:1;justify-content:center">EqualyzAI</div><div class="sg" style="flex:1;justify-content:center">DSN</div></div></div>
+      <div class="fl"><div class="lb">Value band</div><div class="in">Under ₦5,000,000</div></div>
+    </div>
+    <div class="fl"><div class="lb">What is the NDA for?</div><div class="ta">Sharing model evaluation results and anonymised benchmark data ahead of a possible research collaboration.</div></div>
+    <div class="fl"><div class="lb">Date you need it by</div><div class="in err ph">Select a date</div><div class="hint err">Required. Give us the real date, not a safe one. It sets the queue order.</div></div>
+    <div class="fl"><div class="lb">Supporting documents</div>
+      <div style="border:1px dashed #d4d4d8;border-radius:10px;padding:15px;text-align:center;background:#F5F7F5">
+        <div style="font-size:12px;font-weight:500;margin-bottom:3px">Drop files, or browse</div>
+        <div class="hint">Up to 50 MB each. Virus scanned before storage.</div>
+      </div>
+      <div class="row" style="margin-top:7px;gap:7px"><span class="pl g">benchmark-scope.pdf</span><span class="pl g">intro-email.eml</span></div>
+    </div>
+    <div class="row" style="justify-content:space-between;margin-top:2px">
+      <span class="hint">Median completion, measured in testing: 3m 40s</span>
+      <span class="btn off">Continue</span>
+    </div>
+  </div>
+</div></div>
+
+<div class="dv-opt" id="2c"><div class="dv-olabel"><a class="dv-oid" href="#2c">2c</a>M01 · Data declaration sets the privacy flag</div>
+<div class="win" style="width:520px">
+  <div class="top"><img class="mk" src="dsn-logo.png" alt="Data Science Nigeria" /><div style="font-size:12.5px;font-weight:600">NDA request</div><div style="flex:1"></div><span class="mo">Step 3 of 3</span></div>
+  <div class="body">
+    <div><h1 class="pt">What data is involved?</h1><p class="ps">Four questions. Your answers decide whether the DPO is brought in, and whether a data-processing annex is added to the document.</p></div>
+    <div class="card">
+      <div style="padding:12px 15px;border-bottom:1px solid #f4f4f5;display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <div style="font-size:12.5px">Does this involve personal data?</div>
+        <div class="seg"><div class="sg on">Yes</div><div class="sg">No</div></div>
+      </div>
+      <div style="padding:12px 15px;border-bottom:1px solid #f4f4f5;display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <div style="font-size:12.5px">Special-category data, such as health, biometric or political?</div>
+        <div class="seg"><div class="sg">Yes</div><div class="sg on">No</div></div>
+      </div>
+      <div style="padding:12px 15px;border-bottom:1px solid #f4f4f5;display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <div style="font-size:12.5px">Third-party confidential information?</div>
+        <div class="seg"><div class="sg">Yes</div><div class="sg on">No</div></div>
+      </div>
+      <div style="padding:12px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <div style="font-size:12.5px">Will data leave Nigeria?</div>
+        <div class="seg"><div class="sg on">Yes</div><div class="sg">No</div></div>
+      </div>
+    </div>
+    <div class="card" style="border-color:#c3e3c3;background:#f2fbf2;padding:13px 15px">
+      <div class="row" style="gap:8px;margin-bottom:6px"><span class="pl g">Privacy flag will be set</span></div>
+      <div style="font-size:12px;color:#3f3f46;line-height:1.65">Two of your answers trigger privacy review. The DPO is notified when Legal accepts this request, and the approved data-processing annex is included automatically when the document is generated. You do not need to do anything else.</div>
+    </div>
+    <div class="row" style="justify-content:space-between">
+      <span class="btn">Back</span>
+      <span class="btn p">Submit request</span>
+    </div>
+  </div>
+</div></div>
+
+<div class="dv-opt" id="2d"><div class="dv-olabel"><a class="dv-oid" href="#2d">2d</a>M01 · Acknowledgment and status, requester view</div>
+<div class="win" style="width:520px">
+  <div class="top"><img class="mk" src="dsn-logo.png" alt="Data Science Nigeria" /><div style="font-size:12.5px;font-weight:600">REQ-2026-01184</div><div style="flex:1"></div><span class="pl g">Acknowledged in 12s</span></div>
+  <div class="body">
+    <div><h1 class="pt">Received. Nothing more is needed from you.</h1><p class="ps">Mutual NDA with Harmattan Analytics Ltd. Expected response by 20 August, 13:00.</p></div>
+    <div class="card">
+      <div class="ch"><div><div class="ct">Where it is</div><div class="cs">Updated by the system, not by anyone typing</div></div></div>
+      <div style="padding:6px 15px 13px">
+        <div class="step"><div class="sd done">1</div><div style="flex:1"><div style="font-size:12px;font-weight:500">Submitted</div><div class="hint">19 Aug 08:58 · all mandatory fields complete</div></div></div>
+        <div class="step"><div class="sd done">2</div><div style="flex:1"><div style="font-size:12px;font-weight:500">Accepted by Legal</div><div class="hint">19 Aug 09:12 · with Ifeoma · matter number issued</div></div></div>
+        <div class="step"><div class="sd now">3</div><div style="flex:1"><div style="font-size:12px;font-weight:500">Drafting</div><div class="hint">Expected today · generated from the approved NDA template</div></div><span class="pl w">Now</span></div>
+        <div class="step" style="border-bottom:none"><div class="sd">4</div><div style="flex:1"><div style="font-size:12px;font-weight:500">Approval, signature and filing</div><div class="hint">You will be told when it is signed</div></div></div>
+      </div>
+    </div>
+    <div class="card" style="background:#F5F7F5;padding:13px 15px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:4px">What you submitted</div>
+      <div class="hint">Harmattan Analytics Ltd · EqualyzAI · under ₦5m · privacy flag set · 2 attachments. <a href="#2b">Amend</a> while the request is still in drafting.</div>
+    </div>
+    <div class="hint">This message is administrative only. It contains no legal position, and no legal advice is given through the portal.</div>
+  </div>
+</div></div>
+
+<div class="dv-opt" id="2e"><div class="dv-olabel"><a class="dv-oid" href="#2e">2e</a>M04 · Deterministic generation, and its refusal</div>
+<div class="win" style="width:840px">
+  <div class="top"><img class="mk" src="dsn-logo.png" alt="Data Science Nigeria" /><div class="row" style="gap:7px;font-size:12px;color:#71717a"><span>EAI-COM-2026-0011</span><span style="color:#d4d4d8">/</span><span style="color:#1A1A1A;font-weight:500">Generate document</span></div><div style="flex:1"></div><span class="btn sm">AI trace</span></div>
+  <div class="body">
+    <div><h1 class="pt">Generate from TPL-NDA-v3.1</h1><p class="ps">Nothing generative happens here. The same facts and the same template version produce a byte-identical file, which is what makes Tier 1 auto-issue defensible.</p></div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) 292px;gap:13px;align-items:start">
+      <div style="display:flex;flex-direction:column;gap:11px">
+        <div class="card">
+          <div class="ch"><div><div class="ct">Merge variables</div><div class="cs">Read from the matter record, nothing retyped</div></div><span class="pl w">11 of 12 resolved</span></div>
+          <div style="padding:5px 15px 12px">
+            <div class="kv"><span style="color:#71717a">counterparty_legal_name</span><span style="font-weight:500">Harmattan Analytics Ltd</span></div>
+            <div class="kv"><span style="color:#71717a">counterparty_reg_number</span><span style="font-weight:500">RC 1849302</span></div>
+            <div class="kv"><span style="color:#71717a">our_entity</span><span style="font-weight:500">EqualyzAI Limited</span></div>
+            <div class="kv"><span style="color:#71717a">term_years</span><span style="font-weight:500">3</span></div>
+            <div class="kv"><span style="color:#71717a">governing_law</span><span style="font-weight:500">Federal Republic of Nigeria</span></div>
+            <div class="kv"><span style="color:#E01B1B;font-weight:500">notice_address</span><span style="color:#E01B1B;font-weight:500">Missing</span></div>
+          </div>
+        </div>
+        <div class="card" style="border-color:#fecaca;background:#fef2f2;padding:13px 15px">
+          <div class="row" style="gap:8px;margin-bottom:6px"><span class="pl r">Generation refused</span></div>
+          <div style="font-size:12px;color:#7f1d1d;line-height:1.7;margin-bottom:11px">notice_address is mandatory on this template and is empty on the counterparty record. No placeholder is ever written into a document, so generation stops here rather than producing a file with a gap in it.</div>
+          <div class="row" style="gap:7px"><span class="btn sm p">Open counterparty record</span><span class="btn sm">Ask the requester</span></div>
+        </div>
+        <div class="card" style="background:#F5F7F5;padding:13px 15px">
+          <div style="font-size:12px;font-weight:600;margin-bottom:5px">Conditional content resolved</div>
+          <div class="hint">Data-processing annex: included, because the privacy flag is set. Schedule of deliverables: omitted, not applicable to this request type. Two conditional sections evaluated, both from matter fields.</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:11px">
+        <div class="card" style="padding:14px;display:flex;flex-direction:column;gap:8px">
+          <div class="pgl" style="width:58%"></div>
+          <div class="pgl" style="width:100%"></div>
+          <div class="pgl" style="width:94%"></div>
+          <div class="pgl" style="width:100%"></div>
+          <div class="pgl" style="width:72%"></div>
+          <div style="height:9px"></div>
+          <div class="pgl" style="width:42%"></div>
+          <div class="pgl" style="width:100%"></div>
+          <div class="pgl" style="width:88%"></div>
+          <div class="pgl" style="width:100%;background:#fde68a"></div>
+          <div class="pgl" style="width:64%"></div>
+          <div style="height:9px"></div>
+          <div class="pgl" style="width:100%"></div>
+          <div class="pgl" style="width:36%"></div>
+        </div>
+        <div class="card" style="padding:13px 15px">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px">Reproducibility record</div>
+          <div class="kv"><span style="color:#71717a">Template</span><span class="mo">TPL-NDA-v3.1</span></div>
+          <div class="kv"><span style="color:#71717a">Clauses</span><span class="mo">7 versions pinned</span></div>
+          <div class="kv"><span style="color:#71717a">Content hash</span><span class="mo">pending</span></div>
+        </div>
+        <div class="row" style="gap:7px"><span class="btn off">.docx</span><span class="btn off">PDF</span></div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<div class="dv-opt" id="2f"><div class="dv-olabel"><a class="dv-oid" href="#2f">2f</a>M05 · AI drafting assistant, clause provenance</div>
+<div class="win" style="width:960px">
+  <div class="top"><img class="mk" src="dsn-logo.png" alt="Data Science Nigeria" /><div class="row" style="gap:7px;font-size:12px;color:#71717a"><span>EAI-COM-2026-0014</span><span style="color:#d4d4d8">/</span><span style="color:#1A1A1A;font-weight:500">AI draft, bespoke MSA</span></div><div style="flex:1"></div><span class="pl g">Drafted in 74s</span><span class="btn sm">AI trace</span></div>
+  <div class="body">
+    <div class="row" style="align-items:flex-start;justify-content:space-between">
+      <div><h1 class="pt">First pass, for your judgment</h1><p class="ps">Built from the approved library where a position exists. Every clause shows where it came from, and novel text is marked wherever it appears, including in the export.</p></div>
+      <div class="row" style="gap:6px"><span class="pl g">18 approved</span><span class="pl">4 fallback</span><span class="pl n">3 novel</span></div>
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:13px;align-items:start">
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="cl appr">
+          <div class="clh"><span class="clt">7. Confidentiality</span><span class="pl g">CLS-CONF-v3.1 · approved</span></div>
+          <div class="clb">Each party shall keep confidential all Confidential Information disclosed by the other and shall not disclose it to any third party except as permitted under clause 7.3, for a period of three (3) years from the date of disclosure.</div>
+        </div>
+        <div class="cl fb">
+          <div class="clh"><span class="clt">9. Limitation of liability</span><span class="pl">Fallback 1 · CLS-LIAB-v2.0</span></div>
+          <div class="clb">Each party's aggregate liability shall not exceed one and one half times the fees payable in the twelve (12) months preceding the claim. Indirect and consequential loss is excluded on both sides.</div>
+          <div class="hint">Fallback selected because the counterparty's standard terms were on file and refuse the base cap. Conceding this level is within counsel authority.</div>
+        </div>
+        <div class="cl nov">
+          <div class="clh"><span class="clt">12. Model retraining and derived weights</span><span class="pl n">Novel, unapproved</span></div>
+          <div class="clb">The Supplier shall not use Customer Data, or any model weights derived from it, to train, fine-tune or evaluate any model made available to a third party, and shall delete all derived artefacts within thirty (30) days of termination.</div>
+          <div class="hint">No approved clause covers this. The text is drafted from the brief and from Decision 61, and it is counted in the header summary until an owner approves it into the library.</div>
+          <div class="row" style="gap:7px"><span class="btn sm p">Accept</span><span class="btn sm">Edit</span><span class="btn sm">Reject</span><span class="btn sm">Propose for the library</span></div>
+        </div>
+        <div class="card">
+          <div class="ch"><div><div class="ct">Open items</div><div class="cs">What the assistant could not do. An assumption not listed here is a defect.</div></div><span class="pl w">4</span></div>
+          <div style="padding:5px 15px 12px">
+            <div class="kv"><span style="color:#3f3f46">Payment schedule not stated in the brief</span><span class="pl">Missing fact</span></div>
+            <div class="kv"><span style="color:#3f3f46">Whether audit rights extend to subprocessors</span><span class="pl">Needs instruction</span></div>
+            <div class="kv"><span style="color:#3f3f46">Data residency for the staging environment</span><span class="pl">Needs instruction</span></div>
+            <div class="kv"><span style="color:#3f3f46">Assumed Lagos arbitration, matching the last three MSAs</span><span class="pl w">Assumption</span></div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:11px">
+        <div class="card">
+          <div class="ch"><div class="ct">Mechanical checks</div></div>
+          <div style="padding:5px 15px 12px">
+            <div class="kv"><span style="color:#3f3f46">Defined terms</span><span class="pl g">Pass</span></div>
+            <div class="kv"><span style="color:#3f3f46">Unused definitions</span><span class="pl g">Pass</span></div>
+            <div class="kv"><span style="color:#3f3f46">Cross-references</span><span class="pl r">1 broken</span></div>
+            <div class="kv"><span style="color:#3f3f46">Numbering</span><span class="pl g">Pass</span></div>
+            <div class="kv"><span style="color:#3f3f46">Party naming</span><span class="pl g">Pass</span></div>
+            <div class="kv"><span style="color:#3f3f46">Blank placeholders</span><span class="pl g">None</span></div>
+          </div>
+          <div style="padding:11px 15px;border-top:1px solid #f4f4f5;background:#F5F7F5"><div class="hint">Clause 12.2 points at a clause that no longer exists. The assistant may not present a draft with an unreported failure, so it is listed rather than hidden.</div></div>
+        </div>
+        <div class="card">
+          <div class="ch"><div class="ct">House style</div></div>
+          <div style="padding:11px 15px"><div class="hint">Three violations corrected before this draft was shown: date format, currency notation, and "shall" consistency. Listed in full in the style report.</div></div>
+        </div>
+        <div class="card" style="border-color:#fde68a;background:#fffbeb;padding:13px 15px">
+          <div style="font-size:12px;font-weight:600;color:#92400e;margin-bottom:5px">This counterparty, previously</div>
+          <div style="font-size:11.5px;color:#78350f;line-height:1.7">In 2024 we conceded a 1.5× liability cap to this group's parent company, at Head of Legal level. Clause 9 above matches that position. Clause 12 contradicts a concession made in EAI-CON-2024-0019, which allowed evaluation use, so check before sending.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+</div>
+<p class="dv-next">Try next: "make <a class="dv-oid" href="#2e">2e</a> the success state instead of the refusal" · "add the clause library and fallback editor" · "wire <a class="dv-oid" href="#2f">2f</a> into the prototype"</p>
+</section>
+
+</x-dc>
+</body>
+</html>

@@ -1,0 +1,162 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Colour is defined once, here, as tokens. Values come from
+  docs/DESIGN_TOKENS.md.
+  No component carries a hex value, which is what lets dark mode be a single
+  class on the root element.
+
+  Two constraints from DESIGN_TOKENS.md are enforced by how these are assigned.
+  Blue fails WCAG AA for body text at 3.1:1, so it is bound to --info and used
+  for links, borders and chart fills only. Green and red alone fail for
+  red-green colour blindness, so amber and indigo carry the second status axis
+  and every status also carries an icon or a word.
+*/
+
+@layer base {
+  :root {
+    --background: 120 12% 96%;
+    --foreground: 0 0% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 10%;
+
+    /* Primary green #0A7A0A */
+    --primary: 120 85% 26%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Indigo #3E4095 */
+    --secondary: 239 41% 42%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 46%;
+
+    --accent: 240 5% 96%;
+    --accent-foreground: 0 0% 10%;
+
+    /* Accent red #E01B1B */
+    --destructive: 0 79% 49%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Blue #1B8FE0, links and borders only */
+    --info: 205 79% 49%;
+    --info-foreground: 0 0% 100%;
+
+    /* Amber, the second status axis */
+    --warning: 38 92% 50%;
+    --warning-foreground: 26 83% 14%;
+
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 120 85% 26%;
+  }
+
+  .dark {
+    --background: 240 6% 6%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 5% 9%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 5% 9%;
+    --popover-foreground: 0 0% 98%;
+
+    /* The brand green holds in dark, lifted for contrast on a dark ground. */
+    --primary: 120 55% 45%;
+    --primary-foreground: 0 0% 6%;
+
+    --secondary: 239 45% 68%;
+    --secondary-foreground: 0 0% 6%;
+
+    --muted: 240 4% 14%;
+    --muted-foreground: 240 5% 65%;
+
+    --accent: 240 4% 16%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 72% 62%;
+    --destructive-foreground: 0 0% 6%;
+
+    --info: 205 80% 62%;
+    --info-foreground: 0 0% 6%;
+
+    --warning: 38 90% 62%;
+    --warning-foreground: 26 83% 10%;
+
+    --border: 240 4% 20%;
+    --input: 240 4% 20%;
+    --ring: 120 55% 45%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  /*
+    The root size is fluid, so every rem-based size in the interface grows with
+    the display instead of leaving a large monitor reading like a phone held at
+    arm's length. 16px at 1280 wide, 17.5px at 1920, clamped either side.
+  */
+  html {
+    font-size: clamp(15px, 0.234vw + 13px, 18px);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    /* Nothing may push the page sideways. Wide content scrolls in its own box. */
+    overflow-x: hidden;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  a {
+    @apply text-info underline underline-offset-2;
+  }
+
+  a:hover {
+    @apply text-foreground;
+  }
+
+  ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-lg border-[3px] border-background bg-border;
+  }
+}
+
+@layer components {
+  .mono {
+    @apply font-mono text-2xs text-muted-foreground;
+  }
+
+  /*
+    A data table is wider than a phone and always will be. Rather than pretend
+    otherwise, the table scrolls inside its own box and the page never does.
+  */
+  .table-scroll {
+    @apply -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0;
+    scrollbar-width: thin;
+  }
+}
