@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import * as React from "react";
 
 import { MatterActions } from "@/components/app/matter-actions";
+import { RequestPanel } from "@/components/app/request-panel";
 import { useRoles } from "@/components/app/session";
 import { DecisionPill, SlaPill, StatusPill, TierPill } from "@/components/app/status";
 import {
@@ -30,7 +31,7 @@ import {
 } from "@/components/ui";
 import { api, query } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
-import type { AiInteraction, Approval, DocumentRecord, Matter } from "@/lib/types";
+import type { AiInteraction, Approval, DocumentRecord, Matter, RequestDetail } from "@/lib/types";
 import { formatDate, formatDateTime, formatMoney, titleCase } from "@/lib/utils";
 
 const APPROVAL_COLS = "minmax(0,1fr) 7.5rem 8.125rem 7.5rem 8.75rem 6.875rem";
@@ -292,6 +293,7 @@ export default function MatterDetail() {
   const approvals = useApi<Approval[]>(`/matters/${matterId}/approvals`);
   const decisions = useApi<DecisionRow[]>(`/matters/${matterId}/decisions`);
   const trace = useApi<AiInteraction[]>(`/ai/interactions?matter_id=${matterId}`);
+  const request = useApi<RequestDetail | null>(`/matters/${matterId}/request`);
 
   const [target, setTarget] = React.useState("");
   const [reason, setReason] = React.useState("");
@@ -344,6 +346,15 @@ export default function MatterDetail() {
           />
         }
       />
+
+      {request.data ? (
+        <RequestPanel
+          request={request.data}
+          facts={false}
+          title="What was asked for"
+          subtitle={`Raised as ${request.data.request_type}. This is the request the matter came from, in the requester's own words.`}
+        />
+      ) : null}
 
       <Tabs
         tabs={[

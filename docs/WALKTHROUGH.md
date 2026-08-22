@@ -337,6 +337,7 @@ test and the hardest to accidentally bypass.
 | `models/counterparty.py` | `Counterparty` with a permanent identifier and aliases, `Vendor` |
 | `models/governance.py` | `Mailbox`, `Communication`, `ExtractedValue`, `Product`, `Assessment`, `ComplianceItem` |
 | `models/ai.py` | `Capability`, `EvaluationRun`, `AIInteraction`, `Baseline` |
+| `models/conversation.py` | `Conversation` and `ConversationTurn`, the saved Ask memory threads. The answer is stored as the envelope the interface was given, not as prose, so reopening an old thread shows the citations and the suppressed count that were actually shown at the time |
 | `models/evaluation.py` | `GoldenSet` and `GoldenCase`, the cases each capability gate is measured against |
 | `models/platform.py` | `AuditEvent` with a chained digest and a monotonic `sequence`, `OutboxEvent`, `IdempotencyKey`, `Connector`, `EgressLog`, `RetentionPolicy`, `MemoryChunk` with its vector, `QualitySample`, `ExportRequest`, `DeletionRequest` |
 
@@ -401,7 +402,7 @@ directly.
 | `approvals.py` | M07 | Approval chains and decisions, signature requests, the signature webhook, cancellation, wet-ink execution |
 | `contracts.py` | M08 | Executed contracts and their provenance |
 | `obligations.py` | M08, M12 | Obligations, proposals and decisions, completion with evidence, the calendar feed, reminders, renewal tasks and decisions, compliance items and their versions |
-| `ai.py` | M05, M06, M09, M10 | Grounded answers, position history, the inbox, classification, extraction, corrections, first draft, review, obligation extraction, the human decision on an interaction |
+| `ai.py` | M05, M06, M09, M10 | Grounded answers, saved conversations with their turns, position history, the inbox, classification, extraction, corrections, first draft, review, obligation extraction, the human decision on an interaction |
 | `assessments.py` | M11 | Assessments, stage completion, closure with a residual-risk decision, reassessment |
 | `counterparties.py` | M13 | Counterparties, history, duplicate merge, vendors, renewal risk |
 | `reports.py` | M14 | Operational dashboard, KPIs, AI quality, weekly update, risk and exposure, deviation patterns, inbox accuracy |
@@ -422,6 +423,7 @@ directly.
 | `0008_mfa_and_provisioning.py` | The second-factor columns and the directory's identifier on `app_user`. `deprovisioned_at` exists because a leaver is deactivated rather than deleted, so attribution on work they validly did survives |
 | `0009_one_document_per_hash.py` | A unique index on `(matter_id, content_hash)`, and a correction to `dsnlai_document_immutable`. That trigger returned `NEW`, which on a DELETE is NULL, and returning NULL from a BEFORE DELETE trigger cancels the delete: every deletion of a non-immutable document had been silently doing nothing and reporting success |
 | `0010_audit_chain_sequence.py` | A monotonic `sequence` on `audit_event`. Additive on purpose: the digests written before the chain was fixed are not rewritten, because the store is append-only and editing it to make a check pass would defeat the control the check exists to provide |
+| `0011_memory_conversations.py` | `ai_conversation` and `ai_conversation_turn`. The conversation policy demands the caller owns the row as well as holding the entity; the turn has no owner of its own and reaches one through a subquery on its parent, which the policy above already filters |
 
 ### 5.8 `app/worker.py`, the scheduled work
 
@@ -448,6 +450,7 @@ Deliberately minimal, one or two per major feature.
 | `test_tiering.py` | The highest triggered tier wins |
 | `test_generation.py` | Generation is byte-identical, and a conditional section changes the hash |
 | `test_isolation.py` | Entity separation and restricted-matter isolation hold at the database |
+| `test_conversations.py` | A saved conversation belongs to one person. A colleague in the same role and the same entity reads neither the thread nor its turns |
 | `test_ai_envelope.py` | An ungrounded output is rejected |
 | `test_approvals.py` | An edit invalidates approvals bound to the old hash |
 | `test_identifiers_and_clock.py` | The identifier scheme and the pausing service clock |
@@ -466,7 +469,7 @@ apps/web/
 ├── Dockerfile              Three stages, non-root, NEXT_PUBLIC_API_BASE_URL inlined at build
 ├── tailwind.config.ts      Tokens, breakpoints, dark mode by class
 ├── src/
-│   ├── styles/globals.css  Colour as CSS custom properties, light and dark
+│   ├── styles/globals.css  Colour as CSS custom properties, light, dark and per organisation
 │   ├── lib/                API client, hooks, types, formatting
 │   ├── components/ui/      The primitives
 │   ├── components/app/     Session, shell, status, editor, theme
@@ -499,6 +502,13 @@ Four are worth knowing:
 - **`Modal`** is the one dialog every write action in the workspace uses. It is
   a real `<dialog>`, closes on escape and on the backdrop, and stops the page
   behind it scrolling.
+- **`Row`** is one line of a table, header or body, laid out on a CSS grid
+  whose column widths the calling screen supplies. The header sticks at
+  `top-0`, not at the height of the page header: every table sits inside
+  `.table-scroll`, and `overflow-x: auto` makes the browser compute
+  `overflow-y: auto` with it, so that box is the scrollport a sticky child
+  measures against. A 4rem offset there pushed the header 4rem below its own
+  place in the table and let the first row show through the gap.
 - **`Confirm`** is the dialog for actions that cannot be taken back. Where the
   API insists on a reason, it insists too, so the refusal arrives before the
   request rather than after it.
@@ -508,18 +518,61 @@ Four are worth knowing:
 | File | What it does |
 | --- | --- |
 | `session.tsx` | Loads `/auth/me` once, exposes the principal and the working entity, and redirects to sign-in when unauthenticated. Has an explicit `unreachable` state so an API that is down reads as an API that is down rather than as an endless spinner. Also exports `useRoles`, which screens use to hide an action the API would refuse |
-| `shell.tsx` | The workspace frame: role-filtered navigation in four groups, the entity switch, the role badge, the theme toggle, the mobile drawer, and the error card when the API cannot be reached |
-| `icons.tsx` | Fifteen inline navigation glyphs. Inline rather than a dependency, because fifteen icons do not justify an icon package in a build that has to be auditable |
+| `shell.tsx` | The workspace frame: role-filtered navigation in four groups, the entity switch and its organisation marks, the role badge, the theme toggle, the red sign-out, the retractable rail, the mobile drawer, and the error card when the API cannot be reached |
+| `icons.tsx` | Two dozen inline glyphs, navigation and action. Inline rather than a dependency, because two dozen icons do not justify an icon package in a build that has to be auditable |
 | `matter-actions.tsx` | Everything that can be done to a matter: generate, first draft, review counterparty paper, request signature, record wet-ink execution, restrict, override the tier, reassign, link. Each dialog is role-gated, and each renders the API's refusal rather than a generic failure |
 | `library-actions.tsx` | Propose a clause or template version, publish or reject a draft, read the diff, open a playbook, import a Word template and decide each candidate clause |
 | `assessment-actions.tsx` | Complete a stage, close with a residual-risk decision, trigger a reassessment. It shows which required fields are still empty before you try, because the API refuses on the whole list |
-| `attachments.tsx` | Upload a file to a request. A refused file is shown as refused, since it has been quarantined rather than dropped |
+| `attachments.tsx` | Upload a file to a request. Each stored file is confirmed by name and size, because an upload that only makes a row appear in a list leaves the person wondering whether it worked. A refused file is shown as refused, since it has been quarantined rather than dropped |
+| `request-panel.tsx` | What the requester asked for, rendered the same way on triage and on the matter it became. Two columns, label beside value. An answer whose text already appears elsewhere on the page is dropped, because the intake form writes the counterparty, the date, the value and the purpose into their own columns as well as into the answers |
+| `portal-nav.tsx` | The portal's own navigation: raise a request, my requests, back to the workspace for anyone who has one, and sign out. A requester who has finished should not have to close the tab to leave |
 | `mfa-enrolment.tsx` | Two-step enrolment: the secret is issued, and the factor only goes live once a code proves the authenticator holds it |
 | `status.tsx` | Status pills. Colour never carries a status alone; each renders a word, and a glyph gives a third channel |
 | `superdoc-editor.tsx` | Wraps SuperDoc for in-app `.docx` editing in viewing, suggesting or editing mode |
 | `theme-toggle.tsx` | Switches the `dark` class and remembers the choice |
 
-### 6.4 Scale, layout and responsiveness
+### 6.4 Telling the two organisations apart
+
+The platform serves Data Science Nigeria and EqualyzAI from one workspace, and
+the entity switch changes what every screen is reading. That is a large change
+of context to signal with a three-letter label, so it also changes the ground
+the interface sits on.
+
+`globals.css` carries the organisation as a data attribute on the root element,
+alongside the `dark` class. Eight tokens change with it, six for the page and
+two, `--sidebar` and `--heading`, for the navigation and the page titles. DSN keeps the neutral whitish page. `EAI` overrides
+six tokens, moving the background, the cards, the muted fills and the borders a
+few points towards green. In dark mode the same shift happens against the dark
+ground rather than being dropped: the page and the cards pick up a green cast
+instead of the neutral grey.
+
+The sidebar goes further than the page does. It takes the organisation's own
+brand colour as its ground, blue for DSN and green for EqualyzAI, and the
+navigation group headings, the selected item and its icon take the same hue at
+text strength: blue-deep at 7.4:1 for DSN, the derived success text tone for
+EqualyzAI. That text tone is `--heading`, and it is not confined to the
+sidebar: every page title takes it too, so a screen opened under one
+organisation does not head itself in the other one's colour. Both are lifted
+against the dark ground in dark mode. Hover states inside the sidebar moved off
+`bg-muted` to a translucent wash, because a neutral grey that reads as a hover
+on a white sidebar disappears on a tinted one.
+
+The page tint is deliberately faint, and faint colour is not a cue anyone
+should have to depend on. The organisation name in the sidebar therefore carries a
+mark in its own hue, indigo for DSN and green for EqualyzAI, and both marks
+appear on the switch itself so the choice reads without relying on the
+background at all.
+
+The attribute is set twice: by the pre-paint script in `app/layout.tsx`, which
+reads the stored choice before the first frame, and by `session.tsx`, which
+keeps it true after a switch and after the API corrects an entity the account
+does not hold. Without the first, the page would render in one organisation's
+colour and correct itself, which reads as a fault. Surfaces transition over
+260ms, slow enough to register as a change of organisation rather than a
+flicker, and the reduced-motion rule removes it.
+
+
+### 6.5 Scale, layout and responsiveness
 
 Three decisions govern how the interface sizes itself.
 
@@ -533,6 +586,21 @@ and reading like a laptop design on a large monitor.
 widths are rem rather than px, so a column that fits its text at 16px still
 fits it at 17.5px.
 
+**Switching organisation closes what is open.** A record belongs to one
+organisation, so leaving a matter on screen while the workspace moves to the
+other one is not a state that can hold. Row-level security would refuse the
+next read and the screen would turn into a not-found, which reads as a fault;
+going back to the list the record came from says the same thing plainly.
+
+**The sidebar retracts.** The toggle sits in the sidebar's own header and the
+choice is remembered in `localStorage`, read on mount rather than during render
+because the server has no storage to read and a mismatch would be a hydration
+error. Collapsed, the rail is 4.25rem: icons only, with the label moved to the
+`title` and to `aria-label` so the item is still named for a screen reader.
+Collapsing hides the words, never the items. The set of places a role can reach
+does not change with the width of the sidebar, which is what keeps the
+navigation an honest picture of what the API would answer.
+
 **Layout breaks at `lg`.** Above it the sidebar is permanent and the content is
 capped at `max-w-workspace` and centred, so a wide display gains margin rather
 than line length. Below it the sidebar becomes a drawer that closes on
@@ -543,7 +611,7 @@ Navigation carries an icon, not a module code. The PRD module reference was
 build traceability rather than anything a user needs, and it survives as the
 link title for anyone tracing a screen back to the specification.
 
-### 6.5 `src/app/`, the routes
+### 6.6 `src/app/`, the routes
 
 Legal below means legal operations, counsel, Head of Legal and the
 administrator, which is the set the endpoints behind those screens accept.
@@ -567,7 +635,7 @@ administrator, which is the set the endpoints behind those screens accept.
 | `/workspace/archive` | The executed archive | Legal, auditor |
 | `/workspace/obligations` | Obligations and the calendar feed | Legal |
 | `/workspace/inbox` | Inbox intelligence and the implied-work watch | Legal |
-| `/workspace/memory` | Institutional memory chat | Legal |
+| `/workspace/memory` | Institutional memory chat: threads on the left, the current thread and its composer on the right, every conversation kept | Legal |
 | `/workspace/assessments` | Privacy and AI assessments | Legal, privacy |
 | `/workspace/compliance` | The statutory filing calendar | Legal |
 | `/workspace/counterparties` | Counterparties and vendors | Legal, privacy |
@@ -594,10 +662,20 @@ At the bottom is a dashed card, **None of these describes it**. That is the
 free-text route: describe the situation in your own words and it goes straight
 to triage for a person to classify.
 
-Pick a type and you get a short form. Two things matter:
+Pick a type and you get a short form. Four things matter:
 
+- **It asks which organisation first.** DSN and EqualyzAI are separate legal
+  entities, and the answer decides which paper is used, which approvals apply
+  and who can see the matter afterwards. It cannot be changed later without
+  raising the request again, so it is asked at the top rather than inherited
+  silently from whichever entity the workspace happened to be on.
 - **Only relevant questions appear.** Fields are configuration on the request
   type, not code, so the Head of Legal changes them without a release.
+- **A number field says what it is counted in.** A field definition carries a
+  `unit`, rendered beside the box. "How long should it run" was a bare number
+  that left the requester guessing between weeks, months and years; it is now
+  "How long should it run, in months", with `months` beside the box and help
+  text giving 12 for a year.
 - **You cannot submit an incomplete request.** Missing mandatory fields are
   shown inline, on the field, with a reason. It is cheaper to ask the requester
   now than to chase them next week.
@@ -607,16 +685,54 @@ third-party confidential information, and whether data leaves Nigeria. A yes to
 any of these raises a privacy flag and notifies the DPO. The requester declares
 the facts; the platform draws the conclusion.
 
+**Cancel** is beside submit. Nothing has been sent to Legal yet, so there is
+nothing to withdraw; it says so, discards what was typed and goes back to the
+list of request types.
+
 Submit, and you get a reference, an acknowledgment within 60 seconds, and a
 status timeline you can return to instead of emailing to ask. You see your own
 requests and nobody else's.
+
+Every attachment is confirmed by name and size the moment it is stored. An
+upload that only makes a row appear in a list leaves the person wondering
+whether it worked.
+
+**The portal has its own exits.** Its header carries raise a request, my
+requests, a return to the workspace for anyone whose roles have one, and a sign
+out. Before this, a requester who finished in the portal had no way out of it
+but the browser's back button, and someone who arrived from the workspace had
+no way back.
 
 ### M02, matters and triage
 
 Sign in as legal operations and open **Triage**.
 
-Open a request. The platform has already done the arithmetic: a proposed tier
-with its reasoning listed step by step, and a proposed owner from workload and
+Open a request and the request itself is at the top of the page, in two
+columns: the facts and the declared data on the left, what the requester wrote
+and each question they were asked on the right. The decision on this page is
+what to do with the request, and reading it in another tab lost the detail that
+should have changed the tier or the owner. Booleans read as Yes and No, and a
+field the form no longer defines still appears under its own name, because the
+request was made under the form as it stood.
+
+The same panel appears on the matter, above the tabs, under **What was asked
+for**. Seeded matters carry a real originating request for this reason: the
+seed used to build them with none, so no matter could show where it came from
+and the panel was blank everywhere except the one request raised by hand. The
+restricted investigation is deliberately still without one, because a
+restricted internal matter is opened by Legal rather than raised through the
+portal, and inventing a request behind it would misrepresent how that work
+starts. A matter carries the legal position; the request carries what a
+colleague said they needed and in what words, and that is what a reader has to
+check the position against. It is one component with one difference: on triage
+nothing else on the page states the facts, so it states them, while on a matter
+the header and the record card have already given the organisation, the title,
+the counterparty and the value, so it gives only when the request was raised,
+by whom and the date they asked for. A matter opened directly rather than from
+a request has no panel.
+
+Below it, the platform has already done the arithmetic: a proposed tier with
+its reasoning listed step by step, and a proposed owner from workload and
 specialism. Both are editable, and a change records who changed it and why.
 
 Three ways out:
@@ -624,8 +740,14 @@ Three ways out:
 | Action | What happens |
 | --- | --- |
 | Accept | A matter number is issued and the service clock starts |
-| Return for information | It goes back to the requester with a question |
+| Return for information | It goes back to the requester with the wording you write, verbatim |
 | Close | It is answered and finished, with no matter number |
+
+**Returning and closing both demand a note, and the API refuses an empty one.**
+Closing is the outcome that produces no matter, so the note written at that
+moment is the only record of why the organisation declined to open one. It is
+sent to the requester with an optional answer alongside it. Returning sends its
+note verbatim, with each missing item listed under it.
 
 Accept one and you land on the matter. Three things there do quiet work: the
 state model refuses moves outside it, the service clock pauses while you wait
@@ -880,6 +1002,38 @@ Two things happen before ranking, not after:
 
 Ask the same question as two different people. The answers differ, because the
 evidence available to each differs.
+
+**Conversations are kept.** Memory is a chat: threads down the left, the
+current thread and its composer on the right. A thread names itself from its
+first question and can be renamed. Deleting one removes the transcript and
+nothing else, because the AI interaction log is written by the gateway and is
+not touched, so every question that reached a model stays accountable after the
+conversation is gone.
+
+A follow-up works. The thread so far is put to the model as context, so "and
+what about that one" resolves against the question before it. Two rules keep
+that from quietly weakening the citation guarantee:
+
+- The transcript is never a source. A citation can only come from a record
+  retrieved for the question being answered.
+- Retrieval reads one string, so a short question is searched together with the
+  one it follows and a question that stands on its own is searched on its own.
+  Folding an unrelated earlier question into a long new one would drag the
+  wrong records in.
+
+**A thread belongs to one person.** The row-level security policy on
+`ai_conversation` is narrower than the usual entity scope: the row also has to
+belong to the caller. Retrieval assembled the answers under that person's
+access, so the transcript is only safe in front of them. A colleague holding
+the same role, in the same entity, gets an empty list and a not-found, and
+`tests/test_conversations.py` holds that at the database rather than in the
+application.
+
+**Every figure on the delivery dashboard is a link.** Open matters, past
+target, blocked and overdue obligations each go to the list behind the number,
+with the filter already applied. An owner's name goes to that owner's matters,
+their breach count to the breached subset, and a tier to the matters on it. The
+filter lives in the query string, so the link can be sent to someone else.
 
 ### M11, privacy, DPIA and AI assessment
 

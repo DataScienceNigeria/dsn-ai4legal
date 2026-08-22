@@ -64,6 +64,39 @@ export type TriageRow = {
   subject: string;
 };
 
+export type RequestAnswer = { name: string; label: string; value: string };
+
+export type AttachmentBrief = {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  scan_status: string;
+};
+
+export type RequestDetail = {
+  id: string;
+  reference: string;
+  entity: string;
+  request_type: string;
+  subject: string;
+  purpose: string | null;
+  requester_name: string | null;
+  requester_email: string | null;
+  proposed_counterparty: string | null;
+  required_date: string | null;
+  value_amount: number | null;
+  value_currency: string;
+  personal_data: boolean;
+  special_category_data: boolean;
+  third_party_confidential: boolean;
+  leaves_nigeria: boolean;
+  status: string;
+  submitted_at: string;
+  answers: RequestAnswer[];
+  attachments: AttachmentBrief[];
+};
+
 export type TriageProposal = {
   tier: string;
   tier_rationale: string[];
@@ -71,6 +104,7 @@ export type TriageProposal = {
   triggers_privacy_assessment: boolean;
   proposed_owner: string | null;
   owner_rationale: string | null;
+  request: RequestDetail | null;
 };
 
 export type RequestType = {
@@ -91,6 +125,7 @@ export type FieldDefinition = {
   label: string;
   type: string;
   help_text?: string | null;
+  unit?: string | null;
   options?: string[];
   mandatory: boolean;
   condition?: string | null;
@@ -339,6 +374,27 @@ export type Answer = {
   refusal_reason: string | null;
   suppressed_statements: number;
 };
+
+export type ConversationTurn = {
+  id: string;
+  sequence: number;
+  question: string;
+  answer: Answer | null;
+  created_at: string;
+};
+
+export type ConversationBrief = {
+  id: string;
+  entity: string;
+  title: string;
+  matter_id: string | null;
+  matter_number: string | null;
+  message_count: number;
+  last_message_at: string | null;
+  created_at: string;
+};
+
+export type Conversation = ConversationBrief & { turns: ConversationTurn[] };
 
 export type Capability = {
   id: string;

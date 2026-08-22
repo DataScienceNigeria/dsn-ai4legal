@@ -9,6 +9,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  Confirm,
   Field,
   Input,
   Notice,
@@ -21,8 +22,15 @@ import {
 import { api } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
 import type { FieldDefinition, RequestType } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 type Answers = Record<string, string | boolean>;
+
+function inputType(type: string): string {
+  if (type === "date") return "date";
+  if (type === "number") return "number";
+  return "text";
+}
 
 /*
   Questions render conditionally, and optional detail sits behind progressive
@@ -35,16 +43,23 @@ function visible(field: FieldDefinition, answers: Answers, expanded: boolean): b
   return Boolean(value) && value !== "false" && value !== "no";
 }
 
+const ENTITY_NAMES: Record<string, string> = {
+  DSN: "Data Science Nigeria",
+  EAI: "EqualyzAI",
+};
+
 export default function NewRequest() {
   const { code } = useParams<{ code: string }>();
   const router = useRouter();
-  const { me, entity } = useSession();
+  const { me, entity, setEntity } = useSession();
 
   const types = useApi<RequestType[]>("/requests/types");
   const type = types.data?.find((item) => item.code === code);
 
+  const [raisingFor, setRaisingFor] = React.useState(entity);
   const [answers, setAnswers] = React.useState<Answers>({});
   const [expanded, setExpanded] = React.useState(false);
+  const [abandoning, setAbandoning] = React.useState(false);
   const [declaration, setDeclaration] = React.useState({
     personal_data: false,
     special_category_data: false,
@@ -57,7 +72,7 @@ export default function NewRequest() {
       method: "POST",
       body: {
         request_type_code: code,
-        entity,
+        entity: raisingFor,
         subject: String(answers.subject ?? answers.counterparty ?? type?.business_label ?? ""),
         purpose: String(answers.purpose ?? ""),
         proposed_counterparty: answers.counterparty ? String(answers.counterparty) : null,
@@ -71,10 +86,15 @@ export default function NewRequest() {
     return created;
   });
 
+  React.useEffect(() => {
+    setRaisingFor(entity);
+  }, [entity]);
+
   if (types.loading) return <Spinner />;
   if (!type) return <Refusal title="That request type is not available" />;
 
   const anyPrivacy = Object.values(declaration).some(Boolean);
+  const entities = me?.entities ?? [];
   const fieldErrors = submit.error?.fieldErrors ?? {};
   const hasProgressive = type.fields.some((field) => field.progressive);
 
@@ -92,6 +112,51 @@ export default function NewRequest() {
           reasons={Object.values(fieldErrors)}
         />
       ) : null}
+
+      <Card>
+        <CardHeader
+          title="Which organisation is this for?"
+          subtitle="The two are separate legal entities. This decides which paper is used, which approvals apply and who can see the matter afterwards, so it cannot be changed later without raising the request again."
+        />
+        <CardBody>
+          {entities.length > 1 ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {entities.map((code) => (
+                <label
+                  key={code}
+                  htmlFor={`entity-${code}`}
+                  className={cn(
+                    "grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-0.5 rounded-md border p-3.5 text-sm transition-colors sm:p-4",
+                    raisingFor === code
+                      ? "border-heading bg-heading/[0.07]"
+                      : "hover:bg-foreground/[0.04]",
+                  )}
+                >
+                  <input
+                    id={`entity-${code}`}
+                    type="radio"
+                    name="entity"
+                    value={code}
+                    checked={raisingFor === code}
+                    onChange={() => {
+                      setRaisingFor(code);
+                      setEntity(code);
+                    }}
+                    className="row-span-2 mt-0.5 h-4 w-4 shrink-0 accent-[hsl(var(--heading))]"
+                  />
+                  <span className="min-w-0 font-medium">{ENTITY_NAMES[code] ?? code}</span>
+                  <span className="col-start-2 text-xs text-muted-foreground">{code}</span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {ENTITY_NAMES[raisingFor] ?? raisingFor}. Your account is on one organisation, so
+              there is nothing to choose.
+            </p>
+          )}
+        </CardBody>
+      </Card>
 
       <Card>
         <CardHeader title="About the request" />
@@ -125,13 +190,19 @@ export default function NewRequest() {
                     <option value="false">No</option>
                   </Select>
                 ) : (
-                  <Input
-                    type={field.type === "date" ? "date" : field.type === "number" ? "number" : "text"}
-                    value={String(answers[field.name] ?? "")}
-                    onChange={(event) =>
-                      setAnswers((prev) => ({ ...prev, [field.name]: event.target.value }))
-                    }
-                  />
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type={inputType(field.type)}
+                      value={String(answers[field.name] ?? "")}
+                      onChange={(event) =>
+                        setAnswers((prev) => ({ ...prev, [field.name]: event.target.value }))
+                      }
+                      className="flex-1"
+                    />
+                    {field.unit ? (
+                      <span className="shrink-0 text-sm text-muted-foreground">{field.unit}</span>
+                    ) : null}
+                  </div>
                 )}
               </Field>
             ))}
@@ -192,10 +263,28 @@ export default function NewRequest() {
         >
           {submit.busy ? "Submitting" : "Submit the request"}
         </Button>
+        <Button
+          disabled={submit.busy}
+          onClick={() => setAbandoning(true)}
+          className="w-full sm:w-auto"
+        >
+          Cancel
+        </Button>
         <span className="text-sm text-muted-foreground">
-          Submitting as {me?.name} in {entity}. You will get an acknowledgment within a minute.
+          Submitting as {me?.name} for {ENTITY_NAMES[raisingFor] ?? raisingFor}. You will get an
+          acknowledgment within a minute.
         </span>
       </div>
+
+      <Confirm
+        open={abandoning}
+        title="Leave this request?"
+        detail="Nothing has been sent to Legal, so there is nothing to withdraw. What you have typed is discarded and you go back to the list of request types."
+        confirmLabel="Discard and go back"
+        destructive
+        onCancel={() => setAbandoning(false)}
+        onConfirm={() => router.push("/portal")}
+      />
     </div>
   );
 }

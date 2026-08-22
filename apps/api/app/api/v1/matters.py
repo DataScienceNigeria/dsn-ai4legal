@@ -27,7 +27,15 @@ from app.domain.enums import AUTHORITY_MATRIX, AuthorityLevel, MatterState, Risk
 from app.domain.sla import ClockSegment, evaluate
 from app.domain.state_machine import IllegalTransition, assert_transition, permitted_next
 from app.schemas.common import Ack, DecisionOut, DecisionRequest, TransitionRequest
-from app.schemas.intake import AcceptRequest, CloseRequest, ReturnRequest, TriageProposal
+from app.schemas.intake import (
+    AcceptRequest,
+    AttachmentBrief,
+    CloseRequest,
+    RequestAnswer,
+    RequestDetail,
+    ReturnRequest,
+    TriageProposal,
+)
 from app.schemas.matters import (
     LinkRequest,
     MatterListItem,
@@ -68,16 +76,19 @@ def _propose_owner(db, record: RequestRecord, tier: RiskTier) -> tuple[User | No
     """Propose an owner from workload and specialism (LOP-M02-US-02)."""
     specialism = record.request_type.practice_code.lower()
     needs_counsel = tier in {RiskTier.TIER_3, RiskTier.TIER_4}
-    wanted = [Role.COUNSEL.value, Role.HEAD_OF_LEGAL.value] if needs_counsel else [
-        Role.LEGAL_OPS.value,
-        Role.COUNSEL.value,
-    ]
+    wanted = (
+        [Role.COUNSEL.value, Role.HEAD_OF_LEGAL.value]
+        if needs_counsel
+        else [
+            Role.LEGAL_OPS.value,
+            Role.COUNSEL.value,
+        ]
+    )
 
     candidates = [
         user
         for user in db.execute(select(User).where(User.active.is_(True))).scalars()
-        if set(user.roles or []) & set(wanted)
-        and record.entity in user.entity_codes
+        if set(user.roles or []) & set(wanted) and record.entity in user.entity_codes
     ]
     if not candidates:
         return None, "No eligible owner is available in this entity."
@@ -145,17 +156,13 @@ def triage_queue(
 
 
 @router.get("/triage/{request_id}")
-def triage_detail(
-    request_id: uuid.UUID, db: Db, principal: CurrentUser
-) -> TriageProposal:
+def triage_detail(request_id: uuid.UUID, db: Db, principal: CurrentUser) -> TriageProposal:
     principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     record = db.get(RequestRecord, request_id)
     if record is None:
         raise NotFound(REQUEST_NOT_FOUND)
 
-    counterparty = (
-        db.get(Counterparty, record.counterparty_id) if record.counterparty_id else None
-    )
+    counterparty = db.get(Counterparty, record.counterparty_id) if record.counterparty_id else None
     outcome = tiering.derive_tier(_tier_inputs(record, counterparty))
     owner, owner_reason = _propose_owner(db, record, outcome.tier)
 
@@ -173,6 +180,83 @@ def triage_detail(
         triggers_privacy_assessment=outcome.triggers_privacy_assessment,
         proposed_owner=owner.id if owner else None,
         owner_rationale=owner_reason,
+        request=_request_detail(db, record),
+    )
+
+
+def _answer_labels(record: RequestRecord) -> list[RequestAnswer]:
+    """The requester's answers, each under the question they were asked.
+
+    A field defined on the type but never answered is left out. A field the
+    form no longer defines is still shown, under its own name, because the
+    request was made under the form as it stood.
+    """
+    labels = {
+        field.get("name"): field.get("label", field.get("name", ""))
+        for field in (record.request_type.fields or [])
+        if isinstance(field, dict)
+    }
+    answers: list[RequestAnswer] = []
+    for name, value in (record.answers or {}).items():
+        if value in (None, "", []):
+            continue
+        answers.append(
+            RequestAnswer(
+                name=name,
+                label=labels.get(name) or name.replace("_", " ").capitalize(),
+                value=_readable(value),
+            )
+        )
+    return answers
+
+
+def _readable(value: object) -> str:
+    """A stored answer as the requester would recognise it.
+
+    The form posts booleans as the strings "true" and "false", and a triage
+    screen reading `False` is asking the reader to translate.
+    """
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, str) and value.lower() in {"true", "false"}:
+        return "Yes" if value.lower() == "true" else "No"
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value)
+    return str(value)
+
+
+def _request_detail(db, record: RequestRecord) -> RequestDetail:
+    requester = db.get(User, record.requester_id)
+    return RequestDetail(
+        id=record.id,
+        reference=record.reference,
+        entity=record.entity,
+        request_type=record.request_type.business_label,
+        subject=record.subject,
+        purpose=record.purpose,
+        requester_name=requester.name if requester else None,
+        requester_email=requester.work_email if requester else None,
+        proposed_counterparty=record.proposed_counterparty,
+        required_date=record.required_date,
+        value_amount=float(record.value_amount) if record.value_amount is not None else None,
+        value_currency=record.value_currency,
+        personal_data=record.personal_data,
+        special_category_data=record.special_category_data,
+        third_party_confidential=record.third_party_confidential,
+        leaves_nigeria=record.leaves_nigeria,
+        status=record.status,
+        submitted_at=record.created_at,
+        answers=_answer_labels(record),
+        attachments=[
+            AttachmentBrief(
+                id=attachment.id,
+                filename=attachment.filename,
+                content_type=attachment.content_type,
+                size_bytes=attachment.size_bytes,
+                scan_status=attachment.scan_status,
+            )
+            for attachment in record.attachments
+        ],
     )
 
 
@@ -211,9 +295,7 @@ def accept_request(
     if record.status not in {MatterState.SUBMITTED.value, MatterState.IN_TRIAGE.value}:
         raise Conflict(f"This request is {record.status.replace('_', ' ')} and cannot be accepted.")
 
-    counterparty = (
-        db.get(Counterparty, record.counterparty_id) if record.counterparty_id else None
-    )
+    counterparty = db.get(Counterparty, record.counterparty_id) if record.counterparty_id else None
     outcome = tiering.derive_tier(_tier_inputs(record, counterparty))
     tier = outcome.tier
     rationale = list(outcome.reasons)
@@ -333,10 +415,15 @@ def return_for_information(
     if record is None:
         raise NotFound(REQUEST_NOT_FOUND)
 
-    record.triage_notes = payload.reason
-    _transition_request(
-        db, record, MatterState.RETURNED_FOR_INFORMATION, principal, payload.reason
-    )
+    reason = payload.reason.strip()
+    if not reason:
+        raise ValidationFailed(
+            "Say what is missing.",
+            {"reason": "The requester is sent this wording verbatim."},
+        )
+
+    record.triage_notes = reason
+    _transition_request(db, record, MatterState.RETURNED_FOR_INFORMATION, principal, reason)
     requester = db.get(User, record.requester_id)
     if requester:
         missing = "\n".join(f"- {item}" for item in payload.missing_information)
@@ -346,7 +433,7 @@ def return_for_information(
             recipients=[requester.work_email],
             subject=f"More information needed on {record.reference}",
             body=(
-                f"{payload.reason}\n\n{missing}\n\n"
+                f"{reason}\n\n{missing}\n\n"
                 "No matter number has been issued yet. This message is administrative."
             ),
             record_reference=record.reference,
@@ -361,19 +448,50 @@ def return_for_information(
 def close_without_matter(
     request_id: uuid.UUID, payload: CloseRequest, db: Db, principal: CurrentUser
 ) -> Ack:
-    """A preliminary enquiry may be answered and closed without a matter."""
+    """A preliminary enquiry may be answered and closed without a matter.
+
+    The reason is demanded rather than defaulted. Closing is the one triage
+    outcome that produces no matter to carry an explanation, so if the reason
+    is not written here it is not written anywhere.
+    """
     principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     record = db.get(RequestRecord, request_id)
     if record is None:
         raise NotFound(REQUEST_NOT_FOUND)
 
-    record.triage_notes = payload.reason
-    _transition_request(
-        db, record, MatterState.CLOSED_WITHOUT_MATTER, principal, payload.reason
-    )
+    reason = payload.reason.strip()
+    if not reason:
+        raise ValidationFailed(
+            "Say why this is being closed.",
+            {
+                "reason": (
+                    "The requester is told, and this is the only place the reason is "
+                    "recorded, because closing creates no matter to hold it."
+                )
+            },
+        )
+
+    record.triage_notes = "\n\n".join(part for part in (reason, payload.answer) if part)
+    _transition_request(db, record, MatterState.CLOSED_WITHOUT_MATTER, principal, reason)
+
+    requester = db.get(User, record.requester_id)
+    if requester:
+        answer = f"\n\n{payload.answer}" if payload.answer else ""
+        notifications.notify(
+            db,
+            connector_code="mail_administrative",
+            recipients=[requester.work_email],
+            subject=f"{record.reference} has been answered and closed",
+            body=(
+                f"{reason}{answer}\n\n"
+                "No matter number was issued. This message is administrative. "
+                "Raise a new request if the position changes."
+            ),
+            record_reference=record.reference,
+        )
     return Ack(
-        message="Answered and closed without a matter. The exchange is retained on the "
-        "request record."
+        message="Answered and closed without a matter. The reason is on the request "
+        "record and the requester has been told."
     )
 
 
@@ -390,9 +508,7 @@ def _sla_for(db, matter: Matter) -> SlaOut | None:
 
     segments: list[ClockSegment] = []
     for index, transition in enumerate(transitions):
-        ends_at = (
-            transitions[index + 1].occurred_at if index + 1 < len(transitions) else None
-        )
+        ends_at = transitions[index + 1].occurred_at if index + 1 < len(transitions) else None
         segments.append(
             ClockSegment(
                 state=MatterState(transition.to_state),
@@ -471,6 +587,26 @@ def get_matter(matter_id: uuid.UUID, db: Db, principal: CurrentUser) -> MatterOu
     return out
 
 
+@router.get("/matters/{matter_id}/request")
+def matter_request(matter_id: uuid.UUID, db: Db, principal: CurrentUser) -> RequestDetail | None:
+    """What the requester actually asked for, on the matter it became.
+
+    A matter carries the legal position. The request carries what a colleague
+    said they needed and in what words, and that is what a reader has to check
+    the position against. Null where a matter was opened directly rather than
+    from a request.
+    """
+    del principal
+    matter = db.get(Matter, matter_id)
+    if matter is None:
+        raise NotFound(MATTER_NOT_FOUND)
+    if matter.request_id is None:
+        return None
+
+    record = db.get(RequestRecord, matter.request_id)
+    return _request_detail(db, record) if record else None
+
+
 @router.patch("/matters/{matter_id}")
 def update_matter(
     matter_id: uuid.UUID, payload: MatterUpdate, db: Db, principal: CurrentUser
@@ -527,9 +663,7 @@ def transition_matter(
 
         latest_hash = matter.next_action or ""
         invalidated = len(
-            invalidate_for_hash(
-                db, matter.id, latest_hash, f"The matter moved to {target.value}."
-            )
+            invalidate_for_hash(db, matter.id, latest_hash, f"The matter moved to {target.value}.")
         )
 
     now = datetime.now(UTC)
@@ -584,9 +718,7 @@ def record_decision(
     level = AuthorityLevel(payload.authority_level)
     rule = AUTHORITY_MATRIX[level]
     if not principal.has_role(*rule["roles"]):
-        raise Forbidden(
-            f"Accepting {level.value.replace('_', ' ')} requires {rule['label']}."
-        )
+        raise Forbidden(f"Accepting {level.value.replace('_', ' ')} requires {rule['label']}.")
     if rule["residual_risk"] and not payload.residual_risk_accepted:
         raise ValidationFailed(
             f"Accepting {level.value.replace('_', ' ')} requires explicit residual-risk "
@@ -644,9 +776,7 @@ def record_decision(
 
 
 @router.get("/matters/{matter_id}/decisions", response_model=list[DecisionOut])
-def list_decisions(
-    matter_id: uuid.UUID, db: Db, principal: CurrentUser
-) -> list[DecisionRecord]:
+def list_decisions(matter_id: uuid.UUID, db: Db, principal: CurrentUser) -> list[DecisionRecord]:
     return list(
         db.execute(
             select(DecisionRecord)
@@ -771,9 +901,7 @@ def override_tier(
     proposed = RiskTier(payload.tier)
     lowering = proposed.value < matter.risk_tier
     if lowering and not tiering.may_lower_tier(principal.is_head_of_legal, payload.reason):
-        raise Forbidden(
-            "A tier may only be lowered by the Head of Legal, with a recorded reason."
-        )
+        raise Forbidden("A tier may only be lowered by the Head of Legal, with a recorded reason.")
 
     before = matter.risk_tier
     matter.risk_tier = proposed.value
@@ -798,9 +926,7 @@ def override_tier(
 
 
 @router.post("/matters/{matter_id}/links", status_code=201)
-def link_matter(
-    matter_id: uuid.UUID, payload: LinkRequest, db: Db, principal: CurrentUser
-) -> Ack:
+def link_matter(matter_id: uuid.UUID, payload: LinkRequest, db: Db, principal: CurrentUser) -> Ack:
     matter = db.get(Matter, matter_id)
     target = db.get(Matter, payload.linked_matter_id)
     if matter is None or target is None:

@@ -8,6 +8,7 @@ from app.db.models.contract import (
     Obligation,
     SignatureRequest,
 )
+from app.db.models.conversation import Conversation, ConversationTurn
 from app.db.models.counterparty import Counterparty, Vendor
 from app.db.models.document import Document, ReviewFinding, Suggestion
 from app.db.models.evaluation import GoldenCase, GoldenSet
@@ -55,6 +56,8 @@ __all__ = [
     "ConfigSetting",
     "Connector",
     "Contract",
+    "Conversation",
+    "ConversationTurn",
     "Counterparty",
     "DecisionRecord",
     "Document",

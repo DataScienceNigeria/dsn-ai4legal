@@ -8,6 +8,10 @@ import { useAction } from "@/lib/hooks";
 
 type Attached = { name: string; size: number };
 
+function kilobytes(size: number): string {
+  return `${Math.max(1, Math.round(size / 1024))} KB`;
+}
+
 /*
   Every upload is validated by type and magic bytes, scanned, hashed and stored
   under object lock. A refused file is quarantined rather than silently dropped,
@@ -15,11 +19,14 @@ type Attached = { name: string; size: number };
 */
 export function Attachments({ requestId }: Readonly<{ requestId: string }>) {
   const [attached, setAttached] = React.useState<Attached[]>([]);
+  const [justStored, setJustStored] = React.useState<Attached | null>(null);
   const input = React.useRef<HTMLInputElement>(null);
 
   const send = useAction(async (file: File) => {
     await upload(`/requests/${requestId}/attachments`, file);
-    setAttached((previous) => [...previous, { name: file.name, size: file.size }]);
+    const stored = { name: file.name, size: file.size };
+    setAttached((previous) => [...previous, stored]);
+    setJustStored(stored);
   });
 
   return (
@@ -54,6 +61,13 @@ export function Attachments({ requestId }: Readonly<{ requestId: string }>) {
           />
         ) : null}
 
+        {justStored ? (
+          <Notice tone="good" title={`${justStored.name} is attached`}>
+            {kilobytes(justStored.size)}, scanned and stored under object lock. Legal can see it
+            now. Attach another if you have one, or you are done here.
+          </Notice>
+        ) : null}
+
         {attached.length === 0 ? (
           <Notice tone="info" title="Nothing attached yet">
             Files are scanned and stored under object lock. Once attached, a file cannot be
@@ -66,7 +80,7 @@ export function Attachments({ requestId }: Readonly<{ requestId: string }>) {
                 <Pill tone="good">Stored</Pill>
                 <span className="min-w-0 truncate">{file.name}</span>
                 <span className="ml-auto text-xs text-muted-foreground">
-                  {Math.round(file.size / 1024)} KB
+                  {kilobytes(file.size)}
                 </span>
               </li>
             ))}

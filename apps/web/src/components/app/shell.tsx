@@ -126,9 +126,22 @@ const NAV: { group: string; items: NavItem[] }[] = [
   },
 ];
 
+const SIDEBAR_KEY = "dsn-lai-sidebar";
+
 const ENTITY_NAMES: Record<string, string> = {
   DSN: "Data Science Nigeria",
   EAI: "EqualyzAI",
+};
+
+/*
+  The organisation already tints the whole surface through the data-entity
+  tokens in globals.css. That tint is deliberately faint, and faint colour is
+  not a cue anyone should have to rely on, so the name carries a mark beside it
+  in the organisation's own hue.
+*/
+const ENTITY_MARK: Record<string, string> = {
+  DSN: "bg-secondary",
+  EAI: "bg-primary",
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -152,6 +165,21 @@ function visibleNav(roles: string[]) {
     group: section.group,
     items: section.items.filter((item) => permitted(roles, item)),
   })).filter((section) => section.items.length > 0);
+}
+
+/*
+  A record belongs to one organisation, so switching organisation cannot leave
+  it open. Row-level security would refuse the next read anyway and the screen
+  would become a not-found; going back to the list the record came from says
+  the same thing without looking like a fault.
+*/
+const LIST_ROUTES = new Set(NAV.flatMap((section) => section.items.map((item) => item.href)));
+
+function listFor(pathname: string): string | null {
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments.length <= 2) return null;
+  const parent = `/${segments.slice(0, 2).join("/")}`;
+  return LIST_ROUTES.has(parent) ? parent : "/workspace";
 }
 
 function isActive(pathname: string, href: string): boolean {
@@ -183,114 +211,263 @@ function primaryRole(roles: string[]): string {
   return found ? ROLE_LABELS[found] : titleCase(roles[0] ?? "user");
 }
 
+/*
+  One component serves three shapes: the permanent rail, the collapsed rail and
+  the mobile drawer. Collapsing hides the words, never the items, so the set of
+  places a role can reach does not change with the width of the sidebar.
+
+  The four bands are separate components because each one branches on
+  `collapsed` in its own way, and reading four small branches beats reading one
+  function that branches nine times.
+*/
+function EntityMark({ code, className }: Readonly<{ code: string; className?: string }>) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "h-1.5 w-1.5 shrink-0 rounded-full",
+        ENTITY_MARK[code] ?? "bg-muted-foreground",
+        className,
+      )}
+    />
+  );
+}
+
+function SidebarBrand({
+  entity,
+  collapsed,
+  onToggle,
+}: Readonly<{ entity: string; collapsed: boolean; onToggle?: () => void }>) {
+  return (
+    <div
+      className={cn("flex items-center gap-3 border-b py-4", collapsed ? "flex-col px-2" : "px-4")}
+    >
+      <Image src="/dsn-logo.png" alt="" width={34} height={34} className="shrink-0 rounded-sm" />
+      {collapsed ? null : (
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[0.9375rem] font-semibold leading-tight">
+            Legal Operations
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <EntityMark code={entity} />
+            <span className="truncate">{ENTITY_NAMES[entity] ?? entity}</span>
+          </div>
+        </div>
+      )}
+      {onToggle ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
+          title={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+        >
+          <Icon name={collapsed ? "expand" : "collapse"} className="h-[1.15rem] w-[1.15rem]" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function EntitySwitch({
+  entities,
+  entity,
+  setEntity,
+  collapsed,
+}: Readonly<{
+  entities: string[];
+  entity: string;
+  setEntity: (code: string) => void;
+  collapsed: boolean;
+}>) {
+  if (entities.length <= 1) return null;
+
+  return (
+    <div className={cn("pt-3", collapsed ? "px-2" : "px-3")}>
+      <fieldset
+        className={cn(
+          "rounded-md border bg-card/60 p-1",
+          collapsed ? "flex flex-col gap-1" : "flex",
+        )}
+      >
+        <legend className="sr-only">Entity</legend>
+        {entities.map((code) => (
+          <button
+            key={code}
+            onClick={() => setEntity(code)}
+            aria-pressed={entity === code}
+            aria-label={ENTITY_NAMES[code] ?? code}
+            title={ENTITY_NAMES[code] ?? code}
+            className={cn(
+              "rounded-sm py-1.5 text-sm font-semibold transition-colors",
+              collapsed ? "w-full" : "flex-1",
+              entity === code
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <span className="flex items-center justify-center gap-1.5">
+              <EntityMark
+                code={code}
+                className={cn("transition-opacity", entity === code ? "opacity-100" : "opacity-40")}
+              />
+              {collapsed ? null : code}
+            </span>
+          </button>
+        ))}
+      </fieldset>
+    </div>
+  );
+}
+
+function NavLink({
+  item,
+  active,
+  collapsed,
+  onNavigate,
+}: Readonly<{
+  item: NavItem;
+  active: boolean;
+  collapsed: boolean;
+  onNavigate: () => void;
+}>) {
+  return (
+    <Link
+      href={item.href}
+      onClick={onNavigate}
+      title={collapsed ? item.label : `${item.label}, ${item.module}`}
+      aria-label={collapsed ? item.label : undefined}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "flex min-h-10 items-center rounded-md py-2 text-[0.9375rem] no-underline transition-colors",
+        collapsed ? "justify-center px-0" : "gap-3 px-3",
+        active
+          ? "bg-heading/10 font-semibold text-heading"
+          : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
+      )}
+    >
+      <Icon
+        name={item.icon}
+        className={cn(
+          "h-[1.15rem] w-[1.15rem] shrink-0",
+          active ? "text-heading" : "text-muted-foreground/70",
+        )}
+      />
+      {collapsed ? null : <span className="truncate">{item.label}</span>}
+    </Link>
+  );
+}
+
+function SidebarNav({
+  sections,
+  pathname,
+  collapsed,
+  onNavigate,
+}: Readonly<{
+  sections: { group: string; items: NavItem[] }[];
+  pathname: string;
+  collapsed: boolean;
+  onNavigate: () => void;
+}>) {
+  return (
+    <nav
+      className={cn("flex-1 overflow-y-auto py-3", collapsed ? "px-2" : "px-3")}
+      aria-label="Workspace"
+    >
+      {sections.map((section) => (
+        <div key={section.group} className="mb-5 last:mb-0">
+          {collapsed ? (
+            <div className="mx-2 mb-2 border-t" />
+          ) : (
+            <div className="px-3 pb-2 text-2xs font-semibold uppercase tracking-[0.08em] text-heading">
+              {section.group}
+            </div>
+          )}
+          <div className="space-y-0.5">
+            {section.items.map((item) => (
+              <NavLink
+                key={item.href}
+                item={item}
+                active={isActive(pathname, item.href)}
+                collapsed={collapsed}
+                onNavigate={onNavigate}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+function SidebarFooter({ me, collapsed }: Readonly<{ me: Me; collapsed: boolean }>) {
+  const role = primaryRole(me.roles);
+
+  return (
+    <div className={cn("border-t py-3", collapsed ? "px-2" : "px-3")}>
+      <Link
+        href="/portal"
+        title="Open the requester portal"
+        className="mb-3 block rounded-md border px-3 py-2 text-center text-sm text-muted-foreground no-underline transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+      >
+        {collapsed ? (
+          <Icon name="inbox" className="mx-auto h-[1.15rem] w-[1.15rem]" />
+        ) : (
+          "Open the requester portal"
+        )}
+      </Link>
+      <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
+        <span
+          title={collapsed ? `${me.name}, ${role}` : undefined}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary text-sm font-semibold text-secondary-foreground"
+        >
+          {initials(me.name)}
+        </span>
+        {collapsed ? null : (
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">{me.name}</div>
+            <div className="truncate text-xs text-muted-foreground">{role}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Sidebar({
   me,
   entity,
   setEntity,
   pathname,
+  collapsed,
+  onToggle,
   onNavigate,
 }: Readonly<{
   me: Me;
   entity: string;
   setEntity: (code: string) => void;
   pathname: string;
+  collapsed: boolean;
+  onToggle?: () => void;
   onNavigate: () => void;
 }>) {
-  const sections = visibleNav(me.roles);
-
   return (
-    <div className="flex h-full flex-col bg-card">
-      <div className="flex items-center gap-3 border-b px-4 py-4">
-        <Image src="/dsn-logo.png" alt="" width={34} height={34} className="rounded-sm" />
-        <div className="min-w-0">
-          <div className="truncate text-[0.9375rem] font-semibold leading-tight">
-            Legal Operations
-          </div>
-          <div className="truncate text-xs text-muted-foreground">
-            {ENTITY_NAMES[entity] ?? entity}
-          </div>
-        </div>
-      </div>
-
-      {me.entities.length > 1 ? (
-        <div className="px-3 pt-3">
-          <fieldset className="flex rounded-md bg-muted p-1">
-            <legend className="sr-only">Entity</legend>
-            {me.entities.map((code) => (
-              <button
-                key={code}
-                onClick={() => setEntity(code)}
-                aria-pressed={entity === code}
-                className={cn(
-                  "flex-1 rounded-sm py-1.5 text-sm font-semibold transition-colors",
-                  entity === code
-                    ? "bg-card text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {code}
-              </button>
-            ))}
-          </fieldset>
-        </div>
-      ) : null}
-
-      <nav className="flex-1 overflow-y-auto px-3 py-3" aria-label="Workspace">
-        {sections.map((section) => (
-          <div key={section.group} className="mb-5 last:mb-0">
-            <div className="px-3 pb-2 text-2xs font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">
-              {section.group}
-            </div>
-            <div className="space-y-0.5">
-              {section.items.map((item) => {
-                const active = isActive(pathname, item.href);
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={onNavigate}
-                    title={`${item.label}, ${item.module}`}
-                    aria-current={active ? "page" : undefined}
-                    className={cn(
-                      "flex min-h-10 items-center gap-3 rounded-md px-3 py-2 text-[0.9375rem] no-underline transition-colors",
-                      active
-                        ? "bg-secondary/12 font-semibold text-secondary"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                    )}
-                  >
-                    <Icon
-                      name={item.icon}
-                      className={cn(
-                        "h-[1.15rem] w-[1.15rem] shrink-0",
-                        active ? "text-secondary" : "text-muted-foreground/70",
-                      )}
-                    />
-                    <span className="truncate">{item.label}</span>
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </nav>
-
-      <div className="border-t px-3 py-3">
-        <Link
-          href="/portal"
-          className="mb-3 block rounded-md border px-3 py-2 text-center text-sm text-muted-foreground no-underline hover:bg-muted hover:text-foreground"
-        >
-          Open the requester portal
-        </Link>
-        <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary text-sm font-semibold text-secondary-foreground">
-            {initials(me.name)}
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium">{me.name}</div>
-            <div className="truncate text-xs text-muted-foreground">{primaryRole(me.roles)}</div>
-          </div>
-        </div>
-      </div>
+    <div className="flex h-full flex-col bg-sidebar">
+      <SidebarBrand entity={entity} collapsed={collapsed} onToggle={onToggle} />
+      <EntitySwitch
+        entities={me.entities}
+        entity={entity}
+        setEntity={setEntity}
+        collapsed={collapsed}
+      />
+      <SidebarNav
+        sections={visibleNav(me.roles)}
+        pathname={pathname}
+        collapsed={collapsed}
+        onNavigate={onNavigate}
+      />
+      <SidebarFooter me={me} collapsed={collapsed} />
     </div>
   );
 }
@@ -300,6 +477,41 @@ export function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
   const pathname = usePathname();
   const router = useRouter();
   const [drawerOpen, setDrawerOpen] = React.useState(false);
+  const [collapsed, setCollapsed] = React.useState(false);
+
+  /*
+    Read once on mount rather than during render, because the server has no
+    storage to read and a mismatch would be a hydration error.
+  */
+  React.useEffect(() => {
+    try {
+      setCollapsed(globalThis.localStorage.getItem(SIDEBAR_KEY) === "collapsed");
+    } catch {
+      setCollapsed(false);
+    }
+  }, []);
+
+  const switchEntity = React.useCallback(
+    (code: string) => {
+      if (code === entity) return;
+      setEntity(code);
+      const list = listFor(pathname);
+      if (list) router.replace(list);
+    },
+    [entity, setEntity, pathname, router],
+  );
+
+  const toggleSidebar = React.useCallback(() => {
+    setCollapsed((previous) => {
+      const next = !previous;
+      try {
+        globalThis.localStorage.setItem(SIDEBAR_KEY, next ? "collapsed" : "expanded");
+      } catch {
+        // A browser that refuses storage still gets the toggle, just not the memory of it.
+      }
+      return next;
+    });
+  }, []);
 
   React.useEffect(() => {
     setDrawerOpen(false);
@@ -379,13 +591,20 @@ export function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
       >
         Skip to the content
       </a>
-      <aside className="hidden w-[17rem] shrink-0 border-r lg:block xl:w-[18.5rem]">
+      <aside
+        className={cn(
+          "hidden shrink-0 border-r transition-[width] duration-200 lg:block",
+          collapsed ? "w-[4.25rem]" : "w-[17rem] xl:w-[18.5rem]",
+        )}
+      >
         <div className="sticky top-0 h-screen">
           <Sidebar
             me={me}
             entity={entity}
-            setEntity={setEntity}
+            setEntity={switchEntity}
             pathname={pathname}
+            collapsed={collapsed}
+            onToggle={toggleSidebar}
             onNavigate={() => undefined}
           />
         </div>
@@ -403,8 +622,9 @@ export function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
             <Sidebar
               me={me}
               entity={entity}
-              setEntity={setEntity}
+              setEntity={switchEntity}
               pathname={pathname}
+              collapsed={false}
               onNavigate={() => setDrawerOpen(false)}
             />
           </div>
@@ -442,13 +662,15 @@ export function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
             <ThemeToggle />
             <Button
               size="sm"
-              variant="ghost"
+              variant="destructive"
               onClick={() => {
                 logout();
                 router.replace("/sign-in");
               }}
             >
-              Sign out
+              <Icon name="signout" className="h-4 w-4" />
+              <span className="hidden sm:inline">Sign out</span>
+              <span className="sr-only sm:hidden">Sign out</span>
             </Button>
           </div>
         </header>

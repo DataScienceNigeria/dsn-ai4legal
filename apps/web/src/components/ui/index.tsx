@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import * as React from "react";
 
 import { cn } from "@/lib/utils";
@@ -203,20 +204,35 @@ export function Tabs({
   );
 }
 
+/*
+  A figure on a dashboard is a question, and the answer is a list somewhere
+  else. Where a `href` is given the whole tile becomes the link to that list,
+  rather than leaving the reader to work out which menu item holds the records
+  behind the number.
+*/
 export function Kpi({
   label,
   value,
   detail,
   tone = "neutral",
+  href,
 }: Readonly<{
   label: string;
   value: React.ReactNode;
   detail?: React.ReactNode;
   tone?: Tone;
+  href?: string;
 }>) {
-  return (
-    <div className="rounded-lg border bg-card p-4 sm:p-5">
-      <div className="text-sm text-muted-foreground">{label}</div>
+  const body = (
+    <>
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-sm text-muted-foreground">{label}</span>
+        {href ? (
+          <span aria-hidden className="text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
+            &rarr;
+          </span>
+        ) : null}
+      </div>
       <div
         className={cn(
           "mt-1.5 text-3xl font-semibold leading-none tracking-tight",
@@ -228,7 +244,20 @@ export function Kpi({
         {value}
       </div>
       {detail ? <div className="mt-2 text-xs text-muted-foreground">{detail}</div> : null}
-    </div>
+    </>
+  );
+
+  if (!href) {
+    return <div className="rounded-lg border bg-card p-4 sm:p-5">{body}</div>;
+  }
+
+  return (
+    <Link
+      href={href}
+      className="group block rounded-lg border bg-card p-4 text-foreground no-underline transition-colors hover:border-heading sm:p-5"
+    >
+      {body}
+    </Link>
   );
 }
 
@@ -285,7 +314,7 @@ export function PageTitle({
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight text-secondary sm:text-3xl">
+        <h1 className="text-2xl font-semibold tracking-tight text-heading sm:text-3xl">
           {title}
         </h1>
         {subtitle ? (
@@ -366,6 +395,14 @@ export function Mono({ children, className }: Readonly<{ children: React.ReactNo
   );
 }
 
+/*
+  The header offset is zero, not the height of the page header. Every table
+  sits inside .table-scroll, and overflow-x: auto makes the browser compute
+  overflow-y: auto with it, so that box is the scrollport a sticky child
+  measures against. A 4rem offset there did not hold the header below the page
+  header; it pushed the header 4rem below its own place in the table and let
+  the first row show through the gap.
+*/
 export function Row({
   cols,
   head,
@@ -383,7 +420,7 @@ export function Row({
       className={cn(
         "grid items-center gap-3 px-4 sm:gap-4 sm:px-5",
         head
-          ? "sticky top-16 z-10 border-b bg-muted py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+          ? "sticky top-0 z-10 border-b bg-muted py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground"
           : "border-b py-3.5 text-sm last:border-b-0 hover:bg-muted/30",
         className,
       )}

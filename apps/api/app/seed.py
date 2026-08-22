@@ -168,8 +168,13 @@ def seed_request_types(session) -> dict[str, RequestType]:
                 },
                 {
                     "name": "term_months",
-                    "label": "How long should it run",
+                    "label": "How long should it run, in months",
                     "type": "number",
+                    "unit": "months",
+                    "help_text": (
+                        "A whole number of months. 12 for a year, 36 for three years. "
+                        "Leave it blank if it should run until either side ends it."
+                    ),
                     "mandatory": False,
                     "progressive": True,
                 },
@@ -193,7 +198,14 @@ def seed_request_types(session) -> dict[str, RequestType]:
                     "mandatory": True,
                 },
                 {"name": "scope", "label": "What will they do", "type": "text", "mandatory": True},
-                {"name": "value_amount", "label": "Fee", "type": "number", "mandatory": True},
+                {
+                    "name": "value_amount",
+                    "label": "Fee",
+                    "type": "number",
+                    "unit": "NGN",
+                    "help_text": "The total fee, in naira, excluding VAT.",
+                    "mandatory": True,
+                },
                 {"name": "required_date", "label": "Start date", "type": "date", "mandatory": True},
                 {
                     "name": "exclusivity",
@@ -299,6 +311,7 @@ def seed_request_types(session) -> dict[str, RequestType]:
                     "name": "value_amount",
                     "label": "Value, if any",
                     "type": "number",
+                    "unit": "NGN",
                     "mandatory": False,
                 },
                 {
@@ -894,6 +907,159 @@ def seed_counterparties(session, users: dict[str, User]) -> dict[str, Counterpar
     return out
 
 
+# Every matter but the restricted investigation began as a request from a
+# colleague. Seeding matters without one left the platform unable to show where
+# any of its work came from, and the "what was asked for" panel blank on every
+# screen but the one request raised by hand.
+#
+# The investigation is deliberately absent. A restricted internal matter is
+# opened by Legal, not raised through the portal, and a fabricated request
+# behind it would misrepresent how that work starts.
+MATTER_ORIGINS: dict[str, dict] = {
+    "EAI-COM-2026-0011": {
+        "reference": "REQ-2026-01170",
+        "type_code": "nda_mutual",
+        "requester": "Ngozi Adeyemi",
+        "subject": "Mutual NDA with Harmattan Analytics",
+        "purpose": (
+            "We are scoping a joint bid with Harmattan and need to exchange model "
+            "performance figures and client names before either side commits."
+        ),
+        "answers": {
+            "counterparty": "Harmattan Analytics Limited",
+            "purpose": ("Model performance figures, client names and our pricing bands."),
+            "term_months": 24,
+        },
+        "raised_hours": 30,
+    },
+    "EAI-COM-2026-0009": {
+        "reference": "REQ-2026-01171",
+        "type_code": "their_paper",
+        "requester": "Ngozi Adeyemi",
+        "subject": "Sahel Cloud sent us their master services agreement",
+        "purpose": (
+            "Sahel Cloud will host the inference workloads. They have sent their own "
+            "master services agreement and will not start until it is signed."
+        ),
+        "answers": {
+            "counterparty": "Sahel Cloud Services Limited",
+            "purpose": "Hosting and inference for the production models.",
+            "their_paper": True,
+        },
+        "personal_data": True,
+        "leaves_nigeria": True,
+        "raised_hours": 240,
+    },
+    "EAI-CON-2026-0038": {
+        "reference": "REQ-2026-01172",
+        "type_code": "partnership",
+        "requester": "Ngozi Adeyemi",
+        "subject": "Partnership agreement with Kano Partners",
+        "purpose": (
+            "A joint delivery arrangement for the northern programme. They bring the "
+            "field teams, we bring the platform, and revenue is shared."
+        ),
+        "answers": {
+            "counterparty": "Kano Partners Limited",
+            "purpose": "Joint delivery of the northern programme, revenue shared.",
+            "value_amount": 18_000_000,
+        },
+        "value_amount": 18_000_000,
+        "raised_hours": 44,
+    },
+    "DSN-EMP-2026-0104": {
+        "reference": "REQ-2026-01173",
+        "type_code": "consultant_engagement",
+        "requester": "Tunde Bakare",
+        "subject": "Consultant engagement, Olamide Bello",
+        "purpose": (
+            "Olamide is writing the curriculum for the schools programme. Six weeks, "
+            "paid on delivery of each module."
+        ),
+        "answers": {
+            "counterparty": "Olamide Bello",
+            "scope": "Write and review the six curriculum modules for the schools programme.",
+            "value_amount": 4_200_000,
+            "exclusivity": False,
+        },
+        "value_amount": 4_200_000,
+        "raised_hours": 160,
+    },
+    "DSN-COM-2026-0087": {
+        "reference": "REQ-2026-01174",
+        "type_code": "data_sharing",
+        "requester": "Segun Lawal",
+        "subject": "Data-sharing agreement with the Lagos Data Institute",
+        "purpose": (
+            "The Institute holds the anonymised health cohort we need to train the "
+            "triage model. They want a data-sharing agreement before releasing it."
+        ),
+        "answers": {
+            "counterparty": "Lagos Data Institute",
+            "purpose": "Training the triage model on the anonymised health cohort.",
+            "data_categories": (
+                "Anonymised patient records: age band, presenting condition, outcome."
+            ),
+        },
+        "personal_data": True,
+        "special_category_data": True,
+        "raised_hours": 90,
+    },
+    "EAI-COM-2026-0004": {
+        "reference": "REQ-2026-01175",
+        "type_code": "partnership",
+        "requester": "Ngozi Adeyemi",
+        "subject": "Reseller agreement with Zamfara Agritech",
+        "purpose": (
+            "Zamfara Agritech want to resell the advisory product to their cooperative "
+            "members. They asked for exclusivity in the north west; we said no."
+        ),
+        "answers": {
+            "counterparty": "Zamfara Agritech Limited",
+            "purpose": "Reselling the advisory product to cooperative members.",
+            "value_amount": 9_500_000,
+        },
+        "value_amount": 9_500_000,
+        "raised_hours": 4_400,
+    },
+}
+
+
+def build_origin_request(number: str, matter, users, types, counterparty) -> Request | None:
+    """The request a seeded matter was accepted from.
+
+    Accepted rather than open: it has already become a matter, so it belongs in
+    no triage queue.
+    """
+    origin = MATTER_ORIGINS.get(number)
+    if origin is None:
+        return None
+
+    raised = NOW - timedelta(hours=origin["raised_hours"])
+    return Request(
+        reference=origin["reference"],
+        entity=matter.entity,
+        request_type_id=types[origin["type_code"]].id,
+        requester_id=users[origin["requester"]].id,
+        subject=origin["subject"],
+        purpose=origin["purpose"],
+        proposed_counterparty=counterparty.legal_name if counterparty else None,
+        counterparty_id=matter.counterparty_id,
+        required_date=(raised + timedelta(days=7)).date(),
+        value_amount=origin.get("value_amount"),
+        personal_data=origin.get("personal_data", False),
+        special_category_data=origin.get("special_category_data", False),
+        third_party_confidential=origin.get("third_party_confidential", False),
+        leaves_nigeria=origin.get("leaves_nigeria", False),
+        privacy_flag=matter.privacy_flag,
+        answers=dict(origin["answers"]),
+        status=MatterState.ACCEPTED.value,
+        triage_notes="Accepted at triage and opened as a matter.",
+        acknowledged_at=raised + timedelta(minutes=1),
+        created_at=raised,
+    )
+
+
 def seed_matters(session, users, counterparties, types, templates, clauses) -> dict[str, Matter]:
     ifeoma = users["Ifeoma Chukwu"]
     adaeze = users["Adaeze Okafor"]
@@ -1044,6 +1210,14 @@ def seed_matters(session, users, counterparties, types, templates, clauses) -> d
             matter.blocker = "Awaiting Head of Legal on the liability position"
         session.add(matter)
         session.flush()
+
+        origin = build_origin_request(
+            number, matter, users, types, counterparties[cpt] if cpt else None
+        )
+        if origin is not None:
+            session.add(origin)
+            session.flush()
+            matter.request_id = origin.id
 
         session.add(
             MatterTransition(

@@ -16,6 +16,9 @@ class FieldDefinition(BaseModel):
     label: str
     type: str = "string"
     help_text: str | None = None
+    #: What the number is counted in. Rendered beside the box, because a bare
+    #: number field asks the person filling it in to guess the unit.
+    unit: str | None = None
     options: list[str] = Field(default_factory=list)
     mandatory: bool = False
     #: Shown only when this expression is true against the answers so far.
@@ -110,6 +113,52 @@ class RequestStatusOut(BaseModel):
     timeline: list[TimelineEntry]
 
 
+class RequestAnswer(BaseModel):
+    """One question as it was put and the answer as it was given.
+
+    The label travels with the value because a triage screen showing
+    `term_months: 24` asks the reader to know the form. Showing the question
+    the requester actually saw does not.
+    """
+
+    name: str
+    label: str
+    value: str
+
+
+class AttachmentBrief(BaseModel):
+    id: UUID
+    filename: str
+    content_type: str
+    size_bytes: int
+    scan_status: str
+
+
+class RequestDetail(BaseModel):
+    """What the requester sent, for the person deciding what to do with it."""
+
+    id: UUID
+    reference: str
+    entity: str
+    request_type: str
+    subject: str
+    purpose: str | None = None
+    requester_name: str | None = None
+    requester_email: str | None = None
+    proposed_counterparty: str | None = None
+    required_date: date | None = None
+    value_amount: float | None = None
+    value_currency: str = "NGN"
+    personal_data: bool = False
+    special_category_data: bool = False
+    third_party_confidential: bool = False
+    leaves_nigeria: bool = False
+    status: str
+    submitted_at: datetime
+    answers: list[RequestAnswer] = Field(default_factory=list)
+    attachments: list[AttachmentBrief] = Field(default_factory=list)
+
+
 class TriageProposal(BaseModel):
     tier: str
     tier_rationale: list[str]
@@ -117,6 +166,7 @@ class TriageProposal(BaseModel):
     triggers_privacy_assessment: bool
     proposed_owner: UUID | None
     owner_rationale: str | None
+    request: RequestDetail | None = None
 
 
 class AcceptRequest(BaseModel):

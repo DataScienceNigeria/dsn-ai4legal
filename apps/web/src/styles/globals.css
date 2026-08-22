@@ -8,6 +8,12 @@
   No component carries a hex value, which is what lets dark mode be a single
   class on the root element.
 
+  The two organisations share every token but the ground they sit on. DSN is
+  the neutral whitish default; EqualyzAI shifts the background, the card and
+  the borders a few points towards green. It is small enough not to compete
+  with status colour, and large enough that switching organisation is visible
+  without reading the label.
+
   Two constraints from DESIGN_TOKENS.md are enforced by how these are assigned.
   Blue fails WCAG AA for body text at 3.1:1, so it is bound to --info and used
   for links, borders and chart fills only. Green and red alone fail for
@@ -17,7 +23,7 @@
 
 @layer base {
   :root {
-    --background: 120 12% 96%;
+    --background: 228 30% 98%;
     --foreground: 0 0% 10%;
 
     --card: 0 0% 100%;
@@ -55,6 +61,10 @@
     --border: 240 6% 90%;
     --input: 240 6% 90%;
     --ring: 120 85% 26%;
+
+    /* DSN carries the brand blue. --heading is blue-deep, 7.4:1 on white. */
+    --sidebar: 207 58% 96%;
+    --heading: 215 99% 37%;
   }
 
   .dark {
@@ -92,10 +102,51 @@
     --border: 240 4% 20%;
     --input: 240 4% 20%;
     --ring: 120 55% 45%;
+
+    --sidebar: 215 32% 12%;
+    --heading: 207 78% 70%;
+  }
+
+  :root[data-entity="EAI"] {
+    --background: 138 26% 96%;
+    --card: 140 36% 99%;
+    --popover: 140 36% 99%;
+    --muted: 140 16% 94%;
+    --accent: 140 16% 94%;
+    --border: 140 14% 88%;
+    --input: 140 14% 88%;
+
+    /* EqualyzAI carries the brand green. --heading is the success text tone. */
+    --sidebar: 151 42% 95%;
+    --heading: 151 100% 22%;
+  }
+
+  .dark[data-entity="EAI"] {
+    --background: 150 12% 7%;
+    --card: 150 10% 10%;
+    --popover: 150 10% 10%;
+    --muted: 150 8% 15%;
+    --accent: 150 8% 17%;
+    --border: 150 8% 21%;
+    --input: 150 8% 21%;
+
+    --sidebar: 151 24% 11%;
+    --heading: 151 52% 60%;
   }
 
   * {
     @apply border-border;
+  }
+
+  /*
+    The organisation tint lands on surfaces, not only on the page, so a switch
+    carries across the sidebar, the header and every card at the same pace.
+  */
+  .bg-background,
+  .bg-card,
+  .bg-muted,
+  .bg-sidebar {
+    transition: background-color 260ms ease, border-color 260ms ease;
   }
 
   /*
@@ -115,6 +166,8 @@
     text-rendering: optimizeLegibility;
     /* Nothing may push the page sideways. Wide content scrolls in its own box. */
     overflow-x: hidden;
+    /* Slow enough to register as a change of organisation, not a flicker. */
+    transition: background-color 260ms ease;
   }
 
   @media (prefers-reduced-motion: reduce) {

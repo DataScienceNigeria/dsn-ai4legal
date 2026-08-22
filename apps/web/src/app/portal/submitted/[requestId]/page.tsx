@@ -1,16 +1,16 @@
 "use client";
 
-import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 import { Attachments } from "@/components/app/attachments";
-import { Card, CardBody, Mono, Notice, PageTitle, Spinner } from "@/components/ui";
+import { Button, Card, CardBody, Mono, Notice, PageTitle, Spinner } from "@/components/ui";
 import { useApi } from "@/lib/hooks";
 import type { RequestStatus } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
 export default function Submitted() {
   const { requestId } = useParams<{ requestId: string }>();
+  const router = useRouter();
   const { data, loading } = useApi<RequestStatus>(`/requests/${requestId}/status`);
 
   if (loading) return <Spinner />;
@@ -48,9 +48,21 @@ export default function Submitted() {
         emailing anyone.
       </Notice>
 
-      <Link href="/portal/status" className="text-sm">
-        See all my requests
-      </Link>
+      <Card>
+        <CardBody className="space-y-3">
+          <div className="text-sm font-semibold">You are finished here</div>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            Attach anything else you have first. Nothing else is required of you, and you will be
+            told when the position changes.
+          </p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button variant="primary" onClick={() => router.push("/portal/status")}>
+              Track this request
+            </Button>
+            <Button onClick={() => router.push("/portal")}>Raise another request</Button>
+          </div>
+        </CardBody>
+      </Card>
     </div>
   );
 }

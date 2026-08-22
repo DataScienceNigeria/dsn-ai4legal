@@ -1,13 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import * as React from "react";
 
 import { useSession } from "@/components/app/session";
 import { SlaPill, StatusPill, TierPill } from "@/components/app/status";
-import { Button, Card, CardHeader, Empty, PageTitle, Row, Spinner } from "@/components/ui";
+import { Button, Card, CardHeader, Empty, Notice, PageTitle, Row, Spinner } from "@/components/ui";
 import { useApi } from "@/lib/hooks";
 import type { Matter } from "@/lib/types";
+import { titleCase } from "@/lib/utils";
 
 const FILTERS = [
   { id: "all", label: "All open" },
@@ -16,18 +18,38 @@ const FILTERS = [
   { id: "waiting", label: "Waiting on someone" },
 ];
 
+/*
+  The filter is in the query string, so a figure on the delivery dashboard can
+  link straight to the matters behind it and the reader can send that link on.
+*/
+const FILTER_IDS = new Set(FILTERS.map((option) => option.id));
+
+function narrowedTo(ownerName: string | null, tier: string | null): string {
+  const parts: string[] = [];
+  if (ownerName) parts.push(`${ownerName}'s matters`);
+  if (tier) parts.push(titleCase(tier));
+  return `Showing only ${parts.join(", ") || "part of the list"}`;
+}
+
 export default function Matters() {
   const { entity, me } = useSession();
-  const [filter, setFilter] = React.useState("all");
+  const params = useSearchParams();
+  const requested = params.get("filter") ?? "all";
+  const owner = params.get("owner");
+  const ownerName = params.get("owner_name");
+  const tier = params.get("tier");
+  const [filter, setFilter] = React.useState(FILTER_IDS.has(requested) ? requested : "all");
   const { data, loading, error } = useApi<Matter[]>("/matters", [entity]);
 
   const rows = React.useMemo(() => {
-    const all = data ?? [];
+    let all = data ?? [];
+    if (owner) all = all.filter((m) => m.responsible_lawyer_id === owner);
+    if (tier) all = all.filter((m) => m.risk_tier === tier);
     if (filter === "mine") return all.filter((m) => m.responsible_lawyer_id === me?.id);
     if (filter === "breach") return all.filter((m) => m.sla?.breached);
     if (filter === "waiting") return all.filter((m) => m.blocker || m.sla?.running === false);
     return all;
-  }, [data, filter, me?.id]);
+  }, [data, filter, owner, tier, me?.id]);
 
   return (
     <div className="space-y-6">
@@ -35,6 +57,13 @@ export default function Matters() {
         title="Matters"
         subtitle="A matter is the container for a piece of legal work. Everything attaches to it."
       />
+
+      {owner || tier ? (
+        <Notice tone="info" title={narrowedTo(ownerName, tier)}>
+          You arrived from the delivery dashboard.{" "}
+          <Link href="/workspace/matters">Show everything</Link>.
+        </Notice>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-1.5">
         {FILTERS.map((option) => (

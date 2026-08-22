@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Query
 from sqlalchemy import select
@@ -15,6 +16,7 @@ from app.core import audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Conflict, NotFound, Refused
 from app.db.models.contract import Contract, Obligation
+from app.db.models.conversation import Conversation, ConversationTurn
 from app.db.models.counterparty import Counterparty
 from app.db.models.document import Document, ReviewFinding
 from app.db.models.governance import Communication, ExtractedValue
@@ -38,10 +40,16 @@ from app.schemas.governance import (
     AskRequest,
     CommunicationOut,
     ConfirmFromInbox,
+    ConversationBrief,
+    ConversationMessage,
+    ConversationOut,
+    ConversationTurnOut,
     CorrectClassification,
     ExtractionDecision,
+    NewConversation,
     PositionHistoryEntry,
     PositionHistoryOut,
+    RenameConversation,
     SourceOut,
 )
 from app.schemas.matters import FindingOut, ObligationOut
@@ -89,42 +97,94 @@ def _house_style(db, counterparty=None):
     return style
 
 
-@router.post("/ask")
-def ask(payload: AskRequest, db: Db, principal: CurrentUser, entity: WorkingEntity) -> AnswerOut:
-    """A cited answer over the library, agreements and decision records, M10.
+ASK_ROLES = (Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN)
+
+NOTHING_RETRIEVED = (
+    "No record you are able to open supports an answer to that question. "
+    "Where a restricted matter is in scope, no title, snippet or citation "
+    "from it can appear here, and the attempt is logged."
+)
+
+FILTERED_FIRST = (
+    "Retrieval filters by entity, role and matter access before ranking, so "
+    "records outside your access never enter the candidate set."
+)
+
+# A follow-up carries its subject in the turn before it. Retrieval reads one
+# string, so a short question is searched together with the one it follows;
+# a question that stands on its own is searched on its own, because folding an
+# unrelated earlier question into it would drag the wrong records in.
+UNTITLED = "New conversation"
+
+FOLLOW_UP_WORDS = frozenset(
+    {"it", "that", "this", "they", "them", "those", "these", "he", "she", "there", "same"}
+)
+
+
+def _is_follow_up(question: str) -> bool:
+    words = question.lower().replace("?", " ").split()
+    if not words:
+        return False
+    return len(words) <= 8 or bool(FOLLOW_UP_WORDS.intersection(words[:4]))
+
+
+def _transcript(history: list[tuple[str, str]]) -> str:
+    """The recent thread, as the model sees it.
+
+    Only the question and the first paragraph of each answer. Replaying whole
+    answers back into the prompt crowds out the retrieved records, which are
+    the only thing a citation can come from.
+    """
+    lines: list[str] = []
+    for question, answer in history[-6:]:
+        lines.append(f"Earlier question: {question}")
+        if answer:
+            lines.append(f"Answer given: {answer[:400]}")
+    return "\n".join(lines)
+
+
+def _answer(
+    db,
+    principal,
+    entity: str,
+    question: str,
+    *,
+    matter_id: uuid.UUID | None = None,
+    source_types: list[str] | None = None,
+    history: list[tuple[str, str]] | None = None,
+) -> AnswerOut:
+    """One cited answer, M10.
 
     Any statement without a citation is suppressed rather than shown. Retrieval
     filters by entity, role and matter access before ranking, so a restricted
     record never enters the candidate set.
     """
-    principal.require_role(
-        Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
-    )
+    history = history or []
+    query = question
+    if history and _is_follow_up(question):
+        query = f"{history[-1][0]} {question}"
 
     chunks = retrieval.retrieve(
         db,
-        payload.question,
+        query,
         entity,
-        source_types=payload.source_types or None,
-        matter_id=payload.matter_id,
+        source_types=source_types or None,
+        matter_id=matter_id,
         limit=8,
     )
 
     if not chunks:
         return AnswerOut(
             interaction_id="",
-            question=payload.question,
+            question=question,
             refused=True,
-            refusal_reason=(
-                "No record you are able to open supports an answer to that question. "
-                "Where a restricted matter is in scope, no title, snippet or citation "
-                "from it can appear here, and the attempt is logged."
-            ),
-            note=(
-                "Retrieval filters by entity, role and matter access before ranking, so "
-                "records outside your access never enter the candidate set."
-            ),
+            refusal_reason=NOTHING_RETRIEVED,
+            note=FILTERED_FIRST,
         )
+
+    user_content = f"Question: {question}"
+    if history:
+        user_content = f"{_transcript(history)}\n\nQuestion: {question}"
 
     envelope = invoke(
         db,
@@ -132,34 +192,304 @@ def ask(payload: AskRequest, db: Db, principal: CurrentUser, entity: WorkingEnti
             "clause_retrieval_answer",
             entity=entity,
             data_class=DataClass.CONFIDENTIAL,
-            user_content=f"Question: {payload.question}",
+            user_content=user_content,
             context=chunks,
-            matter_id=payload.matter_id,
+            matter_id=matter_id,
             user_id=uuid.UUID(principal.user_id),
-            input_summary=payload.question[:200],
+            input_summary=question[:200],
         ),
     )
 
     if envelope.refused:
         return AnswerOut(
             interaction_id=envelope.interaction_id,
-            question=payload.question,
+            question=question,
             refused=True,
             refusal_reason=envelope.refusal_reason,
         )
 
     return AnswerOut(
         interaction_id=envelope.interaction_id,
-        question=payload.question,
+        question=question,
         paragraphs=[
             AnswerParagraph(text=p.get("text", ""), cites=p.get("cites", []))
             for p in envelope.output.get("paragraphs", [])
         ],
-        sources=[SourceOut(**s.model_dump(include={"reference", "kind", "detail", "quote"}))
-                 for s in envelope.sources],
+        sources=[
+            SourceOut(**source.model_dump(include={"reference", "kind", "detail", "quote"}))
+            for source in envelope.sources
+        ],
         note=envelope.output.get("note"),
         suppressed_statements=int(envelope.output.get("suppressed_statements", 0)),
     )
+
+
+@router.post("/ask")
+def ask(payload: AskRequest, db: Db, principal: CurrentUser, entity: WorkingEntity) -> AnswerOut:
+    """A single cited answer, with no thread behind it.
+
+    Kept for callers that want one question answered and nothing kept. The
+    conversation endpoints below are the same answer with a record of it.
+    """
+    principal.require_role(*ASK_ROLES)
+    return _answer(
+        db,
+        principal,
+        entity,
+        payload.question,
+        matter_id=payload.matter_id,
+        source_types=payload.source_types,
+    )
+
+
+def _title_from(question: str) -> str:
+    """A thread names itself from its first question.
+
+    Cut on a word boundary rather than mid-word, because a list of threads is
+    read at a glance and a truncated word reads as a fault.
+    """
+    cleaned = " ".join(question.split())
+    if not cleaned:
+        return UNTITLED
+    if len(cleaned) <= 60:
+        return cleaned.rstrip("?.,;: ") or UNTITLED
+    cut = cleaned[:60].rsplit(" ", 1)[0]
+    return f"{cut.rstrip('?.,;: ')}..."
+
+
+def _load_conversation(db, conversation_id: uuid.UUID) -> Conversation:
+    """Row-level security already limits this to the caller's own threads, so a
+    row that is not returned is indistinguishable from one that never existed.
+    That is the intended answer."""
+    conversation = db.get(Conversation, conversation_id)
+    if conversation is None:
+        raise NotFound("That conversation was not found.")
+    return conversation
+
+
+def _brief(conversation: Conversation, db) -> ConversationBrief:
+    matter = db.get(Matter, conversation.matter_id) if conversation.matter_id else None
+    return ConversationBrief(
+        id=conversation.id,
+        entity=conversation.entity,
+        title=conversation.title,
+        matter_id=conversation.matter_id,
+        matter_number=matter.number if matter else None,
+        message_count=conversation.message_count,
+        last_message_at=conversation.last_message_at,
+        created_at=conversation.created_at,
+    )
+
+
+def _turn_out(turn: ConversationTurn) -> ConversationTurnOut:
+    return ConversationTurnOut(
+        id=turn.id,
+        sequence=turn.sequence,
+        question=turn.question,
+        answer=AnswerOut(**turn.answer) if turn.answer else None,
+        created_at=turn.created_at,
+    )
+
+
+def _full(conversation: Conversation, db) -> ConversationOut:
+    brief = _brief(conversation, db)
+    return ConversationOut(
+        **brief.model_dump(),
+        turns=[_turn_out(turn) for turn in conversation.turns],
+    )
+
+
+@router.get("/conversations")
+def list_conversations(
+    db: Db,
+    principal: CurrentUser,
+    entity: WorkingEntity,
+    archived: bool = False,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[ConversationBrief]:
+    """The caller's own threads in this entity, most recently used first."""
+    principal.require_role(*ASK_ROLES)
+    rows = db.execute(
+        select(Conversation)
+        .where(
+            Conversation.entity == entity,
+            Conversation.owner_id == uuid.UUID(principal.user_id),
+            Conversation.archived.is_(archived),
+        )
+        .order_by(Conversation.last_message_at.desc().nullslast(), Conversation.created_at.desc())
+        .limit(limit)
+    ).scalars()
+    return [_brief(row, db) for row in rows]
+
+
+@router.post("/conversations", status_code=201)
+def open_conversation(
+    payload: NewConversation, db: Db, principal: CurrentUser, entity: WorkingEntity
+) -> ConversationOut:
+    """Open a thread, optionally answering its first question in the same call."""
+    principal.require_role(*ASK_ROLES)
+
+    first = (payload.question or "").strip()
+    conversation = Conversation(
+        entity=entity,
+        owner_id=uuid.UUID(principal.user_id),
+        matter_id=payload.matter_id,
+        title=(
+            (payload.title or "").strip() or (_title_from(first) if first else UNTITLED)
+        ),
+    )
+    db.add(conversation)
+    db.flush()
+
+    audit.record(
+        db,
+        action="conversation.open",
+        object_type="ai_conversation",
+        object_id=str(conversation.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=entity,
+        detail=conversation.title,
+    )
+
+    if first:
+        _append_turn(db, principal, entity, conversation, first, [])
+
+    # Built before the commit. The session GUCs that row-level security reads
+    # are set with SET LOCAL, so they end with the transaction: a refresh after
+    # the commit runs with no identity and the policy hides the caller's own
+    # new row.
+    db.refresh(conversation)
+    result = _full(conversation, db)
+    db.commit()
+    return result
+
+
+def _append_turn(
+    db,
+    principal,
+    entity: str,
+    conversation: Conversation,
+    question: str,
+    source_types: list[str],
+) -> ConversationTurn:
+    history = [
+        (
+            turn.question,
+            " ".join(p.get("text", "") for p in (turn.answer or {}).get("paragraphs", [])),
+        )
+        for turn in conversation.turns
+    ]
+    answer = _answer(
+        db,
+        principal,
+        entity,
+        question,
+        matter_id=conversation.matter_id,
+        source_types=source_types,
+        history=history,
+    )
+
+    turn = ConversationTurn(
+        conversation_id=conversation.id,
+        sequence=conversation.message_count + 1,
+        question=question,
+        answer=answer.model_dump(mode="json"),
+        interaction_id=answer.interaction_id or None,
+        refused=answer.refused,
+    )
+    db.add(turn)
+    conversation.message_count += 1
+    conversation.last_message_at = datetime.now(UTC)
+    db.flush()
+    return turn
+
+
+@router.get("/conversations/{conversation_id}")
+def read_conversation(
+    conversation_id: uuid.UUID, db: Db, principal: CurrentUser, entity: WorkingEntity
+) -> ConversationOut:
+    principal.require_role(*ASK_ROLES)
+    del entity
+    return _full(_load_conversation(db, conversation_id), db)
+
+
+@router.post("/conversations/{conversation_id}/messages")
+def send_message(
+    conversation_id: uuid.UUID,
+    payload: ConversationMessage,
+    db: Db,
+    principal: CurrentUser,
+    entity: WorkingEntity,
+) -> ConversationTurnOut:
+    """Ask the next question in a thread.
+
+    The thread so far is put to the model as context, so a follow-up that says
+    "that clause" resolves. It never becomes a source: a citation can only come
+    from a retrieved record.
+    """
+    principal.require_role(*ASK_ROLES)
+    conversation = _load_conversation(db, conversation_id)
+
+    question = payload.question.strip()
+    if not question:
+        raise Refused("There is no question to answer.")
+
+    if conversation.message_count == 0 and conversation.title == UNTITLED:
+        conversation.title = _title_from(question)
+
+    turn = _append_turn(db, principal, entity, conversation, question, payload.source_types)
+    db.refresh(turn)
+    result = _turn_out(turn)
+    db.commit()
+    return result
+
+
+@router.patch("/conversations/{conversation_id}")
+def rename_conversation(
+    conversation_id: uuid.UUID,
+    payload: RenameConversation,
+    db: Db,
+    principal: CurrentUser,
+    entity: WorkingEntity,
+) -> ConversationBrief:
+    principal.require_role(*ASK_ROLES)
+    del entity
+    conversation = _load_conversation(db, conversation_id)
+    title = " ".join(payload.title.split())[:200]
+    if not title:
+        raise Refused("A conversation needs a name.")
+    conversation.title = title
+    result = _brief(conversation, db)
+    db.commit()
+    return result
+
+
+@router.delete("/conversations/{conversation_id}")
+def delete_conversation(
+    conversation_id: uuid.UUID, db: Db, principal: CurrentUser, entity: WorkingEntity
+) -> Ack:
+    """Delete the thread, not the record of what it asked.
+
+    The AI interaction log is written by the gateway and is not touched here,
+    so every question that reached a model remains accountable after the
+    transcript is gone.
+    """
+    principal.require_role(*ASK_ROLES)
+    conversation = _load_conversation(db, conversation_id)
+    audit.record(
+        db,
+        action="conversation.delete",
+        object_type="ai_conversation",
+        object_id=str(conversation.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=entity,
+        detail=f"{conversation.message_count} messages",
+    )
+    db.delete(conversation)
+    db.commit()
+    return Ack(message="The conversation is deleted. The AI interaction log is unaffected.")
 
 
 @router.get("/positions/{category}")
@@ -227,13 +557,9 @@ def inbox(
 
     stmt = select(Communication).where(Communication.entity == entity)
     if view == "action":
-        stmt = stmt.where(
-            Communication.handled.is_(False), Communication.implied_work.is_(False)
-        )
+        stmt = stmt.where(Communication.handled.is_(False), Communication.implied_work.is_(False))
     elif view == "watch":
-        stmt = stmt.where(
-            Communication.handled.is_(False), Communication.implied_work.is_(True)
-        )
+        stmt = stmt.where(Communication.handled.is_(False), Communication.implied_work.is_(True))
     else:
         stmt = stmt.where(Communication.handled.is_(True))
 
@@ -246,9 +572,7 @@ def inbox(
 
 
 @router.post("/classify/{communication_id}")
-def classify(
-    communication_id: uuid.UUID, db: Db, principal: CurrentUser
-) -> CommunicationOut:
+def classify(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> CommunicationOut:
     """Classify one message and propose a next step, M09.
 
     Nothing is sent and no matter is created until Legal confirms.
@@ -265,9 +589,7 @@ def classify(
             "inbox_classification",
             entity=record.entity,
             data_class=DataClass.CONFIDENTIAL,
-            user_content=(
-                "Classify this message and propose a next step for a person to confirm."
-            ),
+            user_content=("Classify this message and propose a next step for a person to confirm."),
             untrusted=[(f"email from {record.sender}", f"{record.subject}\n\n{record.body}")],
             user_id=uuid.UUID(principal.user_id),
             input_summary=record.subject[:200],
@@ -308,9 +630,7 @@ def classify(
 
 
 @router.post("/extract/{communication_id}")
-def extract(
-    communication_id: uuid.UUID, db: Db, principal: CurrentUser
-) -> list[dict]:
+def extract(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> list[dict]:
     """Pull the facts out, each with the sentence it came from."""
     principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
@@ -392,9 +712,7 @@ def correct_classification(
             uuid.UUID(principal.user_id),
             f"Reclassified as {payload.classification}. {payload.reason or ''}".strip(),
         )
-    return Ack(
-        message="Correction recorded and added to the evaluation candidates."
-    )
+    return Ack(message="Correction recorded and added to the evaluation candidates.")
 
 
 @router.post("/inbox/{communication_id}/confirm", status_code=201)
@@ -503,9 +821,7 @@ def confirm_from_inbox(
 
 
 @router.post("/draft/{matter_id}", status_code=201)
-def first_draft(
-    matter_id: uuid.UUID, brief: str, db: Db, principal: CurrentUser
-) -> dict:
+def first_draft(matter_id: uuid.UUID, brief: str, db: Db, principal: CurrentUser) -> dict:
     """A grounded first draft for a bespoke agreement, M05."""
     principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
@@ -537,9 +853,7 @@ def first_draft(
         limit=12,
     )
 
-    counterparty = (
-        db.get(Counterparty, matter.counterparty_id) if matter.counterparty_id else None
-    )
+    counterparty = db.get(Counterparty, matter.counterparty_id) if matter.counterparty_id else None
 
     envelope = invoke(
         db,
@@ -610,9 +924,7 @@ def first_draft(
         document_type=DocumentType.DRAFT.value,
         version=1
         + len(list(db.execute(select(Document).where(Document.matter_id == matter.id)).scalars())),
-        clause_versions=[
-            b["source_reference"] for b in blocks if b["source_reference"]
-        ],
+        clause_versions=[b["source_reference"] for b in blocks if b["source_reference"]],
         blocks=blocks,
         content_hash=content_hash(blocks),
         classification=matter.classification,
@@ -778,9 +1090,7 @@ def extract_obligations(
         )
 
     document = (
-        db.get(Document, contract.executed_document_id)
-        if contract.executed_document_id
-        else None
+        db.get(Document, contract.executed_document_id) if contract.executed_document_id else None
     )
     if document is None:
         raise NotFound("The executed copy for that contract was not found.")
@@ -857,7 +1167,5 @@ def decide_interaction(
     principal: CurrentUser,
     correction: str | None = None,
 ) -> Ack:
-    record_human_decision(
-        db, interaction_id, decision, uuid.UUID(principal.user_id), correction
-    )
+    record_human_decision(db, interaction_id, decision, uuid.UUID(principal.user_id), correction)
     return Ack(message=f"Recorded as {decision}.")

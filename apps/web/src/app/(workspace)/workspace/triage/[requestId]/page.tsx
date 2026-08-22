@@ -3,6 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import * as React from "react";
 
+import { RequestPanel } from "@/components/app/request-panel";
 import { TierPill } from "@/components/app/status";
 import {
   Button,
@@ -10,6 +11,7 @@ import {
   CardBody,
   CardHeader,
   Field,
+  Modal,
   Notice,
   PageTitle,
   Pill,
@@ -18,12 +20,111 @@ import {
   Spinner,
   Textarea,
 } from "@/components/ui";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
 import type { Matter, TriageProposal, UserRow } from "@/lib/types";
 import { titleCase } from "@/lib/utils";
 
 const TIERS = ["tier_1", "tier_2", "tier_3", "tier_4"];
+
+/*
+  One dialog serves both outcomes that end a request without a matter. Neither
+  defaults its note: returning sends the wording to the requester verbatim, and
+  closing produces no matter to carry an explanation, so what is written here
+  is the only record of why. The API refuses an empty one either way.
+*/
+function OutcomeDialog({
+  outcome,
+  note,
+  answer,
+  missing,
+  busy,
+  error,
+  onNote,
+  onAnswer,
+  onMissing,
+  onCancel,
+  onConfirm,
+}: Readonly<{
+  outcome: "close" | "return" | null;
+  note: string;
+  answer: string;
+  missing: string;
+  busy: boolean;
+  error: ApiError | null;
+  onNote: (value: string) => void;
+  onAnswer: (value: string) => void;
+  onMissing: (value: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}>) {
+  const closing = outcome === "close";
+
+  return (
+    <Modal
+      open={outcome !== null}
+      title={closing ? "Answer and close" : "Return for information"}
+      subtitle={
+        closing
+          ? "No matter is created, so this note is the only record of why. The requester is sent it."
+          : "The requester is sent this wording as it is written. No matter number is issued."
+      }
+      onClose={onCancel}
+      footer={
+        <>
+          <Button onClick={onCancel}>Cancel</Button>
+          <Button variant="primary" disabled={!note.trim() || busy} onClick={onConfirm}>
+            {closing ? "Close the request" : "Send it back"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {error ? (
+          <Refusal
+            title="That did not go through"
+            reason={error.message}
+            reasons={Object.values(error.fieldErrors)}
+          />
+        ) : null}
+
+        <Field
+          label={closing ? "Why is this being closed" : "What is missing"}
+          required
+          error={error?.fieldErrors.reason}
+          hint={
+            closing
+              ? "The reason a competent colleague would need to understand the decision in a year."
+              : "Say plainly what you need before this can be triaged."
+          }
+        >
+          <Textarea
+            value={note}
+            onChange={(event) => onNote(event.target.value)}
+            placeholder={
+              closing
+                ? "Covered by the existing framework agreement, so no new paper is needed."
+                : "The counterparty's legal name and the value are both missing."
+            }
+          />
+        </Field>
+
+        {closing ? (
+          <Field
+            label="The answer to send them"
+            hint="Optional. It is kept on the request record alongside the reason."
+          >
+            <Textarea value={answer} onChange={(event) => onAnswer(event.target.value)} />
+          </Field>
+        ) : (
+          <Field label="Each item they must supply" hint="One per line. Optional.">
+            <Textarea value={missing} onChange={(event) => onMissing(event.target.value)} />
+          </Field>
+        )}
+      </div>
+    </Modal>
+  );
+}
 
 export default function TriageDetail() {
   const { requestId } = useParams<{ requestId: string }>();
@@ -38,6 +139,10 @@ export default function TriageDetail() {
   const [restricted, setRestricted] = React.useState(false);
   const [tierAccepted, setTierAccepted] = React.useState(false);
   const [ownerAccepted, setOwnerAccepted] = React.useState(false);
+  const [outcome, setOutcome] = React.useState<"close" | "return" | null>(null);
+  const [outcomeNote, setOutcomeNote] = React.useState("");
+  const [answer, setAnswer] = React.useState("");
+  const [missing, setMissing] = React.useState("");
 
   const accept = useAction(async () => {
     const created = await api<Matter>(`/triage/${requestId}/accept`, {
@@ -53,10 +158,21 @@ export default function TriageDetail() {
     return created;
   });
 
+  /*
+    Neither outcome defaults its reason any more. Returning sends the wording
+    to the requester verbatim, and closing produces no matter, so the note
+    written here is the only record of why. The API refuses an empty one.
+  */
   const returnForInfo = useAction(async () => {
     await api(`/triage/${requestId}/return`, {
       method: "POST",
-      body: { reason: reason || "Instructions are incomplete.", missing_information: [] },
+      body: {
+        reason: outcomeNote.trim(),
+        missing_information: missing
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean),
+      },
     });
     router.push("/workspace/triage");
   });
@@ -64,7 +180,7 @@ export default function TriageDetail() {
   const closeIt = useAction(async () => {
     await api(`/triage/${requestId}/close`, {
       method: "POST",
-      body: { reason: reason || "Answered as a preliminary enquiry." },
+      body: { reason: outcomeNote.trim(), answer: answer.trim() || null },
     });
     router.push("/workspace/triage");
   });
@@ -82,6 +198,16 @@ export default function TriageDetail() {
     user.roles.some((role) => ["counsel", "head_of_legal", "legal_ops"].includes(role)),
   );
 
+  function openOutcome(next: "close" | "return") {
+    setOutcomeNote("");
+    setAnswer("");
+    setMissing("");
+    setOutcome(next);
+  }
+
+  const closing = outcome === "close";
+  const outcomeError = (closing ? closeIt.error : returnForInfo.error) ?? null;
+
   return (
     <div className="space-y-6">
       <PageTitle
@@ -89,10 +215,10 @@ export default function TriageDetail() {
         subtitle="Both proposals are editable. Any change is recorded with a reason."
         actions={
           <>
-            <Button onClick={() => void closeIt.run()} disabled={closeIt.busy}>
+            <Button onClick={() => openOutcome("close")} disabled={closeIt.busy}>
               Answer and close
             </Button>
-            <Button onClick={() => void returnForInfo.run()} disabled={returnForInfo.busy}>
+            <Button onClick={() => openOutcome("return")} disabled={returnForInfo.busy}>
               Return for information
             </Button>
             <Button
@@ -113,6 +239,8 @@ export default function TriageDetail() {
           reasons={Object.values(accept.error.fieldErrors)}
         />
       ) : null}
+
+      {data.request ? <RequestPanel request={data.request} /> : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
@@ -241,6 +369,20 @@ export default function TriageDetail() {
         A matter number is generated, the service clock starts, the owner is notified, and the
         request record is linked to the matter. Nothing before this point creates a matter.
       </Notice>
+
+      <OutcomeDialog
+        outcome={outcome}
+        note={outcomeNote}
+        answer={answer}
+        missing={missing}
+        busy={closeIt.busy || returnForInfo.busy}
+        error={outcomeError}
+        onNote={setOutcomeNote}
+        onAnswer={setAnswer}
+        onMissing={setMissing}
+        onCancel={() => setOutcome(null)}
+        onConfirm={() => void (closing ? closeIt.run() : returnForInfo.run())}
+      />
     </div>
   );
 }

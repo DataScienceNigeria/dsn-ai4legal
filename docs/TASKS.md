@@ -318,9 +318,65 @@ carries gates and thresholds; nothing measured them.
 - [x] L5 WALKTHROUGH.md brought up to date
 
 
+## Phase M, after the walkthrough
+
+- [x] **M1** Tell the two organisations apart by colour. `data-entity` on the
+      root element beside the `dark` class, DSN neutral and EqualyzAI shifted a
+      few points towards green, in both light and dark. Set before the first
+      paint so the page never renders in the wrong organisation's colour, and
+      backed by a coloured mark on the name and on the switch so the cue does
+      not rest on a faint background alone. The sidebar and its navigation
+      headings take the organisation's brand hue outright, blue for DSN and
+      green for EqualyzAI, and `--heading` carries that hue to every page
+      title as well
+- [x] **M2** Configuration for every Phase J integration written into `.env`
+      and `.env.example`. DocuSeal, SMTP and the signed webhook, ClamAV, the
+      embedding provider, the TOTP settings and the OIDC claim mapping were all
+      read by `config.py` and named in neither file, so the only way to find a
+      key was to read the settings class
+- [x] **M3** Sticky table header fixed. It sat 4rem below its own row and the
+      first record showed through the gap, because `.table-scroll` is the
+      scrollport, not the viewport
+- [x] **M4** Sign out carries an icon and is red. It was a ghost button that
+      read as one more piece of header furniture
+- [x] **M5** The sidebar retracts to a 4.25rem icon rail, remembered per
+      browser. Every item stays reachable collapsed; only the words go
+- [x] **M6** Ask memory rebuilt as a real chat. `ai_conversation` and
+      `ai_conversation_turn` behind it, threads listed in the window,
+      self-naming titles, rename and delete, follow-up questions that resolve
+      against the thread, and a per-owner row-level security policy so a
+      colleague in the same role cannot read the transcript
+- [x] **M7** The request form asks which organisation before anything else.
+      It was inheriting whichever entity the workspace happened to be on, which
+      is not a safe default for a choice that cannot be changed afterwards
+- [x] **M8** A number field carries a unit. "How long should it run" was a bare
+      box that could have meant weeks, months or years
+- [x] **M9** The portal has exits. Its own navigation, a return to the
+      workspace for anyone with one, a sign out, a cancel on the form that says
+      nothing has been sent, a confirmation on every stored attachment, and a
+      finish on the submitted page
+- [x] **M10** Every figure on the delivery dashboard links to the records
+      behind it, with the filter in the query string so the link travels
+- [x] **M11** Triage shows the request on the page it is decided on, in two
+      columns
+- [x] **M12** Returning and closing in triage both demand a note. The API
+      refuses an empty one, closing now tells the requester why, and its
+      optional answer is kept on the request record
+- [x] **M13** The originating request shows on the matter as well, above the
+      tabs, as one shared component. It omits what the matter header and record
+      card already say, and drops any answer whose text is already on the page
+- [x] **M14** Seeded matters carry the request they were accepted from. The
+      seed built every matter with none, so the panel was blank on all of them
+      and the feature looked entity-specific when it was only ever data. The
+      existing database was backfilled with the same content rather than
+      reseeded
+- [x] **M15** Switching organisation closes an open record and returns to that
+      organisation's list, instead of leaving a matter on screen that the next
+      read would refuse
+
 ## What is left, stated plainly
 
-Phases I to L are closed. These are not:
+Phases I to M are closed. These are not:
 
 - Word and Google Docs round-trip, LOP-M04-US-05. SuperDoc gives in-app DOCX
   editing; opening in Word while keeping the version link is not built.

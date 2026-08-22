@@ -3,7 +3,18 @@
 import Link from "next/link";
 
 import { useSession } from "@/components/app/session";
-import { Card, CardBody, CardHeader, Empty, Kpi, PageTitle, Pill, Row, Spinner } from "@/components/ui";
+import {
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  Empty,
+  Kpi,
+  PageTitle,
+  Pill,
+  Row,
+  Spinner,
+} from "@/components/ui";
 import { useApi } from "@/lib/hooks";
 import type { OperationalReport, WeeklyUpdate } from "@/lib/types";
 import { relativeHours, titleCase } from "@/lib/utils";
@@ -27,29 +38,56 @@ export default function DeliveryDashboard() {
         title="Legal delivery"
         subtitle={
           "Every figure here is computed from recorded lifecycle transitions, not from " +
-          "manually entered dates, so a number on this page can always be traced to an event."
+          "manually entered dates, so a number on this page can always be traced to an event. " +
+          "Every figure is also a link to the records behind it."
+        }
+        actions={
+          <>
+            <Link href="/workspace/triage" className="no-underline">
+              <Button size="sm">Triage queue</Button>
+            </Link>
+            <Link href="/workspace/matters" className="no-underline">
+              <Button size="sm" variant="primary">
+                All matters
+              </Button>
+            </Link>
+          </>
         }
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
-        <Kpi label="Open matters" value={data.open_matters} detail={`Across ${data.by_owner.length} owners`} />
+        <Kpi
+          label="Open matters"
+          value={data.open_matters}
+          detail={`Across ${data.by_owner.length} owners`}
+          href="/workspace/matters"
+        />
         <Kpi
           label="Past service target"
           value={data.sla_breaches}
           tone={data.sla_breaches ? "bad" : "good"}
           detail={`${data.near_breaches} approaching`}
+          href="/workspace/matters?filter=breach"
         />
-        <Kpi label="Blocked" value={data.blocked} tone={data.blocked ? "warn" : "neutral"} detail="Awaiting someone" />
+        <Kpi
+          label="Blocked"
+          value={data.blocked}
+          tone={data.blocked ? "warn" : "neutral"}
+          detail="Awaiting someone"
+          href="/workspace/matters?filter=waiting"
+        />
         <Kpi
           label="Median turnaround"
           value={data.turnaround_median_hours === null ? "Not yet" : relativeHours(data.turnaround_median_hours)}
           detail="Acceptance to execution"
+          href="/workspace/metrics"
         />
         <Kpi
           label="Overdue obligations"
           value={data.obligations_overdue}
           tone={data.obligations_overdue ? "bad" : "good"}
           detail={`${data.reviews_overdue} library reviews overdue`}
+          href="/workspace/obligations"
         />
       </div>
 
@@ -67,11 +105,26 @@ export default function DeliveryDashboard() {
             ) : (
               data.by_owner.map((owner) => (
                 <Row key={owner.owner_name} cols="minmax(0,1fr) 5.625rem 5.625rem">
-                  <div className="truncate">{owner.owner_name}</div>
+                  <div className="min-w-0 truncate">
+                    {owner.owner_id ? (
+                      <Link
+                        href={`/workspace/matters?owner=${owner.owner_id}&owner_name=${encodeURIComponent(owner.owner_name)}`}
+                      >
+                        {owner.owner_name}
+                      </Link>
+                    ) : (
+                      owner.owner_name
+                    )}
+                  </div>
                   <div className="text-right tabular-nums">{owner.open_matters}</div>
                   <div className="text-right">
                     {owner.breached ? (
-                      <Pill tone="bad">{owner.breached}</Pill>
+                      <Link
+                        href={`/workspace/matters?owner=${owner.owner_id}&owner_name=${encodeURIComponent(owner.owner_name)}&filter=breach`}
+                        className="no-underline"
+                      >
+                        <Pill tone="bad">{owner.breached}</Pill>
+                      </Link>
                     ) : (
                       <span className="text-muted-foreground">0</span>
                     )}
@@ -110,7 +163,9 @@ export default function DeliveryDashboard() {
                 .sort(([left], [right]) => left.localeCompare(right))
                 .map(([tier, count]) => (
                   <Row key={tier} cols="minmax(0,1fr) 3.75rem">
-                    <div>{titleCase(tier)}</div>
+                    <div>
+                      <Link href={`/workspace/matters?tier=${tier}`}>{titleCase(tier)}</Link>
+                    </div>
                     <div className="text-right tabular-nums">{count}</div>
                   </Row>
                 ))

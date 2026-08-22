@@ -102,6 +102,17 @@ export function SessionProvider({ children }: Readonly<{ children: React.ReactNo
     setEntityState(next);
   }, []);
 
+  /*
+    The organisation tint is a token swap on the root element, so it belongs
+    with the state that decides it rather than with any one screen. The
+    pre-paint script in the layout sets the same attribute from storage; this
+    keeps it true after a switch and after the API corrects an entity the
+    account does not hold.
+  */
+  React.useEffect(() => {
+    document.documentElement.dataset.entity = entity;
+  }, [entity]);
+
   const value = React.useMemo(
     () => ({
       me,

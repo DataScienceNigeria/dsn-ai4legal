@@ -99,6 +99,47 @@ class AnswerOut(BaseModel):
     suppressed_statements: int = 0
 
 
+class NewConversation(BaseModel):
+    """Opening a thread. The first question is optional: a person may want an
+    empty thread to type into, and a thread with no turns is a real state."""
+
+    question: str | None = None
+    title: str | None = None
+    matter_id: UUID | None = None
+
+
+class ConversationMessage(BaseModel):
+    question: str
+    source_types: list[str] = Field(default_factory=list)
+
+
+class RenameConversation(BaseModel):
+    title: str
+
+
+class ConversationTurnOut(BaseModel):
+    id: UUID
+    sequence: int
+    question: str
+    answer: AnswerOut | None = None
+    created_at: datetime
+
+
+class ConversationBrief(BaseModel):
+    id: UUID
+    entity: str
+    title: str
+    matter_id: UUID | None = None
+    matter_number: str | None = None
+    message_count: int
+    last_message_at: datetime | None = None
+    created_at: datetime
+
+
+class ConversationOut(ConversationBrief):
+    turns: list[ConversationTurnOut] = Field(default_factory=list)
+
+
 class PositionHistoryEntry(BaseModel):
     matter_number: str | None
     counterparty: str | None
