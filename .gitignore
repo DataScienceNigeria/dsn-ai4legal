@@ -27,3 +27,14 @@ coverage/
 data/
 uploads/
 *.log
+
+# Kept out of the repository by choice, not by accident. These are the build's
+# own working material rather than the product: the agent instructions, the
+# internal documentation, the operator scripts, the encrypted backups the
+# backup script writes, the scanner configuration and the source specification.
+CLAUDE.md
+docs/
+scripts/
+backups/
+sonar-project.properties
+PRD - AI for Legal Workflows.pdf
