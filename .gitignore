@@ -31,10 +31,12 @@ uploads/
 # Kept out of the repository by choice, not by accident. These are the build's
 # own working material rather than the product: the agent instructions, the
 # internal documentation, the operator scripts, the encrypted backups the
-# backup script writes, the scanner configuration and the source specification.
+# backup script writes, the design reference the interface was built from,
+# the scanner configuration and the source specification.
 CLAUDE.md
 docs/
 scripts/
 backups/
+_design_ref/
 sonar-project.properties
 PRD - AI for Legal Workflows.pdf
