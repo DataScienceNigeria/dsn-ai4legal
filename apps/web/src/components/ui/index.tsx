@@ -71,7 +71,7 @@ export function Button({
         size === "sm" ? "h-8 rounded-md px-3 text-xs" : "h-9 px-3.5 text-sm",
         variant === "default" && "border-border bg-card hover:bg-muted",
         variant === "primary" &&
-          "border-primary bg-primary text-primary-foreground hover:brightness-110",
+          "border-brand bg-brand text-brand-foreground hover:brightness-110",
         variant === "dark" &&
           "border-foreground bg-foreground text-background hover:opacity-90",
         variant === "ghost" && "border-transparent bg-transparent hover:bg-muted",
@@ -157,6 +157,53 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cn(inputClass, "h-10", props.className)} />;
 }
 
+/*
+  A password field nobody can read is a password field people mistype, and a
+  mistyped password at a step-up looks exactly like a refusal. The reveal is a
+  button rather than a checkbox so it reaches the keyboard in the same tab
+  order as the field it belongs to, and it says which state it is in rather
+  than relying on the icon alone.
+*/
+export function PasswordInput({
+  className,
+  ...props
+}: Readonly<Omit<React.InputHTMLAttributes<HTMLInputElement>, "type">>) {
+  const [visible, setVisible] = React.useState(false);
+
+  return (
+    <div className="relative">
+      <input
+        {...props}
+        type={visible ? "text" : "password"}
+        className={cn(inputClass, "h-10 pr-11", className)}
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((previous) => !previous)}
+        aria-pressed={visible}
+        aria-label={visible ? "Hide the password" : "Show the password"}
+        title={visible ? "Hide the password" : "Show the password"}
+        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className="h-[1.15rem] w-[1.15rem]"
+        >
+          <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" />
+          <circle cx="12" cy="12" r="2.75" />
+          {visible ? <path d="m4 20 16-16" /> : null}
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return <textarea {...props} className={cn(inputClass, "min-h-[6rem]", props.className)} />;
 }
@@ -188,7 +235,7 @@ export function Tabs({
           className={cn(
             "-mb-px flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 text-sm font-medium transition-colors",
             active === tab.id
-              ? "border-primary text-primary"
+              ? "border-brand text-brand"
               : "border-transparent text-muted-foreground hover:text-foreground",
           )}
         >
@@ -275,7 +322,7 @@ export function Empty({ title, detail }: Readonly<{ title: string; detail?: stri
 export function Spinner({ label = "Loading" }: Readonly<{ label?: string }>) {
   return (
     <div className="flex items-center gap-2.5 px-4 py-10 text-sm text-muted-foreground">
-      <span className="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary" />
+      <span className="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-brand" />
       {label}
     </div>
   );
@@ -311,20 +358,28 @@ export function PageTitle({
   subtitle?: React.ReactNode;
   actions?: React.ReactNode;
 }>) {
+  /*
+    One wrapping row rather than a breakpoint. A screen with two actions and a
+    screen with seven need the break at different widths, and picking a single
+    one starved the title on the busy screens: the heading was squeezed to a
+    column narrow enough to wrap its own identifier a character at a time. The
+    title keeps a floor it cannot be compressed past, and the actions drop to
+    their own line when what is left will not hold them.
+  */
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
-      <div className="min-w-0">
+    <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+      <div className="min-w-full flex-1 sm:min-w-[20rem]">
         <h1 className="text-2xl font-semibold tracking-tight text-heading sm:text-3xl">
           {title}
         </h1>
         {subtitle ? (
-          <p className="mt-2 max-w-reading text-base leading-relaxed text-muted-foreground">
+          <div className="mt-2 max-w-reading text-base leading-relaxed text-muted-foreground">
             {subtitle}
-          </p>
+          </div>
         ) : null}
       </div>
       {actions ? (
-        <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>
+        <div className="flex flex-wrap items-center gap-2">{actions}</div>
       ) : null}
     </div>
   );
@@ -455,20 +510,42 @@ export function Modal({
 }>) {
   const panel = React.useRef<HTMLDialogElement>(null);
 
+  /*
+    Held in a ref, not a dependency. Every call site passes an inline arrow, so
+    onClose is a new function on every render; depending on it re-ran this
+    effect on every keystroke, and the focus call below moved the caret out of
+    whatever was being typed into.
+  */
+  const closeRef = React.useRef(onClose);
+  closeRef.current = onClose;
+
   React.useEffect(() => {
     if (!open) return undefined;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") closeRef.current();
     };
     document.addEventListener("keydown", onKey);
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    panel.current?.querySelector<HTMLElement>("input, select, textarea, button")?.focus();
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previous;
     };
-  }, [open, onClose]);
+  }, [open]);
+
+  /*
+    Focus is placed once, when the dialog opens, and on the first field rather
+    than the first focusable node. In document order that node is the close
+    control in the header, so focusing it put the caret on the dismiss button
+    of a form somebody had just been asked to fill in.
+  */
+  React.useEffect(() => {
+    if (!open) return;
+    const field = panel.current?.querySelector<HTMLElement>(
+      "input:not([type='hidden']), select, textarea",
+    );
+    (field ?? panel.current?.querySelector<HTMLElement>("button:not([data-dismiss])"))?.focus();
+  }, [open]);
 
   if (!open) return null;
 
@@ -501,7 +578,7 @@ export function Modal({
               </div>
             ) : null}
           </div>
-          <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close">
+          <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close" data-dismiss>
             &#10005;
           </Button>
         </div>

@@ -54,7 +54,7 @@ export default function MyRequests() {
                       className={cn(
                         "rounded-md border px-2.5 py-1 text-xs",
                         entry.current
-                          ? "border-primary bg-primary/10 font-medium text-primary"
+                          ? "border-brand bg-brand/10 font-medium text-brand"
                           : "text-muted-foreground",
                       )}
                     >

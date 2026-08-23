@@ -77,6 +77,24 @@ def verify(secret: str, code: str, last_counter: int | None = None) -> int | Non
     return None
 
 
+def drift_windows(secret: str, code: str, search: int = 40) -> int | None:
+    """How far out a code is, in thirty-second steps, or None if it is not ours.
+
+    A code that matches nine windows ago is a clock four and a half minutes
+    slow, which is worth saying. A code that matches nothing at all is a
+    different secret, which is worth saying differently.
+    """
+    candidate = (code or "").strip().replace(" ", "")
+    if not candidate.isdigit() or len(candidate) != DIGITS:
+        return None
+
+    now = int(time.time() // PERIOD)
+    for drift in range(-search, search + 1):
+        if hmac.compare_digest(_counter_code(secret, now + drift), candidate):
+            return drift
+    return None
+
+
 def provisioning_uri(secret: str, email: str) -> str:
     """The otpauth URI an authenticator app reads from a QR code."""
     issuer = quote(settings.dsnlai_mfa_issuer)
@@ -85,6 +103,11 @@ def provisioning_uri(secret: str, email: str) -> str:
         f"otpauth://totp/{label}?secret={secret}&issuer={issuer}"
         f"&algorithm=SHA1&digits={DIGITS}&period={PERIOD}"
     )
+
+
+def enabled() -> bool:
+    """Whether the second factor is in force at all."""
+    return settings.dsnlai_mfa_enabled
 
 
 def required_roles() -> set[str]:
@@ -97,4 +120,23 @@ def required_roles() -> set[str]:
 
 def is_required_for(roles: list[str]) -> bool:
     """Whether this person's roles put them inside the factor requirement."""
-    return bool(required_roles() & set(roles))
+    return enabled() and bool(required_roles() & set(roles))
+
+
+def provisioning_qr(uri: str) -> str:
+    """The provisioning URI as an SVG data URI.
+
+    Typing a base32 secret by hand is where enrolment goes wrong, so the code
+    is drawn rather than only printed. It is drawn on the server, by the same
+    code that issued the secret, so the secret is encoded once and the browser
+    is handed a picture rather than asked to build one.
+    """
+    import base64
+    from io import BytesIO
+
+    import segno
+
+    buffer = BytesIO()
+    segno.make(uri, error="m").save(buffer, kind="svg", scale=4, border=2, dark="#111827")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/svg+xml;base64,{encoded}"

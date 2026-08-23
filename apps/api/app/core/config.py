@@ -5,12 +5,23 @@ staging and production without a rebuild (PRD section 10.2).
 """
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+#: The repository's own .env, found from this file rather than from the working
+#: directory. The API is run three ways, from the repository root in a
+#: container, from apps/api by uvicorn, and from apps/api by pytest, and a
+#: relative path meant each of those read a different file, or none. A local
+#: apps/api/.env is still read after it and still wins, which is what makes a
+#: per-checkout override possible without a second copy of everything.
+_REPO_ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="", env_file=(_REPO_ROOT_ENV, ".env"), extra="ignore"
+    )
 
     dsnlai_env: str = "development"
     dsnlai_secret_key: str = "development-secret-key-do-not-use-in-production"
@@ -45,6 +56,11 @@ class Settings(BaseSettings):
 
     # Multi-factor authentication. Enforced for the roles named here, which is
     # everyone who can publish, sign, restrict or administer.
+    # The whole second-factor module, on or off. Off is a development
+    # convenience and nothing else: no code is demanded at sign-in, no
+    # privileged act asks for one, and enrolment still works so it can be
+    # exercised before it is turned back on.
+    dsnlai_mfa_enabled: bool = True
     dsnlai_mfa_required_roles: str = "admin,head_of_legal"
     dsnlai_mfa_issuer: str = "DSN Legal Operations"
     dsnlai_totp_window: int = 1

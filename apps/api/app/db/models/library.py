@@ -5,9 +5,18 @@ may be presented anywhere in the platform as house position.
 """
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -125,6 +134,15 @@ class TemplateVersion(UUIDPrimaryKey, Timestamped, Base):
     change_summary: Mapped[str | None] = mapped_column(Text)
     provenance: Mapped[str | None] = mapped_column(Text)
 
+    # The Word document this version is, kept beside the blocks generation
+    # runs off. A version imported from paper has one; a version authored as
+    # blocks does not, and is rendered from them on demand instead.
+    source_key: Mapped[str | None] = mapped_column(String(512))
+    source_hash: Mapped[str | None] = mapped_column(String(64))
+    import_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("template_import.id", ondelete="SET NULL")
+    )
+
     template: Mapped[Template] = relationship(back_populates="versions")
 
 class Playbook(UUIDPrimaryKey, Timestamped, Base):
@@ -157,6 +175,17 @@ class TemplateImport(UUIDPrimaryKey, Timestamped, Base):
         PgUUID(as_uuid=True), ForeignKey("app_user.id", ondelete="SET NULL")
     )
     status: Mapped[str] = mapped_column(String(16), default="proposed", index=True)
+
+    # The uploaded file is never written over. Editing produces a working copy
+    # beside it, so the hash recorded at import still refers to what arrived.
+    working_key: Mapped[str | None] = mapped_column(String(512))
+    working_hash: Mapped[str | None] = mapped_column(String(64))
+    revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    edited_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("app_user.id", ondelete="SET NULL")
+    )
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     proposed_clauses: Mapped[list[dict]] = mapped_column(JSONB, default=list)
     provenance: Mapped[dict] = mapped_column(JSONB, default=dict)
     accepted_count: Mapped[int] = mapped_column(Integer, default=0)

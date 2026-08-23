@@ -8,17 +8,27 @@
   No component carries a hex value, which is what lets dark mode be a single
   class on the root element.
 
-  The two organisations share every token but the ground they sit on. DSN is
-  the neutral whitish default; EqualyzAI shifts the background, the card and
-  the borders a few points towards green. It is small enough not to compete
-  with status colour, and large enough that switching organisation is visible
-  without reading the label.
+  The two organisations share every token but the ground they sit on and the
+  hue they act in. DSN is the neutral whitish default; EqualyzAI shifts the
+  background, the card and the borders a few points towards green. It is small
+  enough not to compete with status colour, and large enough that switching
+  organisation is visible without reading the label.
+
+  --brand is the organisation's own hue and the only colour that acts: primary
+  buttons, the selected tab, the selected row, the focus ring, the message you
+  sent. DSN acts in blue-deep, EqualyzAI in the brand green. It is deliberately
+  a separate token from --primary, which stays green in both organisations
+  because green means success, not DSN or EqualyzAI. Without that split, a
+  cleared check would turn blue on one organisation and a primary button would
+  read as a success state on the other.
 
   Two constraints from DESIGN_TOKENS.md are enforced by how these are assigned.
-  Blue fails WCAG AA for body text at 3.1:1, so it is bound to --info and used
-  for links, borders and chart fills only. Green and red alone fail for
-  red-green colour blindness, so amber and indigo carry the second status axis
-  and every status also carries an icon or a word.
+  The mid blue #0487F0 fails WCAG AA for body text at 3.3:1, so it is bound to
+  --info and used for fills, borders and informational chips only, never for
+  text at body size. Where DSN needs blue text it uses blue-deep #014DBD at
+  7.4:1, which is what --heading and --brand carry. Green and red alone fail
+  for red-green colour blindness, so amber and indigo carry the second status
+  axis and every status also carries an icon or a word.
 */
 
 @layer base {
@@ -60,11 +70,15 @@
 
     --border: 240 6% 90%;
     --input: 240 6% 90%;
-    --ring: 120 85% 26%;
 
     /* DSN carries the brand blue. --heading is blue-deep, 7.4:1 on white. */
     --sidebar: 207 58% 96%;
     --heading: 215 99% 37%;
+
+    /* Blue-deep #014DBD, the same 7.4:1 tone, so white sits on it safely. */
+    --brand: 215 99% 37%;
+    --brand-foreground: 0 0% 100%;
+    --ring: 215 99% 37%;
   }
 
   .dark {
@@ -101,10 +115,13 @@
 
     --border: 240 4% 20%;
     --input: 240 4% 20%;
-    --ring: 120 55% 45%;
 
     --sidebar: 215 32% 12%;
     --heading: 207 78% 70%;
+
+    --brand: 207 78% 62%;
+    --brand-foreground: 0 0% 6%;
+    --ring: 207 78% 62%;
   }
 
   :root[data-entity="EAI"] {
@@ -119,6 +136,10 @@
     /* EqualyzAI carries the brand green. --heading is the success text tone. */
     --sidebar: 151 42% 95%;
     --heading: 151 100% 22%;
+
+    --brand: 120 85% 26%;
+    --brand-foreground: 0 0% 100%;
+    --ring: 120 85% 26%;
   }
 
   .dark[data-entity="EAI"] {
@@ -132,6 +153,10 @@
 
     --sidebar: 151 24% 11%;
     --heading: 151 52% 60%;
+
+    --brand: 120 55% 45%;
+    --brand-foreground: 0 0% 6%;
+    --ring: 120 55% 45%;
   }
 
   * {
@@ -181,8 +206,14 @@
     }
   }
 
+  /*
+    Links carry the organisation's hue, not the flat --info blue. Two reasons.
+    A blue link on the green EqualyzAI ground was the one place the two
+    organisations still looked alike, and --info is 3.3:1 on white, which fails
+    AA for text this size. Both brand hues clear it.
+  */
   a {
-    @apply text-info underline underline-offset-2;
+    @apply text-brand underline underline-offset-2;
   }
 
   a:hover {
@@ -197,6 +228,103 @@
   ::-webkit-scrollbar-thumb {
     @apply rounded-lg border-[3px] border-background bg-border;
   }
+}
+
+/*
+  SuperDoc's stylesheet is imported at run time, as a side effect of the
+  dynamic import that loads the editor, so its <style> lands after this file.
+  Equal specificity therefore loses on order, which is why every rule here is
+  deliberately more specific than the one it is overriding rather than merely
+  as specific.
+
+  Two things are being corrected. The page sat against the left edge with the
+  rest of the width left as grey; Word centres it, and so should this. And
+  SuperDoc assumes a light host, so in dark mode the furniture around the
+  document has to be brought over, while the page itself stays white, because
+  paper is white and an agreement read on a dark page is not the one anyone
+  will print.
+*/
+.superdoc-surface {
+  background: hsl(var(--muted));
+}
+
+.superdoc-surface > .superdoc {
+  width: 100%;
+}
+
+/*
+  The page is a fixed width and nothing above it is, so left is where it ends
+  up unless it is told otherwise. Word centres it, and so should this.
+
+  Centring the document container alone does nothing, because SuperDoc puts a
+  sub-document between it and the page and gives that `width: 100%`: it
+  stretches, and the page inside it stays where it was. Nor does a margin on
+  the page, because the page is sized and positioned by inline styles the
+  layout engine writes, and inline beats any stylesheet.
+
+  So the centring is done by the parents, as alignment rather than as margin.
+  Alignment is the container's decision, so it holds whatever the child's own
+  inline margin says.
+*/
+.superdoc-surface .superdoc__document.document,
+.superdoc-surface .superdoc__sub-document.sub-document {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.superdoc-surface .superdoc__document.document {
+  padding-block: 1.5rem;
+}
+
+.dark .superdoc-surface {
+  background: hsl(var(--background));
+}
+
+.dark .superdoc-surface .superdoc,
+.dark .superdoc-surface .superdoc--contained,
+.dark .superdoc-surface .superdoc__layers {
+  background: transparent;
+}
+
+.dark .superdoc-toolbar-host .superdoc-toolbar {
+  background: hsl(var(--card));
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
+}
+
+.dark .superdoc-toolbar-host .superdoc-toolbar button {
+  color: hsl(var(--foreground));
+}
+
+.dark .superdoc-toolbar-host .superdoc-toolbar button:hover {
+  background: hsl(var(--accent));
+}
+
+.dark .superdoc-toolbar-host .superdoc-toolbar .sd-active {
+  background: hsl(var(--heading) / 0.18);
+  color: hsl(var(--heading));
+}
+
+/*
+  The page in dark mode. There is no honest way to restyle it: the sheet and
+  its text are coloured inline by the layout engine, so a stylesheet cannot
+  reach them one property at a time. A display filter can, and inverting the
+  page and rotating the hue back gives dark paper with light text and colours
+  that still read as themselves.
+
+  It is display only. The stored document, the export and anything printed are
+  untouched, because nothing about the file has changed. Images would be
+  inverted along with everything else, so they are inverted back.
+*/
+.dark .superdoc-surface .superdoc__sub-document.sub-document {
+  filter: invert(0.92) hue-rotate(180deg);
+}
+
+.dark .superdoc-surface .superdoc__sub-document.sub-document img,
+.dark .superdoc-surface .superdoc__sub-document.sub-document svg,
+.dark .superdoc-surface .superdoc__sub-document.sub-document video {
+  filter: invert(1) hue-rotate(180deg);
 }
 
 @layer components {

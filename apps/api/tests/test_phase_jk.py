@@ -34,6 +34,10 @@ def test_a_one_time_password_cannot_be_presented_twice():
 def test_a_role_that_needs_a_factor_cannot_step_up_without_one(monkeypatch):
     """Signing in is not gated on the factor. The privileged act is, and that
     is the whole point of the requirement."""
+    # Both pinned, so the test states the configuration it is about rather
+    # than inheriting whatever the developer has in .env. The module can be
+    # switched off for local work, and this is not a test of that.
+    monkeypatch.setattr(mfa.settings, "dsnlai_mfa_enabled", True, raising=False)
     monkeypatch.setattr(
         mfa.settings, "dsnlai_mfa_required_roles", "admin,head_of_legal", raising=False
     )

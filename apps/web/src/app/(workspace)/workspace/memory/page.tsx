@@ -129,7 +129,7 @@ function Thread({
       {turns.map((turn) => (
         <div key={turn.id} className="space-y-3">
           <div className="flex justify-end">
-            <div className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-secondary px-3.5 py-2 text-sm text-secondary-foreground sm:max-w-[70%]">
+            <div className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-brand px-3.5 py-2 text-sm text-brand-foreground sm:max-w-[70%]">
               {turn.question}
             </div>
           </div>
@@ -140,7 +140,7 @@ function Thread({
       {pending ? (
         <div className="space-y-3">
           <div className="flex justify-end">
-            <div className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-secondary px-3.5 py-2 text-sm text-secondary-foreground sm:max-w-[70%]">
+            <div className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-brand px-3.5 py-2 text-sm text-brand-foreground sm:max-w-[70%]">
               {pending.question}
             </div>
           </div>

@@ -24,6 +24,28 @@ app = FastAPI(
     docs_url="/api/v1/docs",
 )
 
+@app.middleware("http")
+async def unhandled_error_to_problem(request: Request, call_next):
+    """Turn an unhandled failure into a response the browser can read.
+
+    Starlette's own handler for an unhandled exception sits outside the CORS
+    layer, so a 500 reaches the browser with no CORS header and is reported as
+    a CORS failure. The real error then never appears in the console. This
+    catches first, inside CORS, so the status and reason survive the trip.
+    """
+    try:
+        return await call_next(request)
+    except Exception:
+        logging.getLogger(__name__).exception("Unhandled error on %s", request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": "internal_error",
+                "message": "Something failed on the server. The error has been logged.",
+            },
+        )
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if settings.dsnlai_env == "development" else [],

@@ -36,7 +36,7 @@ export default function PortalHome() {
               href={`/portal/new/${type.code}`}
               className="block no-underline text-foreground"
             >
-              <Card className="h-full transition-colors hover:border-primary">
+              <Card className="h-full transition-colors hover:border-brand">
                 <div className="p-4 sm:p-5">
                   <div className="text-base font-semibold">{type.business_label}</div>
                   {type.description ? (
@@ -59,7 +59,7 @@ export default function PortalHome() {
           href={`/portal/new/${fallback.code}`}
           className="block no-underline text-foreground"
         >
-          <Card className="border-dashed transition-colors hover:border-primary">
+          <Card className="border-dashed transition-colors hover:border-brand">
             <div className="p-4 sm:p-5">
               <div className="text-base font-semibold">None of these describes it</div>
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">

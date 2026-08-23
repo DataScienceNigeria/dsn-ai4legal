@@ -371,8 +371,23 @@ def decide_finding(
             f"Conceding this point requires {rule['label']}."
         )
 
+    edited = (payload.edited_text or "").strip()
+    if payload.decision == "edited" and not edited:
+        raise Refused(
+            "That decision cannot be recorded.",
+            [
+                "Accepting with an edit means recording the wording you are accepting. "
+                "Either supply the edited text or accept the suggestion as it stands."
+            ],
+        )
+    if edited and edited == (finding.suggested_redline or "").strip():
+        # Same words as the suggestion. It was accepted, not edited, and the
+        # record should say which, because attribution differs between them.
+        payload.decision = "accepted"
+        edited = ""
+
     finding.decision = payload.decision
-    finding.edited_text = payload.edited_text
+    finding.edited_text = edited or None
     finding.decided_by_id = uuid.UUID(principal.user_id)
     finding.decided_at = datetime.now(UTC)
 
@@ -395,7 +410,11 @@ def decide_finding(
         actor_id=principal.user_id,
         actor_label=principal.name,
         entity=matter.entity if matter else None,
-        after_state={"decision": payload.decision, "authority": authority.value},
+        after_state={
+            "decision": payload.decision,
+            "authority": authority.value,
+            "edited": bool(finding.edited_text),
+        },
     )
     return finding
 

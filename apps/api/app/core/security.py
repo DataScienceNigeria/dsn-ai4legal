@@ -97,9 +97,8 @@ class Principal:
         from app.core import mfa
 
         if mfa.is_required_for(self.roles) and not self.mfa_satisfied:
-            raise StepUpRequired(
-                f"{action} with your second factor. This role requires one."
-            )
+            # StepUpRequired ends the sentence itself, so this one does not.
+            raise StepUpRequired(f"{action} with your second factor, which this role requires")
 
 def create_access_token(
     *,

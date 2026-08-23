@@ -2,7 +2,9 @@
 
 import * as React from "react";
 
-import { Card, CardBody, CardHeader, KeyValue, Mono, Pill } from "@/components/ui";
+import { Button, Card, CardBody, CardHeader, KeyValue, Mono, Pill } from "@/components/ui";
+import { download, view } from "@/lib/api";
+import { useAction } from "@/lib/hooks";
 import type { RequestDetail } from "@/lib/types";
 import { formatDate, formatDateTime, formatMoney, titleCase } from "@/lib/utils";
 
@@ -27,25 +29,68 @@ function Detail({ label, children }: Readonly<{ label: string; children: React.R
   );
 }
 
+/*
+  The paper the requester sent is often the whole point of the request, so it
+  is readable from here rather than only listable. The fetch has to carry the
+  token, so it cannot be a plain link: the file is pulled as a blob and opened
+  in its own tab, and Save is offered beside it for a type the browser will not
+  render.
+*/
 function Attachments({ request }: Readonly<{ request: RequestDetail }>) {
+  const [failed, setFailed] = React.useState<string | null>(null);
+
+  const open = useAction(async (id: string) => {
+    setFailed(null);
+    try {
+      await view(`/requests/${request.id}/attachments/${id}`);
+    } catch (exception) {
+      setFailed(exception instanceof Error ? exception.message : "That file could not be opened.");
+    }
+  });
+
+  const save = useAction(async (id: string, filename: string) => {
+    await download(`/requests/${request.id}/attachments/${id}`, filename);
+  });
+
   if (!request.attachments.length) {
     return <span className="text-muted-foreground">Nothing was attached.</span>;
   }
 
   return (
-    <ul className="space-y-1.5">
-      {request.attachments.map((file) => (
-        <li key={file.id} className="flex items-center gap-2">
-          <Pill tone={file.scan_status === "clean" ? "good" : "warn"}>
-            {titleCase(file.scan_status)}
-          </Pill>
-          <span className="min-w-0 truncate">{file.filename}</span>
-          <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-            {Math.max(1, Math.round(file.size_bytes / 1024))} KB
-          </span>
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="space-y-1.5">
+        {request.attachments.map((file) => (
+          <li key={file.id} className="flex flex-wrap items-center gap-2">
+            <Pill tone={file.scan_status === "clean" ? "good" : "warn"}>
+              {titleCase(file.scan_status)}
+            </Pill>
+            <button
+              type="button"
+              onClick={() => void open.run(file.id)}
+              className="min-w-0 flex-1 truncate text-left text-brand underline underline-offset-2 hover:text-foreground"
+            >
+              {file.filename}
+            </button>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {Math.max(1, Math.round(file.size_bytes / 1024))} KB
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={save.busy}
+              onClick={() => void save.run(file.id, file.filename)}
+            >
+              Save
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {failed ?? save.error ? (
+        <p className="mt-1.5 text-xs text-destructive">
+          {failed ?? save.error?.message}
+        </p>
+      ) : null}
+    </>
   );
 }
 

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import difflib
+import re
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, File, Query, UploadFile
+from fastapi import APIRouter, File, Form, Query, Response, UploadFile
 from sqlalchemy import select
 
 from app.core import audit
@@ -24,6 +25,7 @@ from app.db.models.library import (
 from app.domain.enums import Role, VersionStatus
 from app.schemas.common import Ack
 from app.schemas.matters import (
+    ClauseCreate,
     ClauseOut,
     ClauseVersionOut,
     ImportAcceptance,
@@ -35,8 +37,13 @@ from app.schemas.matters import (
     VersionProposal,
 )
 from app.services import docx_import, storage
+from app.services.generation import GeneratedBlock, GenerationResult, render_docx
 
 router = APIRouter(tags=["library"])
+
+TEMPLATE_NOT_FOUND = "That template was not found."
+IMPORT_NOT_FOUND = "That import was not found."
+DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 def _current_clause_version(clause: Clause) -> ClauseVersion | None:
@@ -62,9 +69,7 @@ def _current_template_version(template: Template) -> TemplateVersion | None:
 
 
 @router.get("/clauses")
-def list_clauses(
-    db: Db, principal: CurrentUser, entity: WorkingEntity
-) -> list[ClauseOut]:
+def list_clauses(db: Db, principal: CurrentUser, entity: WorkingEntity) -> list[ClauseOut]:
     """A requester never sees the clause library (PRD section 5.2)."""
     principal.require_role(
         Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
@@ -100,6 +105,64 @@ def get_clause(category: str, db: Db, principal: CurrentUser) -> ClauseOut:
     return model
 
 
+@router.post("/clauses", response_model=ClauseOut, status_code=201)
+def create_clause(payload: ClauseCreate, db: Db, principal: CurrentUser) -> Clause:
+    """A category the library does not hold yet, with its first draft.
+
+    Proposing a version needs a clause to propose it against, so without this
+    the library could only ever be revised, never extended. The first version
+    is a draft like any other and still has to be published by someone with
+    the authority to do it.
+    """
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+
+    category = payload.category.strip().upper()
+    existing = db.execute(select(Clause).where(Clause.category == category)).scalar_one_or_none()
+    if existing is not None:
+        raise Conflict(
+            f"{category} already exists as {existing.name}. Propose a version on it "
+            "rather than creating it again."
+        )
+
+    clause = Clause(
+        category=category,
+        name=payload.name.strip(),
+        owner_id=uuid.UUID(principal.user_id),
+        entity_applicability=payload.entity_applicability,
+        jurisdiction=payload.jurisdiction,
+        required_for_types=payload.required_for_types,
+    )
+    db.add(clause)
+    db.flush()
+
+    version = ClauseVersion(
+        clause_id=clause.id,
+        reference=f"CLS-{category}-v1.0",
+        major=1,
+        minor=0,
+        status=VersionStatus.DRAFT.value,
+        house_position=payload.house_position,
+        fallbacks=[f.model_dump() for f in payload.fallbacks],
+        unacceptable_position=payload.unacceptable_position,
+        effective_date=payload.effective_date,
+        review_date=payload.review_date,
+        provenance=payload.change_summary or "First version of a new clause.",
+    )
+    db.add(version)
+    db.flush()
+
+    audit.record(
+        db,
+        action="clause_created",
+        object_type="clause",
+        object_id=category,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        after_state={"name": clause.name, "first_version": version.reference},
+    )
+    return clause
+
+
 @router.post("/clauses/{category}/versions", response_model=ClauseVersionOut, status_code=201)
 def propose_clause_version(
     category: str, payload: VersionProposal, db: Db, principal: CurrentUser
@@ -120,7 +183,7 @@ def propose_clause_version(
         )
 
     current = _current_clause_version(clause)
-    major = (current.major if current else 1)
+    major = current.major if current else 1
     minor = (current.minor + 1) if current else 1
 
     version = ClauseVersion(
@@ -166,9 +229,7 @@ def clause_diff(
     versions = {
         v.reference: v
         for v in db.execute(
-            select(ClauseVersion).where(
-                ClauseVersion.reference.in_([from_reference, to_reference])
-            )
+            select(ClauseVersion).where(ClauseVersion.reference.in_([from_reference, to_reference]))
         ).scalars()
     }
     if from_reference not in versions or to_reference not in versions:
@@ -194,9 +255,7 @@ def clause_diff(
         )
         lines.append(VersionDiffLine(kind=kind, text=line.lstrip("+-")))
 
-    return VersionDiff(
-        from_reference=from_reference, to_reference=to_reference, lines=lines
-    )
+    return VersionDiff(from_reference=from_reference, to_reference=to_reference, lines=lines)
 
 
 @router.post("/versions/{reference}/publish")
@@ -244,21 +303,21 @@ def publish_version(reference: str, db: Db, principal: CurrentUser) -> Ack:
         after_state={"status": VersionStatus.APPROVED.value},
     )
     return Ack(
-        message=(
-            f"{reference} published. The previous version is superseded and remains "
-            "readable."
-        )
+        message=(f"{reference} published. The previous version is superseded and remains readable.")
     )
 
 
 @router.post("/versions/{reference}/reject")
 def reject_version(reference: str, db: Db, principal: CurrentUser) -> Ack:
     principal.require_role(Role.HEAD_OF_LEGAL, Role.ADMIN)
-    version = db.execute(
-        select(ClauseVersion).where(ClauseVersion.reference == reference)
-    ).scalar_one_or_none() or db.execute(
-        select(TemplateVersion).where(TemplateVersion.reference == reference)
-    ).scalar_one_or_none()
+    version = (
+        db.execute(
+            select(ClauseVersion).where(ClauseVersion.reference == reference)
+        ).scalar_one_or_none()
+        or db.execute(
+            select(TemplateVersion).where(TemplateVersion.reference == reference)
+        ).scalar_one_or_none()
+    )
     if version is None:
         raise NotFound("That version was not found.")
 
@@ -275,9 +334,7 @@ def reject_version(reference: str, db: Db, principal: CurrentUser) -> Ack:
 
 
 @router.get("/templates")
-def list_templates(
-    db: Db, principal: CurrentUser, entity: WorkingEntity
-) -> list[TemplateOut]:
+def list_templates(db: Db, principal: CurrentUser, entity: WorkingEntity) -> list[TemplateOut]:
     principal.require_role(
         Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
     )
@@ -298,11 +355,9 @@ def get_template(code: str, db: Db, principal: CurrentUser) -> TemplateOut:
     principal.require_role(
         Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
     )
-    template = db.execute(
-        select(Template).where(Template.code == code)
-    ).scalar_one_or_none()
+    template = db.execute(select(Template).where(Template.code == code)).scalar_one_or_none()
     if template is None:
-        raise NotFound("That template was not found.")
+        raise NotFound(TEMPLATE_NOT_FOUND)
 
     model = TemplateOut.model_validate(template)
     current = _current_template_version(template)
@@ -311,16 +366,313 @@ def get_template(code: str, db: Db, principal: CurrentUser) -> TemplateOut:
     return model
 
 
+@router.post("/templates/import", status_code=201)
+def import_agreement_template(
+    db: Db,
+    principal: CurrentUser,
+    entity: WorkingEntity,
+    file: Annotated[UploadFile, File()],
+    name: Annotated[str, Form()],
+    agreement_type: Annotated[str, Form()],
+    code: Annotated[str | None, Form()] = None,
+) -> dict:
+    """Take a Word agreement and make it a template, as a draft.
+
+    The document is kept as the document, so it can be read and edited as
+    itself, and the same file is split into blocks so generation has something
+    deterministic to assemble from. Both come out of one upload, because
+    asking someone to supply the paper twice is asking them to let the two
+    disagree.
+
+    It lands as a draft. Publishing it is the existing, separately authorised
+    step, so importing a file still cannot put anything into production.
+    """
+    principal.require_role(Role.HEAD_OF_LEGAL, Role.COUNSEL, Role.ADMIN)
+
+    data = file.file.read()
+    filename = file.filename or "template.docx"
+    digest = storage.validate_upload(filename, DOCX_MEDIA_TYPE, data)
+
+    clean, scan_detail = storage.scan_upload(data)
+    if not clean:
+        raise ValidationFailed(
+            "This file was refused and has been quarantined.", {"file": scan_detail}
+        )
+
+    try:
+        candidates, provenance = docx_import.extract(data)
+    except docx_import.NotADocx as exc:
+        raise ValidationFailed(str(exc), {"file": str(exc)}) from exc
+
+    template_code = (code or _code_from(name)).strip().upper()
+    existing = db.execute(
+        select(Template).where(Template.code == template_code)
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise Conflict(
+            f"{template_code} is already {existing.name}. Propose a new version on it "
+            "rather than importing it again as a second template."
+        )
+
+    key = f"templates/{entity}/{digest[:12]}-{filename}"
+    storage.store.put(key, data, DOCX_MEDIA_TYPE)
+
+    # The import record carries the provenance and the clause candidates, so
+    # extracting clauses into the library stays available from the template.
+    record = TemplateImport(
+        filename=filename,
+        entity=entity,
+        agreement_type=agreement_type,
+        storage_key=key,
+        source_hash=digest,
+        uploaded_by_id=uuid.UUID(principal.user_id),
+        proposed_clauses=[candidate.as_dict() for candidate in candidates],
+        provenance={**provenance, "filename": filename, "uploaded_by": principal.name},
+    )
+    db.add(record)
+
+    template = Template(
+        code=template_code,
+        name=name.strip(),
+        agreement_type=agreement_type.strip(),
+        owner_id=uuid.UUID(principal.user_id),
+    )
+    db.add(template)
+    db.flush()
+
+    version = TemplateVersion(
+        template_id=template.id,
+        reference=f"{template_code}-v1.0",
+        major=1,
+        minor=0,
+        status=VersionStatus.DRAFT.value,
+        body=[_block_from(candidate) for candidate in candidates],
+        variables=_variables_in(candidates),
+        clause_references=[],
+        change_summary=f"Imported from {filename}.",
+        provenance=f"Imported from {filename}, {len(candidates)} blocks.",
+        source_key=key,
+        source_hash=digest,
+        import_id=record.id,
+    )
+    db.add(version)
+    db.flush()
+
+    audit.record(
+        db,
+        action="template_imported",
+        object_type="template",
+        object_id=template_code,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=entity,
+        after_state={"filename": filename, "blocks": len(candidates), "version": version.reference},
+    )
+    return {
+        "code": template.code,
+        "name": template.name,
+        "version": version.reference,
+        "blocks": len(candidates),
+        "message": (
+            f"{template.name} is a draft at {version.reference}. Read it, change it, and "
+            "publish it when it is right. Nothing generates from a draft."
+        ),
+    }
+
+
+def _code_from(name: str) -> str:
+    """A template code from its name, when the caller does not supply one."""
+    words = [word for word in re.split(r"[^A-Za-z0-9]+", name) if word]
+    stem = "-".join(word[:4].upper() for word in words[:3]) or "TPL"
+    return f"TPL-{stem}"[:32]
+
+
+def _block_from(candidate) -> dict:
+    return {
+        "key": (candidate.heading or candidate.number or "block").lower().replace(" ", "_")[:40],
+        "number": candidate.number,
+        "heading": candidate.heading,
+        "text": candidate.text,
+    }
+
+
+def _variables_in(candidates) -> list[dict]:
+    """Merge variables the imported paper already declares as {{tokens}}."""
+    found: dict[str, dict] = {}
+    for candidate in candidates:
+        for token in re.findall(r"\{\{\s*([a-z0-9_]+)\s*\}\}", candidate.text or "", re.I):
+            key = token.lower()
+            found.setdefault(
+                key, {"name": key, "label": key.replace("_", " ").capitalize(), "mandatory": True}
+            )
+    return list(found.values())
+
+
+@router.get("/templates/{code}/preview")
+def preview_template(
+    code: str, db: Db, principal: CurrentUser, version: str | None = None
+) -> Response:
+    """The template as the document it produces, in Word.
+
+    A version is proposed against a template, so the template has to be
+    readable before anyone can sensibly propose anything. Merge variables are
+    left as their tokens rather than filled with sample values, because a
+    preview that invents a counterparty is a different document from the one
+    the template describes. Clause blocks are resolved to the text of the
+    clause version the template pins, so what is read is what would issue.
+    """
+    principal.require_role(
+        Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
+    )
+    template = db.execute(select(Template).where(Template.code == code)).scalar_one_or_none()
+    if template is None:
+        raise NotFound(TEMPLATE_NOT_FOUND)
+
+    if version:
+        chosen = next((v for v in template.versions if v.reference == version), None)
+        if chosen is None:
+            raise NotFound(f"{version} is not a version of this template.")
+    else:
+        chosen = _current_template_version(template) or next(iter(template.versions), None)
+    if chosen is None:
+        raise NotFound("That template has no version to read yet.")
+
+    if chosen.source_key:
+        # Imported paper is served as the paper. Rendering it back out of the
+        # blocks would return a tidied approximation of a document the reader
+        # is trying to check.
+        try:
+            return Response(
+                content=storage.store.get(chosen.source_key),
+                media_type=DOCX_MEDIA_TYPE,
+                headers={
+                    "Content-Disposition": f'inline; filename="{template.code}.docx"',
+                    "X-Template-Version": chosen.reference,
+                },
+            )
+        except FileNotFoundError:
+            pass
+
+    blocks = [_preview_block(db, entry) for entry in (chosen.body or [])]
+    result = GenerationResult(
+        blocks=blocks,
+        values={},
+        checks=[],
+        content_hash="",
+        template_reference=chosen.reference,
+        clause_references=list(chosen.clause_references or []),
+    )
+    title = f"{template.name} ({chosen.reference})"
+    return Response(
+        content=render_docx(result, title),
+        media_type=DOCX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": f'inline; filename="{template.code}-{chosen.reference}.docx"',
+            "X-Template-Version": chosen.reference,
+        },
+    )
+
+
+def _preview_block(db, entry: dict) -> GeneratedBlock:
+    """One block of the preview, with a pinned clause resolved to its text."""
+    reference = entry.get("clause")
+    text = entry.get("text", "")
+    provenance = "template_text"
+
+    if reference:
+        pinned = db.execute(
+            select(ClauseVersion).where(ClauseVersion.reference == reference)
+        ).scalar_one_or_none()
+        if pinned is None:
+            text = (
+                f"[{reference} is pinned here but is not in the library. "
+                "Generation would refuse rather than emit this.]"
+            )
+            provenance = "missing_clause"
+        else:
+            text = pinned.house_position
+            provenance = "approved_clause"
+
+    condition = entry.get("condition")
+    if condition:
+        text = f"[Included only when {condition}.] {text}"
+
+    return GeneratedBlock(
+        key=entry.get("key", ""),
+        number=str(entry.get("number", "")),
+        heading=entry.get("heading", ""),
+        text=text,
+        provenance=provenance,
+        source_reference=reference,
+    )
+
+
+@router.put("/templates/{code}/source")
+def save_template_source(
+    code: str,
+    db: Db,
+    principal: CurrentUser,
+    file: Annotated[UploadFile, File()],
+) -> dict:
+    """Save an edit to the template's open draft.
+
+    Only a draft. An approved version is what documents were generated from
+    and what approvals were bound to, so editing one in place would change the
+    past. Propose a new version instead, which is the path that exists.
+    """
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    template = db.execute(select(Template).where(Template.code == code)).scalar_one_or_none()
+    if template is None:
+        raise NotFound(TEMPLATE_NOT_FOUND)
+
+    draft = next(
+        (v for v in template.versions if v.status == VersionStatus.DRAFT.value), None
+    )
+    if draft is None:
+        raise Conflict(
+            "This template has no open draft. Propose a change first, which creates one, "
+            "and edit that."
+        )
+
+    data = file.file.read()
+    digest = storage.validate_upload(f"{code}.docx", DOCX_MEDIA_TYPE, data)
+    if digest == draft.source_hash:
+        return {"revision": draft.reference, "saved": False, "message": "Nothing changed."}
+
+    clean, scan_detail = storage.scan_upload(data)
+    if not clean:
+        raise ValidationFailed(
+            "That version was refused and has not been saved.", {"file": scan_detail}
+        )
+
+    draft.source_key = f"templates/{template.code}/{draft.reference}-{digest[:12]}.docx"
+    draft.source_hash = digest
+    storage.store.put(draft.source_key, data, DOCX_MEDIA_TYPE)
+
+    audit.record(
+        db,
+        action="template_draft_edited",
+        object_type="template",
+        object_id=template.code,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        after_state={"version": draft.reference, "hash": digest},
+    )
+    return {
+        "revision": draft.reference,
+        "saved": True,
+        "saved_at": datetime.now(UTC).isoformat(),
+    }
+
+
 @router.post("/templates/{code}/versions", response_model=TemplateVersionOut, status_code=201)
 def propose_template_version(
     code: str, payload: VersionProposal, db: Db, principal: CurrentUser
 ) -> TemplateVersion:
     principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
-    template = db.execute(
-        select(Template).where(Template.code == code)
-    ).scalar_one_or_none()
+    template = db.execute(select(Template).where(Template.code == code)).scalar_one_or_none()
     if template is None:
-        raise NotFound("That template was not found.")
+        raise NotFound(TEMPLATE_NOT_FOUND)
 
     open_drafts = [v for v in template.versions if v.status == VersionStatus.DRAFT.value]
     if open_drafts:
@@ -347,6 +699,11 @@ def propose_template_version(
         review_date=payload.review_date,
         supersedes_id=current.id if current else None,
         change_summary=payload.change_summary,
+        # The draft starts as a copy of the document in force, so editing a
+        # proposal begins from what is actually in use rather than from blank.
+        source_key=current.source_key if current else None,
+        source_hash=current.source_hash if current else None,
+        import_id=current.import_id if current else None,
     )
     db.add(version)
     db.flush()
@@ -414,108 +771,13 @@ def get_playbook(agreement_type: str, db: Db, principal: CurrentUser) -> dict:
     }
 
 
-@router.post("/template-imports", status_code=201)
-def import_template(
-    db: Db,
-    principal: CurrentUser,
-    entity: WorkingEntity,
-    file: Annotated[UploadFile, File()],
-    agreement_type: str | None = None,
-) -> dict:
-    """Import an existing Word template and propose a clause breakdown.
-
-    The proposal is exactly that. Nothing here enters the library as house
-    position: a clause owner accepts each candidate individually, and every
-    accepted candidate lands as a draft version that still has to be published
-    (LOP-M03-US-07).
-    """
-    principal.require_role(Role.HEAD_OF_LEGAL, Role.COUNSEL, Role.ADMIN)
-
-    data = file.file.read()
-    filename = file.filename or "template.docx"
-    content_type = file.content_type or "application/octet-stream"
-    digest = storage.validate_upload(filename, content_type, data)
-
-    clean, scan_detail = storage.scan_upload(data)
-    if not clean:
-        raise ValidationFailed(
-            "This file was refused and has been quarantined.", {"file": scan_detail}
-        )
-
-    try:
-        candidates, provenance = docx_import.extract(data)
-    except docx_import.NotADocx as exc:
-        raise ValidationFailed(str(exc), {"file": str(exc)}) from exc
-
-    key = f"imports/{entity}/{digest[:12]}-{filename}"
-    storage.store.put(key, data, content_type)
-
-    record = TemplateImport(
-        filename=filename,
-        entity=entity,
-        agreement_type=agreement_type,
-        storage_key=key,
-        source_hash=digest,
-        uploaded_by_id=uuid.UUID(principal.user_id),
-        proposed_clauses=[candidate.as_dict() for candidate in candidates],
-        provenance={**provenance, "filename": filename, "uploaded_by": principal.name},
-    )
-    db.add(record)
-    db.flush()
-
-    audit.record(
-        db,
-        action="template_imported",
-        object_type="template_import",
-        object_id=str(record.id),
-        actor_id=principal.user_id,
-        actor_label=principal.name,
-        entity=entity,
-        after_state={"filename": filename, "candidates": len(candidates)},
-    )
-
-    return {
-        "import_id": str(record.id),
-        "filename": filename,
-        "candidate_count": len(candidates),
-        "proposed_clauses": record.proposed_clauses,
-        "provenance": record.provenance,
-        "message": (
-            f"{len(candidates)} candidate clauses were extracted from {filename}. "
-            "None is approved. Accept the ones that reflect house position and they "
-            "become draft versions for publication."
-        ),
-    }
-
-
-@router.get("/template-imports")
-def list_imports(db: Db, principal: CurrentUser, entity: WorkingEntity) -> list[dict]:
-    principal.require_role(Role.HEAD_OF_LEGAL, Role.COUNSEL, Role.ADMIN)
-    return [
-        {
-            "id": str(record.id),
-            "filename": record.filename,
-            "agreement_type": record.agreement_type,
-            "status": record.status,
-            "candidate_count": len(record.proposed_clauses or []),
-            "accepted_count": record.accepted_count,
-            "created_at": record.created_at,
-        }
-        for record in db.execute(
-            select(TemplateImport)
-            .where(TemplateImport.entity == entity)
-            .order_by(TemplateImport.created_at.desc())
-        ).scalars()
-    ]
-
-
 @router.get("/template-imports/{import_id}")
 def get_import(import_id: uuid.UUID, db: Db, principal: CurrentUser) -> dict:
     """One import with its candidate clauses, so each can be decided on."""
     principal.require_role(Role.HEAD_OF_LEGAL, Role.COUNSEL, Role.ADMIN)
     record = db.get(TemplateImport, import_id)
     if record is None:
-        raise NotFound("That import was not found.")
+        raise NotFound(IMPORT_NOT_FOUND)
     return {
         "id": str(record.id),
         "filename": record.filename,
@@ -598,7 +860,7 @@ def accept_import_candidates(
 
     record = db.get(TemplateImport, import_id)
     if record is None:
-        raise NotFound("That import was not found.")
+        raise NotFound(IMPORT_NOT_FOUND)
 
     candidates = list(record.proposed_clauses or [])
     created: list[str] = []
@@ -609,9 +871,7 @@ def accept_import_candidates(
                 "That candidate is not in this import.",
                 {"index": f"The import holds {len(candidates)} candidates."},
             )
-        version = _draft_from_candidate(
-            db, principal, record, candidates[accepted.index], accepted
-        )
+        version = _draft_from_candidate(db, principal, record, candidates[accepted.index], accepted)
         created.append(version.reference)
 
     rejected = set(payload.rejected)

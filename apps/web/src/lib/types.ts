@@ -216,6 +216,7 @@ export type Finding = {
   decision: string;
   decided_at: string | null;
   clearance_rule: string | null;
+  edited_text: string | null;
 };
 
 export type Obligation = {
@@ -310,6 +311,7 @@ export type TemplateVersion = {
   effective_date: string | null;
   review_date: string | null;
   change_summary: string | null;
+  import_id?: string | null;
 };
 
 export type Template = {

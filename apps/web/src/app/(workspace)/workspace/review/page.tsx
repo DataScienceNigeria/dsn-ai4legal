@@ -18,6 +18,7 @@ import {
   Row,
   Select,
   Spinner,
+  Textarea,
 } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
@@ -51,6 +52,22 @@ export default function Review() {
     findings.data?.find((finding) => finding.id === selected) ?? findings.data?.[0] ?? null;
 
   /*
+    The suggestion is a draft, so it is editable before it is accepted. The
+    draft starts from whatever the record holds: an edit already recorded on
+    the finding, otherwise the model's wording.
+  */
+  const [draft, setDraft] = React.useState("");
+  const [editing, setEditing] = React.useState(false);
+  const suggestion = current?.suggested_redline ?? "";
+
+  React.useEffect(() => {
+    setDraft(current?.edited_text ?? current?.suggested_redline ?? "");
+    setEditing(false);
+  }, [current?.id, current?.edited_text, current?.suggested_redline]);
+
+  const edited = draft.trim() !== suggestion.trim() && draft.trim().length > 0;
+
+  /*
     Authority to concede, PRD section 14.3. Legal operations may clear a minor
     finding that already matches a pre-approved fallback and nothing else.
   */
@@ -67,8 +84,11 @@ export default function Review() {
     return false;
   }
 
-  const decide = useAction(async (findingId: string, decision: string) => {
-    await api(`/findings/${findingId}/decision`, { method: "POST", body: { decision } });
+  const decide = useAction(async (findingId: string, decision: string, editedText?: string) => {
+    await api(`/findings/${findingId}/decision`, {
+      method: "POST",
+      body: { decision, edited_text: editedText ?? null },
+    });
     findings.reload();
   });
 
@@ -127,7 +147,7 @@ export default function Review() {
                   onClick={() => setSelected(finding.id)}
                   className={cn(
                     "block w-full text-left",
-                    current?.id === finding.id && "bg-primary/5 shadow-[inset_2px_0_0] shadow-primary",
+                    current?.id === finding.id && "bg-brand/5 shadow-[inset_2px_0_0] shadow-brand",
                   )}
                 >
                   <Row cols="minmax(0,1fr) 6.25rem 5.625rem">
@@ -186,21 +206,58 @@ export default function Review() {
                     <div className="mb-1.5 text-xs font-semibold text-muted-foreground">
                       OUR HOUSE POSITION
                     </div>
-                    <p className="rounded-md border border-primary/25 bg-primary/5 p-3 text-sm leading-relaxed">
+                    <p className="rounded-md border border-brand/25 bg-brand/5 p-3 text-sm leading-relaxed">
                       {current.house_position}
                     </p>
                   </div>
 
                   <div>
-                    <div className="mb-1.5 flex items-center gap-2">
+                    <div className="mb-1.5 flex flex-wrap items-center gap-2">
                       <span className="text-xs font-semibold text-muted-foreground">
                         SUGGESTED RESPONSE
                       </span>
-                      <Pill tone="novel">Draft until accepted</Pill>
+                      <Pill tone={edited ? "info" : "novel"}>
+                        {edited ? "Your wording" : "Draft until accepted"}
+                      </Pill>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="ml-auto"
+                        onClick={() => setEditing((open) => !open)}
+                      >
+                        {editing ? "Stop editing" : "Edit the wording"}
+                      </Button>
                     </div>
-                    <p className="rounded-md border p-3 text-sm leading-relaxed">
-                      {current.suggested_redline}
-                    </p>
+                    {editing ? (
+                      <>
+                        <Textarea
+                          value={draft}
+                          onChange={(event) => setDraft(event.target.value)}
+                          className="min-h-[9rem] leading-relaxed"
+                          aria-label="Suggested response"
+                        />
+                        <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                          <span>
+                            {edited
+                              ? "Changed from the suggestion. Accepting records your wording, attributed to you."
+                              : "Unchanged from the suggestion."}
+                          </span>
+                          {edited ? (
+                            <button
+                              type="button"
+                              className="underline underline-offset-2 hover:text-foreground"
+                              onClick={() => setDraft(suggestion)}
+                            >
+                              Restore the suggestion
+                            </button>
+                          ) : null}
+                        </div>
+                      </>
+                    ) : (
+                      <p className="whitespace-pre-wrap rounded-md border p-3 text-sm leading-relaxed">
+                        {draft || suggestion}
+                      </p>
+                    )}
                   </div>
 
                   {current.clearance_rule ? (
@@ -217,27 +274,34 @@ export default function Review() {
 
               {authorised(current) ? (
                 <div className="flex flex-wrap items-center gap-2">
+                  {edited ? (
+                    <Button
+                      variant="primary"
+                      disabled={decide.busy}
+                      onClick={() => void decide.run(current.id, "edited", draft)}
+                    >
+                      Accept with my edit
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="primary"
+                      disabled={decide.busy}
+                      onClick={() => void decide.run(current.id, "accepted")}
+                    >
+                      Accept the suggestion
+                    </Button>
+                  )}
                   <Button
-                    variant="primary"
-                    disabled={decide.busy}
-                    onClick={() => void decide.run(current.id, "accepted")}
-                  >
-                    Accept the suggestion
-                  </Button>
-                  <Button
-                    disabled={decide.busy}
-                    onClick={() => void decide.run(current.id, "edited")}
-                  >
-                    Accept with my edit
-                  </Button>
-                  <Button
+                    variant="destructive"
                     disabled={decide.busy}
                     onClick={() => void decide.run(current.id, "rejected")}
                   >
                     Reject
                   </Button>
                   <span className="text-xs text-muted-foreground sm:ml-auto">
-                    Accepted changes are attributed to you, not to the model.
+                    {edited
+                      ? "Your wording is recorded as the accepted text, attributed to you."
+                      : "Accepted changes are attributed to you, not to the model."}
                   </span>
                 </div>
               ) : (

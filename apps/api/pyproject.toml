@@ -22,6 +22,9 @@ dependencies = [
     "docxtpl>=0.19",
     "openai>=1.60",
     "pgvector>=0.3.6",
+    # Pure Python, no transitive dependencies. The enrolment QR is drawn on
+    # the server so the secret is encoded once, by the same code that issued it.
+    "segno>=1.6",
 ]
 
 [project.optional-dependencies]

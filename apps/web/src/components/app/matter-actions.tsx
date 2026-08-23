@@ -3,6 +3,7 @@
 import * as React from "react";
 
 import { useRoles } from "@/components/app/session";
+import { StepUpGate } from "@/components/app/step-up";
 import {
   Actions,
   Button,
@@ -17,7 +18,7 @@ import {
 } from "@/components/ui";
 import { api, query } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
-import type { DocumentRecord, Matter, Template, UserRow } from "@/lib/types";
+import type { CounterpartyRow, DocumentRecord, Matter, Template, UserRow } from "@/lib/types";
 import { titleCase } from "@/lib/utils";
 
 const TIERS = ["tier_1", "tier_2", "tier_3", "tier_4"];
@@ -419,6 +420,7 @@ function SignatureDialog({
           reasons={send.error.reasons}
         />
       ) : null}
+      <StepUpGate action="Issuing a signature request" state={send} />
     </Modal>
   );
 }
@@ -503,6 +505,7 @@ function WetInkDialog({
       {record.error ? (
         <Refusal title="That record was refused" reason={record.error.message} reasons={record.error.reasons} />
       ) : null}
+      <StepUpGate action="Recording a wet-ink execution" state={record} />
     </Modal>
   );
 }
@@ -644,6 +647,95 @@ function GovernanceDialog({
   );
 }
 
+/*
+  A matter can be opened before anyone knows who the other side is, and until
+  it is linked the counterparty record carries none of this matter's history.
+  Replacing an existing link asks for a reason, because that is a change of
+  fact rather than the filling in of a blank.
+*/
+export function LinkCounterparty({
+  matter,
+  onDone,
+}: Readonly<{ matter: Matter; onDone: () => void }>) {
+  const [open, setOpen] = React.useState(false);
+  const [chosen, setChosen] = React.useState("");
+  const [reason, setReason] = React.useState("");
+  const counterparties = useApi<CounterpartyRow[]>(open ? "/counterparties" : null, [open]);
+
+  const link = useAction(async () => {
+    await api(`/matters/${matter.id}/counterparty`, {
+      method: "POST",
+      body: { counterparty_id: chosen, reason: reason.trim() || null },
+    });
+    onDone();
+    setOpen(false);
+    setChosen("");
+    setReason("");
+  });
+
+  const linked = matter.counterparty !== null;
+  const errors = link.error?.fieldErrors ?? {};
+
+  return (
+    <>
+      <Button size="sm" variant={linked ? "ghost" : "primary"} onClick={() => setOpen(true)}>
+        {linked ? "Change" : "Link a counterparty"}
+      </Button>
+      <Modal
+        open={open}
+        title={linked ? "Change the counterparty" : "Link a counterparty"}
+        subtitle="The counterparty record carries the history, the risk assessment and the positions previously agreed. Until this matter is linked, none of that reaches it."
+        width="sm"
+        onClose={() => setOpen(false)}
+        footer={
+          <>
+            <Button onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              variant="primary"
+              disabled={!chosen || link.busy || (linked && !reason.trim())}
+              onClick={() => void link.run()}
+            >
+              {link.busy ? "Linking" : "Link it"}
+            </Button>
+          </>
+        }
+      >
+        {link.error ? (
+          <Refusal
+            title="That link was refused"
+            reason={link.error.message}
+            reasons={Object.values(errors)}
+          />
+        ) : null}
+
+        <Field
+          label="Counterparty"
+          required
+          hint="A counterparty is one identity across both organisations. What is separated is the matter, not the company it is with."
+          error={errors.counterparty_id}
+        >
+          <Select value={chosen} onChange={(event) => setChosen(event.target.value)}>
+            <option value="">
+              {counterparties.loading ? "Loading" : "Choose a counterparty"}
+            </option>
+            {(counterparties.data ?? []).map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.legal_name}, {row.reference}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        {linked ? (
+          <Field label="Why it is changing" required error={errors.reason}>
+            <Textarea value={reason} onChange={(event) => setReason(event.target.value)} />
+          </Field>
+        ) : null}
+      </Modal>
+    </>
+  );
+}
+
 export function MatterActions({
   matter,
   documents,
@@ -728,6 +820,7 @@ export function MatterActions({
         onClose={close}
         onDone={onChanged}
       />
+      <StepUpGate action="Changing the restriction on a matter" state={restrict} />
       <Confirm
         open={dialog === "restrict"}
         title={matter.restricted ? "Lift the restriction on this matter" : "Restrict this matter"}

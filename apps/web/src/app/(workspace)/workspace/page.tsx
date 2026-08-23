@@ -143,7 +143,7 @@ export default function DeliveryDashboard() {
                 <div className="w-20 shrink-0 text-xs text-muted-foreground">{bucket.label}</div>
                 <div className="h-4 flex-1 overflow-hidden rounded-sm bg-muted">
                   <div
-                    className="h-full rounded-sm bg-secondary"
+                    className="h-full rounded-sm bg-brand"
                     style={{ width: `${(bucket.count / maxAgeing) * 100}%` }}
                   />
                 </div>

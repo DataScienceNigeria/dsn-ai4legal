@@ -62,6 +62,13 @@ class MatterUpdate(BaseModel):
     business_owner_id: UUID | None = None
 
 
+class CounterpartyLink(BaseModel):
+    counterparty_id: UUID
+    #: Required only when a counterparty is already linked. Replacing one is a
+    #: change of fact about the matter, not a correction to a blank field.
+    reason: str | None = None
+
+
 class ReassignRequest(BaseModel):
     owner_id: UUID
     reason: str
@@ -142,6 +149,9 @@ class TemplateVersionOut(ApiModel):
     effective_date: date | None
     review_date: date | None
     change_summary: str | None
+    #: Set where this version came from a Word document. It is what makes the
+    #: clause candidates extracted at import reachable from the template.
+    import_id: UUID | None = None
 
 
 class TemplateOut(ApiModel):
@@ -165,6 +175,22 @@ class VersionProposal(BaseModel):
     variables: list[TemplateVariable] | None = None
     effective_date: date | None = None
     review_date: date | None = None
+
+
+class ClauseCreate(BaseModel):
+    """A new clause category, with the first draft of its house position."""
+
+    category: str = Field(min_length=2, max_length=16)
+    name: str = Field(min_length=2, max_length=255)
+    house_position: str = Field(min_length=1)
+    fallbacks: list[FallbackPosition] = Field(default_factory=list)
+    unacceptable_position: str | None = None
+    entity_applicability: list[str] = Field(default_factory=lambda: ["DSN", "EAI"])
+    jurisdiction: str = "Nigeria"
+    required_for_types: list[str] = Field(default_factory=list)
+    effective_date: date | None = None
+    review_date: date | None = None
+    change_summary: str | None = None
 
 
 class VersionDiffLine(BaseModel):
@@ -339,6 +365,7 @@ class FindingOut(ApiModel):
     decision: str
     decided_at: datetime | None
     clearance_rule: str | None
+    edited_text: str | None = None
 
 
 class FindingDecision(BaseModel):

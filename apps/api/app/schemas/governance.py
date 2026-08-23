@@ -498,3 +498,10 @@ class ExportRequestCreate(BaseModel):
 class SecondApproval(BaseModel):
     approve: bool
     reason: str | None = None
+
+
+class MfaReset(BaseModel):
+    """Clearing someone else's second factor. The reason is not optional."""
+
+    reason: str
+

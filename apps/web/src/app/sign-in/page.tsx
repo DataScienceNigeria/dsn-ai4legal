@@ -1,10 +1,10 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
 
-import { Button, Card, CardBody, Field, Input, Notice } from "@/components/ui";
+import { Button, Card, CardBody, Field, Input, Notice, PasswordInput } from "@/components/ui";
 import { ApiError, login } from "@/lib/api";
 
 const DEMO_ACCOUNTS = [
@@ -17,6 +17,10 @@ const DEMO_ACCOUNTS = [
 
 export default function SignIn() {
   const router = useRouter();
+  // Arriving here because a session lapsed is not the same as choosing to
+  // sign in, and saying so is the difference between an explanation and a
+  // form that appeared for no reason.
+  const expired = useSearchParams().get("expired") === "1";
   const [email, setEmail] = React.useState("adaeze.okafor@dsn.example");
   const [password, setPassword] = React.useState("Lop-Demo-2026");
   const [code, setCode] = React.useState("");
@@ -55,7 +59,7 @@ export default function SignIn() {
         <Card>
           <CardBody className="p-6 sm:p-8">
             <div className="mb-5 flex items-center gap-3">
-              <Image src="/dsn-logo.png" alt="" width={36} height={36} className="rounded-sm" />
+              <Image src="/dsn-logo.png" alt="" width={36} height={36} className="h-9 w-9 rounded-sm" />
               <div>
                 <h1 className="text-xl font-semibold text-secondary">Legal Operations Platform</h1>
                 <p className="text-sm text-muted-foreground">
@@ -74,8 +78,7 @@ export default function SignIn() {
                 />
               </Field>
               <Field label="Password" required>
-                <Input
-                  type="password"
+                <PasswordInput
                   value={password}
                   autoComplete="current-password"
                   onChange={(event) => setPassword(event.target.value)}
@@ -97,6 +100,12 @@ export default function SignIn() {
                     onChange={(event) => setCode(event.target.value)}
                   />
                 </Field>
+              ) : null}
+
+              {expired && !error ? (
+                <Notice tone="warn" title="Your session had lapsed">
+                  Nothing was lost. Sign in again and carry on from where you were.
+                </Notice>
               ) : null}
 
               {error ? (

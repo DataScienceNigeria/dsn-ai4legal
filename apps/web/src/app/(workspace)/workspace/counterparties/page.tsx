@@ -361,7 +361,7 @@ function Positions() {
               emptyTitle="No deviation from the house position has been recorded on this clause"
             >
               <div className="space-y-3">
-                <div className="rounded-md border border-primary/20 bg-primary/5 p-3 text-sm leading-relaxed">
+                <div className="rounded-md border border-brand/20 bg-brand/5 p-3 text-sm leading-relaxed">
                   {history.data?.house_position}
                 </div>
                 {(history.data?.deviations ?? []).map((deviation, index) => (

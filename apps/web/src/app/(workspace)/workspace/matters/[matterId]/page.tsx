@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import * as React from "react";
 
-import { MatterActions } from "@/components/app/matter-actions";
+import { LinkCounterparty, MatterActions } from "@/components/app/matter-actions";
 import { RequestPanel } from "@/components/app/request-panel";
 import { useRoles } from "@/components/app/session";
 import { DecisionPill, SlaPill, StatusPill, TierPill } from "@/components/app/status";
@@ -434,11 +434,17 @@ export default function MatterDetail() {
           </div>
 
           <Card>
-            <CardHeader title="Record" />
+            <CardHeader
+              title="Record"
+              actions={<LinkCounterparty matter={data} onDone={reloadAll} />}
+            />
             <CardBody className="space-y-2.5 text-sm">
               {(
                 [
-                  ["Counterparty", data.counterparty?.legal_name ?? "Not linked"],
+                  [
+                    "Counterparty",
+                    data.counterparty?.legal_name ?? "Not linked to a counterparty yet",
+                  ],
                   ["Practice", data.practice_code],
                   ["Classification", titleCase(data.classification ?? "confidential")],
                   ["Value", formatMoney(data.value_amount ?? null, data.value_currency)],

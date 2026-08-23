@@ -233,8 +233,17 @@ REVIEW_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string"},
-                    "their_reference": {"type": "string"},
+                    "title": {
+                        "type": "string",
+                        "description": "A plain heading for the finding, with no citation in it.",
+                    },
+                    "their_reference": {
+                        "type": "string",
+                        "description": (
+                            "The clause number in the counterparty draft, such as "
+                            "'clause 5'. Not the label of the material it arrived in."
+                        ),
+                    },
                     "clause_absent": {
                         "type": "boolean",
                         "description": (
@@ -243,11 +252,30 @@ REVIEW_SCHEMA: dict[str, Any] = {
                         ),
                     },
                     "severity": {"type": "string", "enum": SEVERITY_VALUES},
-                    "clause_category": {"type": "string"},
-                    "clause_version_ref": {"type": "string"},
+                    "clause_category": {
+                        "type": "string",
+                        "description": (
+                            "The house clause category alone, such as TERM. At most 16 "
+                            "characters, and never with a version reference appended."
+                        ),
+                    },
+                    "clause_version_ref": {
+                        "type": "string",
+                        "description": (
+                            "The approved clause version this is measured against, such "
+                            "as CLS-TERM-v1.4. No square brackets."
+                        ),
+                    },
                     "their_text": {"type": "string"},
                     "house_position": {"type": "string"},
-                    "suggested_redline": {"type": "string"},
+                    "suggested_redline": {
+                        "type": "string",
+                        "description": (
+                            "Contract wording a lawyer can paste as it stands. No "
+                            "citation, no commentary."
+                        ),
+                    },
+                    "cites": _string_array(),
                     "matches_preapproved_fallback": {"type": "boolean"},
                     "fallback_rank": {"type": "integer"},
                     "reasoning": {"type": "string"},

@@ -142,7 +142,7 @@ export default function NewRequest() {
                       setRaisingFor(code);
                       setEntity(code);
                     }}
-                    className="row-span-2 mt-0.5 h-4 w-4 shrink-0 accent-[hsl(var(--heading))]"
+                    className="row-span-2 mt-0.5 h-4 w-4 shrink-0 accent-[hsl(var(--brand))]"
                   />
                   <span className="min-w-0 font-medium">{ENTITY_NAMES[code] ?? code}</span>
                   <span className="col-start-2 text-xs text-muted-foreground">{code}</span>
@@ -239,7 +239,7 @@ export default function NewRequest() {
                 onChange={(event) =>
                   setDeclaration((prev) => ({ ...prev, [key]: event.target.checked }))
                 }
-                className="mt-0.5 h-4 w-4 shrink-0 accent-[hsl(var(--primary))]"
+                className="mt-0.5 h-4 w-4 shrink-0 accent-[hsl(var(--brand))]"
               />
               <span className="leading-relaxed">{label}</span>
             </label>

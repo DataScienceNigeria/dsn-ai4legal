@@ -266,7 +266,7 @@ export default function Inbox() {
                   onClick={() => setSelectedId(message.id)}
                   className={cn(
                     "block w-full border-b p-4 text-left last:border-b-0 hover:bg-muted/60",
-                    current?.id === message.id && "bg-primary/5 shadow-[inset_2px_0_0] shadow-primary",
+                    current?.id === message.id && "bg-brand/5 shadow-[inset_2px_0_0] shadow-brand",
                   )}
                 >
                   <div className="flex items-center justify-between gap-2">

@@ -1,12 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import * as React from "react";
 
 import {
+  AddTemplate,
   ClauseVersionList,
+  NewClause,
   ProposeVersion,
-  TemplateDetail,
-  TemplateImports,
 } from "@/components/app/library-actions";
 import { useRoles, useSession } from "@/components/app/session";
 import {
@@ -49,7 +50,10 @@ function ClauseTab({
   return (
         <div className="grid gap-4 lg:gap-5 lg:grid-cols-[16rem_minmax(0,1fr)]">
           <Card>
-            <CardHeader title="Categories" />
+            <CardHeader
+              title="Categories"
+              actions={canPropose ? <NewClause onDone={() => clauses.reload()} /> : null}
+            />
             <div className="max-h-[560px] overflow-y-auto">
               {clauses.loading ? (
                 <Spinner />
@@ -105,7 +109,7 @@ function ClauseTab({
                       </span>
                       <Pill tone="good">Presentable as house position</Pill>
                     </div>
-                    <p className="rounded-md border border-primary/20 bg-primary/5 p-3 text-sm leading-relaxed">
+                    <p className="rounded-md border border-brand/20 bg-brand/5 p-3 text-sm leading-relaxed">
                       {current.current.house_position}
                     </p>
                   </div>
@@ -163,7 +167,6 @@ export default function Library() {
   const canPropose = has("counsel", "head_of_legal", "admin");
   const [tab, setTab] = React.useState("clauses");
   const [selected, setSelected] = React.useState<string | null>(null);
-  const [openTemplate, setOpenTemplate] = React.useState<string | null>(null);
 
   const clauses = useApi<Clause[]>("/clauses", [entity]);
   const templates = useApi<Template[]>("/templates", [entity]);
@@ -200,7 +203,6 @@ export default function Library() {
         tabs={[
           { id: "clauses", label: "Clauses", badge: clauses.data?.length },
           { id: "templates", label: "Templates", badge: templates.data?.length },
-          { id: "imports", label: "Word imports" },
         ]}
         active={tab}
         onChange={setTab}
@@ -214,12 +216,14 @@ export default function Library() {
           onSelect={setSelected}
         />
       ) : null}
-      {tab === "imports" ? <TemplateImports /> : null}
-
       {tab === "templates" ? (
         <div className="space-y-4">
         <Card>
-          <CardHeader title="Templates" subtitle="Only an approved, effective version may generate" />
+          <CardHeader
+            title="Templates"
+            subtitle="Only an approved, effective version may generate"
+            actions={canPropose ? <AddTemplate onDone={() => templates.reload()} /> : null}
+          />
           <div>
             <Row cols="minmax(0,1fr) 8.75rem 6.875rem 7.5rem 7.5rem" head>
               <div>Template</div>
@@ -236,13 +240,12 @@ export default function Library() {
               templates.data.map((template) => (
                 <Row key={template.id} cols="minmax(0,1fr) 8.75rem 6.875rem 7.5rem 7.5rem">
                   <div>
-                    <button
-                      type="button"
-                      className="text-left text-sm font-medium hover:underline"
-                      onClick={() => setOpenTemplate(template.code)}
+                    <Link
+                      href={`/workspace/library/${template.code}`}
+                      className="text-sm font-medium"
                     >
                       {template.name}
-                    </button>
+                    </Link>
                     <div className="text-xs text-muted-foreground">
                       {titleCase(template.agreement_type)}, {template.jurisdiction}
                     </div>
@@ -261,9 +264,6 @@ export default function Library() {
           </div>
         </Card>
 
-        {openTemplate ? (
-          <TemplateDetail code={openTemplate} onChanged={() => templates.reload()} />
-        ) : null}
         </div>
       ) : null}
 

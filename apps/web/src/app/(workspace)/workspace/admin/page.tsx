@@ -3,12 +3,14 @@
 import * as React from "react";
 
 import { MfaEnrolment } from "@/components/app/mfa-enrolment";
-import { useSession } from "@/components/app/session";
+import { useRoles, useSession } from "@/components/app/session";
+import { StepUpGate } from "@/components/app/step-up";
 import {
   Button,
   Card,
   CardBody,
   CardHeader,
+  Confirm,
   DataState,
   Field,
   Input,
@@ -40,7 +42,7 @@ const RETENTION_COLS = "minmax(0,1fr) 6.875rem 8.75rem 8.125rem minmax(0,1.2fr)"
 const EXPORT_COLS = "9.375rem minmax(0,1.4fr) 7.5rem 10rem";
 const DELETION_COLS = "8.75rem minmax(0,1.2fr) 7.5rem 11.25rem 10rem";
 const CONNECTOR_COLS = "minmax(0,1.2fr) 6.875rem minmax(0,1.4fr) 11.875rem 6.25rem";
-const PEOPLE_COLS = "minmax(0,1.2fr) minmax(0,1.2fr) 7.5rem 10rem 7.5rem";
+const PEOPLE_COLS = "minmax(0,1.2fr) minmax(0,1.1fr) 6.25rem 8.75rem 6.875rem 8.75rem";
 const CONFIG_COLS = "minmax(0,1fr) minmax(0,1.6fr) 5rem 7.5rem";
 const SAMPLE_COLS = "7.5rem 9.375rem minmax(0,1fr) 8.125rem 9.375rem";
 
@@ -467,6 +469,51 @@ function Connectors() {
   );
 }
 
+/*
+  Clearing someone else's second factor is the request an attacker would most
+  like to make, so it is bounded rather than convenient: administrators only,
+  a fresh authentication, a reason that is recorded against both accounts, and
+  it enrols nothing in its place. The next privileged act that person attempts
+  refuses until they have enrolled a new device.
+*/
+function ResetSecondFactor({
+  user,
+  onDone,
+}: Readonly<{ user: UserRow; onDone: () => void }>) {
+  const { has } = useRoles();
+  const { me } = useSession();
+  const [open, setOpen] = React.useState(false);
+
+  const reset = useAction(async (reason: string) => {
+    await api(`/users/${user.id}/mfa/reset`, { method: "POST", body: { reason } });
+    onDone();
+    setOpen(false);
+  });
+
+  if (!has("admin") || user.id === me?.id) return null;
+
+  return (
+    <>
+      <Button size="sm" variant="destructive" onClick={() => setOpen(true)}>
+        Reset
+      </Button>
+      <Confirm
+        open={open}
+        title={`Reset the second factor for ${user.name}`}
+        detail="Their authenticator and every recovery code stop working. They enrol a new device themselves, and until they do, anything needing a step-up refuses."
+        confirmLabel="Reset it"
+        destructive
+        reasonLabel="Why"
+        busy={reset.busy}
+        error={reset.error?.message}
+        onCancel={() => setOpen(false)}
+        onConfirm={(reason: string) => void reset.run(reason)}
+      />
+      <StepUpGate action="Resetting someone else's second factor" state={reset} />
+    </>
+  );
+}
+
 function People() {
   const users = useApi<UserRow[]>("/users");
   const rows = users.data ?? [];
@@ -484,6 +531,7 @@ function People() {
             <div>Entities</div>
             <div>Specialisms</div>
             <div>Workload</div>
+            <div>Second factor</div>
           </Row>
           <DataState
             loading={users.loading}
@@ -513,6 +561,9 @@ function People() {
                   <Pill tone={user.workload >= user.workload_ceiling ? "warn" : "neutral"}>
                     {`${user.workload} of ${user.workload_ceiling}`}
                   </Pill>
+                </div>
+                <div>
+                  <ResetSecondFactor user={user} onDone={() => users.reload()} />
                 </div>
               </Row>
             ))}

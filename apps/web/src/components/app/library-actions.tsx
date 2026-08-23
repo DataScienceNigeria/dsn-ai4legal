@@ -2,7 +2,10 @@
 
 import * as React from "react";
 
-import { useRoles } from "@/components/app/session";
+import { Icon } from "@/components/app/icons";
+import { StepUpGate } from "@/components/app/step-up";
+import { useRoles, useSession } from "@/components/app/session";
+import { SuperDocEditor } from "@/components/app/superdoc-editor";
 import {
   Button,
   Card,
@@ -15,32 +18,20 @@ import {
   Input,
   Modal,
   Mono,
-  Notice,
   Pill,
   Refusal,
-  Row,
   Select,
   Textarea,
 } from "@/components/ui";
-import { api, upload } from "@/lib/api";
+import { api, download, postForm } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
-import type { Clause, Fallback, Template } from "@/lib/types";
-import { formatDateTime, titleCase } from "@/lib/utils";
+import type { Clause, Fallback } from "@/lib/types";
+import { titleCase } from "@/lib/utils";
 
 const AUTHORITIES = ["house", "fallback_1", "fallback_2", "fallback_3", "outside"];
 
 type DiffLine = { kind: string; text: string };
 type Diff = { from_reference: string; to_reference: string; lines: DiffLine[] };
-
-type ImportRow = {
-  id: string;
-  filename: string;
-  agreement_type: string | null;
-  status: string;
-  candidate_count: number;
-  accepted_count: number;
-  created_at: string;
-};
 
 type Candidate = {
   number: string;
@@ -115,7 +106,8 @@ export function ProposeVersion({
 
   return (
     <>
-      <Button size="sm" onClick={() => setOpen(true)}>
+      <Button size="sm" variant="dark" onClick={() => setOpen(true)}>
+        <Icon name="rename" className="h-4 w-4" />
         Propose a change
       </Button>
       <Modal
@@ -254,9 +246,11 @@ export function VersionDecision({
   return (
     <>
       <Button size="sm" variant="primary" onClick={() => setConfirming("publish")}>
+        <Icon name="review" className="h-4 w-4" />
         Publish
       </Button>
       <Button size="sm" variant="destructive" onClick={() => setConfirming("reject")}>
+        <Icon name="trash" className="h-4 w-4" />
         Reject
       </Button>
       <Confirm
@@ -280,6 +274,7 @@ export function VersionDecision({
         onCancel={() => setConfirming(null)}
         onConfirm={() => void act.run("reject")}
       />
+      <StepUpGate action="Publishing a library version" state={act} />
     </>
   );
 }
@@ -297,6 +292,7 @@ export function ClauseDiff({ category }: Readonly<{ category: string }>) {
   return (
     <>
       <Button size="sm" onClick={() => setOpen(true)}>
+        <Icon name="compliance" className="h-4 w-4" />
         What changed
       </Button>
       <Modal
@@ -333,17 +329,35 @@ export function ClauseDiff({ category }: Readonly<{ category: string }>) {
   );
 }
 
+type RequiredClause = {
+  name: string;
+  category: string;
+  absent_severity: string;
+};
+
+const ABSENT_TONE: Record<string, "bad" | "warn" | "neutral"> = {
+  critical: "bad",
+  major: "warn",
+  minor: "neutral",
+};
+
+/*
+  A required clause is a record, not a string. Rendering it as one put an
+  object where React expected text and an object where it expected a key, which
+  is what took the whole templates screen down rather than just this dialog.
+*/
 export function PlaybookView({ agreementType }: Readonly<{ agreementType: string }>) {
   const [open, setOpen] = React.useState(false);
   const playbook = useApi<{
     name: string;
     version: number;
-    required_clauses: string[];
+    required_clauses: RequiredClause[];
   }>(open ? `/playbooks/${agreementType}` : null, [agreementType, open]);
 
   return (
     <>
-      <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+      <Button size="sm" onClick={() => setOpen(true)}>
+        <Icon name="assessments" className="h-4 w-4" />
         Playbook
       </Button>
       <Modal
@@ -360,19 +374,289 @@ export function PlaybookView({ agreementType }: Readonly<{ agreementType: string
         >
           <ul className="space-y-1.5 text-sm">
             {(playbook.data?.required_clauses ?? []).map((clause) => (
-              <li key={clause} className="flex items-center gap-2">
-                <Pill tone="info">Required</Pill>
-                <Mono>{clause}</Mono>
+              <li
+                key={`${clause.category}-${clause.name}`}
+                className="flex flex-wrap items-center gap-2 rounded-md border p-2.5"
+              >
+                <Mono>{clause.category}</Mono>
+                <span className="min-w-0 flex-1 font-medium">{clause.name}</span>
+                <Pill tone={ABSENT_TONE[clause.absent_severity] ?? "neutral"}>
+                  {titleCase(clause.absent_severity)} if absent
+                </Pill>
               </li>
             ))}
           </ul>
+          {playbook.data ? (
+            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+              Version {playbook.data.version}. A clause marked critical stops issue outright;
+              major and minor are reported and can be accepted with a reason.
+            </p>
+          ) : null}
         </DataState>
       </Modal>
     </>
   );
 }
 
-function CandidateReview({
+/*
+  Anything the platform can serve as a .docx can be read in the app rather than
+  downloaded and opened elsewhere. Viewing only: the authoritative copy is the
+  one the API holds, and this surface is for reading a template or an import
+  before deciding something about it.
+*/
+/*
+  Proposing a version needs a clause to propose it against, so before this the
+  library could only be revised, never extended. The first version is a draft
+  like any other and still has to be published.
+*/
+const AGREEMENT_TYPES = [
+  "nda_mutual",
+  "master_services_agreement",
+  "consultant_engagement",
+  "data_sharing_agreement",
+  "partnership_agreement",
+  "lease_agreement",
+  "ip_assignment",
+  "other",
+];
+
+/*
+  One upload, two things out of it. The document is kept as the document so it
+  can be read and edited as itself, and the same file is split into blocks so
+  generation has something deterministic to assemble from. Asking for the paper
+  twice would be asking to let the two disagree.
+
+  It arrives as a draft. Publishing is the separate, separately authorised
+  step, so importing a file still cannot put anything into production.
+*/
+export function AddTemplate({ onDone }: Readonly<{ onDone: () => void }>) {
+  const [open, setOpen] = React.useState(false);
+  const [name, setName] = React.useState("");
+  const [agreementType, setAgreementType] = React.useState("");
+  const [file, setFile] = React.useState<File | null>(null);
+  const input = React.useRef<HTMLInputElement>(null);
+
+  const send = useAction(async () => {
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file);
+    form.append("name", name.trim());
+    form.append("agreement_type", agreementType);
+    await postForm("/templates/import", form);
+    onDone();
+    setOpen(false);
+    setName("");
+    setAgreementType("");
+    setFile(null);
+  });
+
+  const ready = file && name.trim() && agreementType;
+  const errors = send.error?.fieldErrors ?? {};
+
+  return (
+    <>
+      <Button size="sm" variant="primary" onClick={() => setOpen(true)}>
+        <Icon name="plus" className="h-4 w-4" />
+        Add template
+      </Button>
+      <Modal
+        open={open}
+        title="Add an agreement template"
+        subtitle="Bring in a Word agreement you already use. It becomes a draft template you can read, change and publish."
+        onClose={() => setOpen(false)}
+        footer={
+          <>
+            <Button onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="primary" disabled={!ready || send.busy} onClick={() => void send.run()}>
+              {send.busy ? "Reading the document" : "Add it as a draft"}
+            </Button>
+          </>
+        }
+      >
+        {send.error ? (
+          <Refusal
+            title="That template was not added"
+            reason={send.error.message}
+            reasons={Object.values(errors)}
+          />
+        ) : null}
+
+        <Field label="What is it called" required error={errors.name}>
+          <Input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Mutual non-disclosure agreement"
+          />
+        </Field>
+
+        <Field
+          label="Agreement type"
+          required
+          hint="What the platform routes and tiers on. It decides which playbook applies."
+          error={errors.agreement_type}
+        >
+          <Select value={agreementType} onChange={(event) => setAgreementType(event.target.value)}>
+            <option value="">Choose a type</option>
+            {AGREEMENT_TYPES.map((value) => (
+              <option key={value} value={value}>
+                {titleCase(value)}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        <Field label="The document" required error={errors.file}>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={input}
+              type="file"
+              accept=".docx"
+              className="hidden"
+              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+            />
+            <Button size="sm" onClick={() => input.current?.click()}>
+              Choose a .docx
+            </Button>
+            <span className="min-w-0 truncate text-sm text-muted-foreground">
+              {file ? `${file.name}, ${Math.max(1, Math.round(file.size / 1024))} KB` : "Nothing chosen"}
+            </span>
+          </div>
+        </Field>
+      </Modal>
+    </>
+  );
+}
+
+export function NewClause({ onDone }: Readonly<{ onDone: () => void }>) {
+  const [open, setOpen] = React.useState(false);
+  const [category, setCategory] = React.useState("");
+  const [name, setName] = React.useState("");
+  const [housePosition, setHousePosition] = React.useState("");
+  const [unacceptable, setUnacceptable] = React.useState("");
+  const [summary, setSummary] = React.useState("");
+
+  const create = useAction(async () => {
+    await api("/clauses", {
+      method: "POST",
+      body: {
+        category: category.trim().toUpperCase(),
+        name: name.trim(),
+        house_position: housePosition.trim(),
+        unacceptable_position: unacceptable.trim() || null,
+        change_summary: summary.trim() || null,
+      },
+    });
+    onDone();
+    setOpen(false);
+    setCategory("");
+    setName("");
+    setHousePosition("");
+    setUnacceptable("");
+    setSummary("");
+  });
+
+  const ready = category.trim() && name.trim() && housePosition.trim();
+  const errors = create.error?.fieldErrors ?? {};
+
+  return (
+    <>
+      <Button size="sm" variant="primary" onClick={() => setOpen(true)}>
+        <Icon name="plus" className="h-4 w-4" />
+        New clause
+      </Button>
+      <Modal
+        open={open}
+        title="Add a clause to the library"
+        subtitle="A new category, with the first draft of its house position. It is a draft until someone with the authority publishes it."
+        onClose={() => setOpen(false)}
+        footer={
+          <>
+            <Button onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="primary" disabled={!ready || create.busy} onClick={() => void create.run()}>
+              {create.busy ? "Creating" : "Create the draft"}
+            </Button>
+          </>
+        }
+      >
+        {create.error ? (
+          <Refusal
+            title="That clause was not created"
+            reason={create.error.message}
+            reasons={Object.values(errors)}
+          />
+        ) : null}
+
+        <div className="grid gap-3 sm:grid-cols-[9rem_minmax(0,1fr)]">
+          <Field label="Category" required hint="Short, upper case. CONF, LIAB, DPR." error={errors.category}>
+            <Input
+              value={category}
+              onChange={(event) => setCategory(event.target.value.toUpperCase())}
+              placeholder="TERM"
+            />
+          </Field>
+          <Field label="Name" required error={errors.name}>
+            <Input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Term and termination"
+            />
+          </Field>
+        </div>
+
+        <Field
+          label="House position"
+          required
+          hint="The wording the organisation opens with. Fallbacks are added afterwards, as a version."
+          error={errors.house_position}
+        >
+          <Textarea value={housePosition} onChange={(event) => setHousePosition(event.target.value)} />
+        </Field>
+
+        <Field label="Unacceptable position" hint="What may never be agreed, whoever asks.">
+          <Textarea value={unacceptable} onChange={(event) => setUnacceptable(event.target.value)} />
+        </Field>
+
+        <Field label="Why this clause is needed">
+          <Textarea value={summary} onChange={(event) => setSummary(event.target.value)} />
+        </Field>
+      </Modal>
+    </>
+  );
+}
+
+export function DocumentReader({
+  source,
+  name,
+  title,
+  subtitle,
+  open,
+  onClose,
+}: Readonly<{
+  source: string;
+  name: string;
+  title: string;
+  subtitle: string;
+  open: boolean;
+  onClose: () => void;
+}>) {
+  const { me } = useSession();
+
+  return (
+    <Modal open={open} title={title} subtitle={subtitle} width="lg" onClose={onClose}>
+      {open ? (
+        <SuperDocEditor
+          source={source}
+          documentName={name}
+          mode="viewing"
+          exportable={false}
+          user={{ name: me?.name ?? "Reader", email: me?.email ?? "" }}
+        />
+      ) : null}
+    </Modal>
+  );
+}
+
+export function CandidateReview({
   importId,
   onDone,
   onClose,
@@ -383,6 +667,7 @@ function CandidateReview({
   );
   const [decisions, setDecisions] = React.useState<Record<number, string>>({});
   const [categories, setCategories] = React.useState<Record<number, string>>({});
+  const [reading, setReading] = React.useState(false);
 
   const accept = useAction(async () => {
     const accepted = Object.entries(decisions)
@@ -421,6 +706,37 @@ function CandidateReview({
         </>
       }
     >
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border p-3">
+        <span className="min-w-0 flex-1 text-sm text-muted-foreground">
+          The split below is a proposal about a document. Read the document it came from before
+          deciding what belongs in the library.
+        </span>
+        <Button size="sm" onClick={() => setReading(true)}>
+          Read the source
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() =>
+            void download(
+              `/template-imports/${importId}/source`,
+              detail.data?.filename ?? "import.docx",
+            )
+          }
+        >
+          Save
+        </Button>
+      </div>
+
+      <DocumentReader
+        open={reading}
+        source={`/template-imports/${importId}/source`}
+        name={detail.data?.filename ?? "Imported template"}
+        title={detail.data?.filename ?? "The imported document"}
+        subtitle="The Word file exactly as it was uploaded. Reading only."
+        onClose={() => setReading(false)}
+      />
+
       {accept.error ? (
         <Refusal title="Those decisions were refused" reason={accept.error.message} reasons={accept.error.reasons} />
       ) : null}
@@ -481,188 +797,6 @@ function CandidateReview({
         </div>
       </DataState>
     </Modal>
-  );
-}
-
-export function TemplateImports() {
-  const { has } = useRoles();
-  const imports = useApi<ImportRow[]>("/template-imports");
-  const [reviewing, setReviewing] = React.useState<string | null>(null);
-  const [agreementType, setAgreementType] = React.useState("");
-  const fileInput = React.useRef<HTMLInputElement>(null);
-
-  const send = useAction(async (file: File) => {
-    const suffix = agreementType ? `?agreement_type=${encodeURIComponent(agreementType)}` : "";
-    await upload(`/template-imports${suffix}`, file);
-    imports.reload();
-  });
-
-  const rows = imports.data ?? [];
-  const cols = "minmax(0,1fr) 9.375rem 7.5rem 7.5rem 9.375rem 7.5rem";
-
-  return (
-    <div className="space-y-4">
-      <Notice tone="info" title="Importing a Word template does not publish anything">
-        The file is broken into candidate clauses, each with a proposed category and a confidence.
-        A human decides on every one, and each acceptance produces a draft, never house position.
-      </Notice>
-
-      {send.error ? (
-        <Refusal title="That file was not imported" reason={send.error.message} reasons={send.error.reasons} />
-      ) : null}
-
-      <Card>
-        <CardHeader
-          title="Word template imports"
-          actions={
-            has("head_of_legal", "counsel", "admin") ? (
-              <>
-                <Input
-                  className="w-48"
-                  placeholder="Agreement type"
-                  value={agreementType}
-                  onChange={(event) => setAgreementType(event.target.value)}
-                />
-                <input
-                  ref={fileInput}
-                  type="file"
-                  accept=".docx"
-                  className="hidden"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) void send.run(file);
-                    event.target.value = "";
-                  }}
-                />
-                <Button variant="primary" disabled={send.busy} onClick={() => fileInput.current?.click()}>
-                  {send.busy ? "Reading the file" : "Import a .docx"}
-                </Button>
-              </>
-            ) : null
-          }
-        />
-        <div className="table-scroll">
-          <div className="min-w-[56.25rem]">
-            <Row cols={cols} head>
-              <div>File</div>
-              <div>Agreement type</div>
-              <div>Status</div>
-              <div>Candidates</div>
-              <div>Imported</div>
-              <div>Action</div>
-            </Row>
-            <DataState
-              loading={imports.loading}
-              errorMessage={imports.error?.message}
-              isEmpty={rows.length === 0}
-              emptyTitle="No Word template has been imported"
-            >
-              {rows.map((row) => (
-                <Row key={row.id} cols={cols}>
-                  <div className="min-w-0 truncate text-sm font-medium">{row.filename}</div>
-                  <div className="text-sm">{titleCase(row.agreement_type ?? "not stated")}</div>
-                  <div>
-                    <Pill tone={row.status === "decided" ? "good" : "warn"}>{titleCase(row.status)}</Pill>
-                  </div>
-                  <div className="text-sm">
-                    {row.accepted_count} of {row.candidate_count}
-                  </div>
-                  <div className="text-xs text-muted-foreground">{formatDateTime(row.created_at)}</div>
-                  <div>
-                    <Button size="sm" onClick={() => setReviewing(row.id)}>
-                      Review
-                    </Button>
-                  </div>
-                </Row>
-              ))}
-            </DataState>
-          </div>
-        </div>
-      </Card>
-
-      {reviewing ? (
-        <CandidateReview
-          importId={reviewing}
-          onDone={() => imports.reload()}
-          onClose={() => setReviewing(null)}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-export function TemplateDetail({
-  code,
-  onChanged,
-}: Readonly<{ code: string; onChanged: () => void }>) {
-  const template = useApi<Template>(`/templates/${code}`, [code]);
-  const { has } = useRoles();
-  const data = template.data;
-
-  return (
-    <Card>
-      <CardHeader
-        title={data?.name ?? code}
-        subtitle={
-          data ? (
-            <span className="flex flex-wrap items-center gap-2">
-              <Mono>{data.current?.reference ?? "No approved version"}</Mono>
-              <span>{titleCase(data.agreement_type)}</span>
-              <span>{data.jurisdiction}</span>
-            </span>
-          ) : null
-        }
-        actions={
-          <>
-            {data ? <PlaybookView agreementType={data.agreement_type} /> : null}
-            {has("counsel", "head_of_legal", "admin") ? (
-              <ProposeVersion
-                kind="template"
-                code={code}
-                current={null}
-                onDone={() => {
-                  template.reload();
-                  onChanged();
-                }}
-              />
-            ) : null}
-          </>
-        }
-      />
-      <CardBody>
-        <DataState
-          loading={template.loading}
-          errorMessage={template.error?.message}
-          isEmpty={(data?.versions ?? []).length === 0}
-          emptyTitle="This template has no versions"
-        >
-          <div className="space-y-2">
-            {(data?.versions ?? []).map((version) => (
-              <div
-                key={version.id}
-                className="flex flex-wrap items-center gap-2 rounded-md border p-3"
-              >
-                <Mono>{version.reference}</Mono>
-                <Pill tone={version.status === "approved" ? "good" : "neutral"}>
-                  {titleCase(version.status)}
-                </Pill>
-                <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
-                  {version.change_summary ?? "No change summary was recorded"}
-                </span>
-                <VersionDecision
-                  reference={version.reference}
-                  status={version.status}
-                  onDone={() => {
-                    template.reload();
-                    onChanged();
-                  }}
-                />
-              </div>
-            ))}
-          </div>
-        </DataState>
-      </CardBody>
-    </Card>
   );
 }
 

@@ -37,6 +37,7 @@ from app.schemas.intake import (
     TriageProposal,
 )
 from app.schemas.matters import (
+    CounterpartyLink,
     LinkRequest,
     MatterListItem,
     MatterOut,
@@ -784,6 +785,58 @@ def list_decisions(matter_id: uuid.UUID, db: Db, principal: CurrentUser) -> list
             .order_by(DecisionRecord.decided_at.desc())
         ).scalars()
     )
+
+
+@router.post("/matters/{matter_id}/counterparty")
+def link_counterparty(
+    matter_id: uuid.UUID, payload: CounterpartyLink, db: Db, principal: CurrentUser
+) -> MatterOut:
+    """Attach a counterparty to a matter that has none.
+
+    A matter can be opened before anyone knows who the other side is, and until
+    it is linked the counterparty record carries none of this matter's history.
+    Replacing an existing link needs a reason, because that is a change of fact
+    rather than the filling in of a blank.
+
+    A counterparty is one permanent identity across both organisations rather
+    than a per-entity record, so there is no entity to check it against. What
+    is separated is the matter, not the company it is with.
+    """
+    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    matter = db.get(Matter, matter_id)
+    if matter is None:
+        raise NotFound(MATTER_NOT_FOUND)
+
+    counterparty = db.get(Counterparty, payload.counterparty_id)
+    if counterparty is None:
+        raise NotFound("That counterparty was not found.")
+
+    previous = matter.counterparty_id
+    if previous == counterparty.id:
+        return get_matter(matter_id, db, principal)
+    if previous is not None and not (payload.reason or "").strip():
+        raise ValidationFailed(
+            "Say why the counterparty is changing.",
+            {"reason": "This matter is already linked, so replacing the link is a change of fact."},
+        )
+
+    matter.counterparty_id = counterparty.id
+    audit.record(
+        db,
+        action="matter_counterparty_linked",
+        object_type="matter",
+        object_id=matter.number,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=matter.entity,
+        before_state={"counterparty_id": str(previous) if previous else None},
+        after_state={
+            "counterparty_id": str(counterparty.id),
+            "reference": counterparty.reference,
+            "reason": payload.reason,
+        },
+    )
+    return get_matter(matter_id, db, principal)
 
 
 @router.post("/matters/{matter_id}/reassign")

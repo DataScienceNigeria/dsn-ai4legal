@@ -35,6 +35,8 @@ class LoginRequest(BaseModel):
 class MfaEnrolment(BaseModel):
     secret: str
     provisioning_uri: str
+    #: The same URI as a scannable SVG, so nobody has to type the secret.
+    provisioning_qr: str
     recovery_codes: list[str]
 
 
@@ -88,6 +90,12 @@ def _check_second_factor(
     publish house position or issue a signature request should not be reachable
     with a password alone.
     """
+    if not mfa.enabled():
+        # Turned off wholesale. An account that enrolled while it was on is
+        # not asked for a code, because the module being off has to mean off
+        # rather than off for some people.
+        return False
+
     if not user.mfa_enrolled:
         # Not a refusal. Signing in is fine; the privileged act is what the
         # factor protects, and require_step_up is where that is enforced.
@@ -123,7 +131,10 @@ def _check_second_factor(
             result="failure",
             ip_address=client_ip(request),
         )
-        raise Unauthenticated("That code was not accepted.")
+        raise ValidationFailed(
+            "That code was not accepted.",
+            {"code": "Enter the current six-digit code, or one of your recovery codes."},
+        )
 
     user.mfa_last_used_counter = counter
     return True
@@ -269,7 +280,9 @@ def mfa_status(principal: CurrentUser, db: AnonDb) -> MfaStatus:
 
 
 @router.post("/mfa/enrol")
-def enrol_mfa(principal: CurrentUser, db: AnonDb, request: Request) -> MfaEnrolment:
+def enrol_mfa(
+    principal: CurrentUser, db: AnonDb, request: Request, restart: bool = False
+) -> MfaEnrolment:
     """Start enrolment. The factor is not active until a code confirms it.
 
     Activating on issue would lock someone out of their own account whenever
@@ -285,11 +298,20 @@ def enrol_mfa(principal: CurrentUser, db: AnonDb, request: Request) -> MfaEnrolm
             "A second factor is already enrolled. Remove it before enrolling another."
         )
 
-    secret = mfa.generate_secret()
-    codes = mfa.generate_recovery_codes()
-    user.mfa_secret = secret
+    # An enrolment already under way is offered again rather than replaced.
+    # Rotating the secret every time the dialog opened silently invalidated
+    # whatever the authenticator had already been given, and left a second
+    # entry on the phone under the same name as the first, so the obvious
+    # recovery from a failed attempt, opening it again, was the thing that
+    # guaranteed the next attempt failed too.
+    if restart or not user.mfa_secret:
+        user.mfa_secret = mfa.generate_secret()
+        user.mfa_recovery_codes = mfa.generate_recovery_codes()
+        user.mfa_last_used_counter = None
+    secret = user.mfa_secret
+    codes = list(user.mfa_recovery_codes or [])
     user.mfa_enrolled_at = None
-    user.mfa_recovery_codes = codes
+    uri = mfa.provisioning_uri(secret, user.work_email)
 
     audit.record(
         db,
@@ -302,8 +324,34 @@ def enrol_mfa(principal: CurrentUser, db: AnonDb, request: Request) -> MfaEnrolm
     )
     return MfaEnrolment(
         secret=secret,
-        provisioning_uri=mfa.provisioning_uri(secret, user.work_email),
+        provisioning_uri=uri,
+        provisioning_qr=mfa.provisioning_qr(uri),
         recovery_codes=codes,
+    )
+
+
+def _why_rejected(user: User, code: str) -> str:
+    """Tell the difference between a slow clock and the wrong entry.
+
+    "That code was not accepted" is true of both and useful for neither. A
+    code that belongs to this secret but to another minute is a clock; a code
+    that belongs to no minute at all is a different secret, which is what a
+    stale authenticator entry looks like.
+    """
+    drift = mfa.drift_windows(user.mfa_secret or "", code)
+    if drift is None:
+        return (
+            "That code does not belong to this secret. If your authenticator holds more than "
+            "one entry for this platform, an older one is being read: delete them, scan the "
+            "code above again, and use the entry it creates."
+        )
+    seconds = abs(drift) * 30
+    how_far = f"{seconds} seconds" if seconds < 120 else f"{round(seconds / 60)} minutes"
+    direction = "behind" if drift < 0 else "ahead of"
+    return (
+        f"That code belongs to this secret but to a different minute: the device is roughly "
+        f"{how_far} {direction} this server. Turn on automatic time on the device, wait for the "
+        "next code, and try again."
     )
 
 
@@ -323,7 +371,13 @@ def confirm_mfa(
 
     counter = mfa.verify(user.mfa_secret, payload.code, user.mfa_last_used_counter)
     if counter is None:
-        raise Unauthenticated("That code was not accepted.")
+        # Not Unauthenticated. The session is perfectly good; it is the six
+        # digits that are wrong, and answering with a 401 told every client
+        # that the caller had been signed out mid-enrolment.
+        raise ValidationFailed(
+            "That code was not accepted.",
+            {"code": _why_rejected(user, payload.code)},
+        )
 
     user.mfa_enrolled_at = datetime.now(UTC)
     user.mfa_last_used_counter = counter

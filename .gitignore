@@ -11,6 +11,8 @@ htmlcov/
 
 # Node
 node_modules/
+# Copied out of @superdoc/docx-engine at predev, not authored here.
+apps/web/public/superdoc/
 .next/
 out/
 *.tsbuildinfo
@@ -40,3 +42,4 @@ backups/
 _design_ref/
 sonar-project.properties
 PRD - AI for Legal Workflows.pdf
+templates/

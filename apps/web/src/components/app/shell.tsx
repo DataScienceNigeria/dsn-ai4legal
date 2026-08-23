@@ -138,9 +138,13 @@ const ENTITY_NAMES: Record<string, string> = {
   tokens in globals.css. That tint is deliberately faint, and faint colour is
   not a cue anyone should have to rely on, so the name carries a mark beside it
   in the organisation's own hue.
+
+  These are fixed hues rather than --brand, because both organisations appear
+  together in the switcher and --brand is whichever one you are already in.
+  A menu where both rows are the same colour tells you nothing.
 */
 const ENTITY_MARK: Record<string, string> = {
-  DSN: "bg-secondary",
+  DSN: "bg-info",
   EAI: "bg-primary",
 };
 
@@ -242,7 +246,16 @@ function SidebarBrand({
     <div
       className={cn("flex items-center gap-3 border-b py-4", collapsed ? "flex-col px-2" : "px-4")}
     >
-      <Image src="/dsn-logo.png" alt="" width={34} height={34} className="shrink-0 rounded-sm" />
+      <Image
+        src="/dsn-logo.png"
+        alt=""
+        width={34}
+        height={34}
+        /* Both dimensions in CSS as well as on the element. Tailwind's reset
+           sets height:auto on every image, which changes one of the two and
+           leaves the browser to guess the other. */
+        className="h-[34px] w-[34px] shrink-0 rounded-sm"
+      />
       {collapsed ? null : (
         <div className="min-w-0 flex-1">
           <div className="truncate text-[0.9375rem] font-semibold leading-tight">
@@ -420,7 +433,7 @@ function SidebarFooter({ me, collapsed }: Readonly<{ me: Me; collapsed: boolean 
       <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
         <span
           title={collapsed ? `${me.name}, ${role}` : undefined}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary text-sm font-semibold text-secondary-foreground"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-sm font-semibold text-brand-foreground"
         >
           {initials(me.name)}
         </span>
@@ -647,7 +660,7 @@ export function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
               </span>
             </Button>
             <div className="min-w-0 truncate text-sm">
-              <span className="font-semibold text-foreground">{entity}</span>
+              <span className="font-semibold text-heading">{entity}</span>
               <span className="hidden text-muted-foreground sm:inline"> workspace</span>
               <span className="mx-2 hidden text-border sm:inline">/</span>
               <span className="hidden text-muted-foreground sm:inline">

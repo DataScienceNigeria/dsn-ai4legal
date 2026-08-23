@@ -11,7 +11,13 @@ from sqlalchemy import select
 
 from app.ai import retrieval
 from app.ai.capabilities import REGISTRY
-from app.ai.gateway import CapabilityCall, invoke, record_human_decision
+from app.ai.gateway import (
+    CapabilityCall,
+    fit,
+    invoke,
+    record_human_decision,
+    without_citations,
+)
 from app.core import audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Conflict, NotFound, Refused
@@ -616,13 +622,13 @@ def classify(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> Com
     record.classification_interaction_id = envelope.interaction_id
     if not envelope.refused:
         output = envelope.output
-        record.classification = output.get("classification")
+        record.classification = fit(output.get("classification"), 32)
         record.classification_confidence = output.get("confidence")
         record.implied_work = bool(output.get("implied_work"))
-        record.implied_work_phrase = output.get("implied_work_phrase")
-        record.proposed_acknowledgment = output.get("acknowledgment_draft")
-        record.proposed_matter_type = output.get("proposed_matter_type")
-        record.proposed_priority = output.get("proposed_priority")
+        record.implied_work_phrase = without_citations(output.get("implied_work_phrase"))
+        record.proposed_acknowledgment = without_citations(output.get("acknowledgment_draft"))
+        record.proposed_matter_type = fit(output.get("proposed_matter_type"), 64)
+        record.proposed_priority = fit(output.get("proposed_priority"), 16)
 
     model = CommunicationOut.model_validate(record)
     model.age_days = (datetime.now(UTC) - record.received_at).days
@@ -657,8 +663,8 @@ def extract(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> list
     for item in envelope.output.get("values", []):
         value = ExtractedValue(
             communication_id=record.id,
-            field_name=item.get("field_name", "party"),
-            value=item.get("value", ""),
+            field_name=fit(item.get("field_name"), 64) or "party",
+            value=without_citations(item.get("value")) or "",
             source_sentence=item.get("source_sentence", ""),
             confidence=item.get("confidence"),
         )
@@ -1048,15 +1054,15 @@ def review_counterparty_paper(
             matter_id=matter.id,
             document_id=document.id,
             sequence=index,
-            title=item.get("title", "Finding"),
-            their_reference=item.get("their_reference"),
+            title=fit(item.get("title"), 255) or "Finding",
+            their_reference=fit(item.get("their_reference"), 64),
             clause_absent=bool(item.get("clause_absent")),
             severity=severity.value,
-            clause_category=item.get("clause_category"),
-            clause_version_ref=item.get("clause_version_ref"),
-            their_text=item.get("their_text"),
-            house_position=item.get("house_position"),
-            suggested_redline=item.get("suggested_redline"),
+            clause_category=fit(item.get("clause_category"), 16),
+            clause_version_ref=fit(item.get("clause_version_ref"), 32),
+            their_text=without_citations(item.get("their_text")),
+            house_position=without_citations(item.get("house_position")),
+            suggested_redline=without_citations(item.get("suggested_redline")),
             required_authority=authority,
             matches_preapproved_fallback=bool(item.get("matches_preapproved_fallback")),
             interaction_id=envelope.interaction_id,
@@ -1139,13 +1145,13 @@ def extract_obligations(
             contract_id=contract.id,
             matter_id=contract.matter_id,
             entity=contract.entity,
-            name=item.get("name", "Obligation"),
-            description=item.get("description"),
-            obligation_type=item.get("obligation_type", "deliverable"),
-            source_clause=item.get("source_clause"),
+            name=fit(item.get("name"), 255) or "Obligation",
+            description=without_citations(item.get("description")),
+            obligation_type=fit(item.get("obligation_type"), 32) or "deliverable",
+            source_clause=fit(item.get("source_clause"), 64),
             source_quote=item.get("source_quote"),
             due_date=due,
-            recurrence=item.get("recurrence", "none"),
+            recurrence=fit(item.get("recurrence"), 24) or "none",
             status=ObligationStatus.PROPOSED.value,
             interaction_id=envelope.interaction_id,
             decision_options=["renew", "renegotiate", "terminate", "allow_to_lapse"]

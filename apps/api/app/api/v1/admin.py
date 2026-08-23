@@ -37,6 +37,7 @@ from app.schemas.governance import (
     GoldenSetCreate,
     GoldenSetOut,
     LegalHoldRequest,
+    MfaReset,
     SecondApproval,
 )
 from app.services import evaluation
@@ -513,6 +514,63 @@ def retention(db: Db, principal: CurrentUser) -> list[dict]:
             select(RetentionPolicy).order_by(RetentionPolicy.record_class)
         ).scalars()
     ]
+
+
+@router.post("/users/{user_id}/mfa/reset")
+def reset_second_factor(
+    user_id: uuid.UUID, payload: MfaReset, db: Db, principal: CurrentUser
+) -> dict:
+    """Clear someone's second factor so they can enrol a new device.
+
+    This is the request an attacker would most like to make, so it is bounded.
+    Only an administrator can make it, they must re-authenticate to do it, a
+    reason is required, and it is recorded against both accounts. It removes
+    the factor and the recovery codes; it does not enrol anything, so the next
+    privileged act that person attempts will refuse until they have.
+    """
+    principal.require_role(Role.ADMIN)
+    principal.require_step_up("reset someone else's second factor")
+
+    reason = payload.reason.strip()
+    if not reason:
+        raise ValidationFailed(
+            "Say why the factor is being reset.",
+            {"reason": "This is the request an attacker makes, so it is never unexplained."},
+        )
+
+    user = db.get(User, user_id)
+    if user is None:
+        raise NotFound("That account was not found.")
+    if str(user.id) == principal.user_id:
+        raise ValidationFailed(
+            "Use your own enrolment screen for your own factor.",
+            {"user_id": "Resetting your own factor here would leave no second person involved."},
+        )
+
+    had_factor = bool(user.mfa_secret or user.mfa_enrolled_at)
+    user.mfa_secret = None
+    user.mfa_enrolled_at = None
+    user.mfa_last_used_counter = None
+    user.mfa_recovery_codes = []
+
+    audit.record(
+        db,
+        action="mfa_reset_by_administrator",
+        object_type="app_user",
+        object_id=str(user.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        before_state={"enrolled": had_factor},
+        after_state={"enrolled": False, "reason": reason},
+    )
+    return {
+        "user_id": str(user.id),
+        "name": user.name,
+        "message": (
+            f"{user.name} has no second factor now. Tell them to enrol a new device: "
+            "anything that needs a step-up will refuse until they do."
+        ),
+    }
 
 
 @router.get("/users")

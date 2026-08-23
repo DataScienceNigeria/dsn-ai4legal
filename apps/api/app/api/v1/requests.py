@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, File, Request, UploadFile
+from fastapi import APIRouter, File, Request, Response, UploadFile
 from sqlalchemy import select
 
 from app.core import audit
@@ -251,6 +251,55 @@ def add_attachment(
         after_state={"filename": attachment.filename, "bytes": attachment.size_bytes},
     )
     return attachment
+
+
+@router.get("/{request_id}/attachments/{attachment_id}")
+def get_attachment(
+    request_id: uuid.UUID, attachment_id: uuid.UUID, db: Db, principal: CurrentUser
+) -> Response:
+    """The stored file itself, for reading rather than saving.
+
+    The request is loaded first so the caller's visibility of it is what
+    decides access. An attachment carries no entity of its own, and reading it
+    by its own identifier alone would step around the separation the request
+    is subject to.
+    """
+    record = db.get(RequestRecord, request_id)
+    if record is None:
+        raise NotFound(REQUEST_NOT_FOUND)
+
+    attachment = db.get(Attachment, attachment_id)
+    if attachment is None or attachment.request_id != record.id:
+        raise NotFound("That attachment is not on this request.")
+
+    try:
+        data = storage.store.get(attachment.storage_key)
+    except FileNotFoundError as exc:
+        raise NotFound(
+            "The record is here but the file is not in the object store. "
+            "Report this: an attachment should never outlive its bytes."
+        ) from exc
+
+    audit.record(
+        db,
+        action="attachment_read",
+        object_type="request",
+        object_id=record.reference,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=record.entity,
+        after_state={"filename": attachment.filename},
+    )
+    return Response(
+        content=data,
+        media_type=attachment.content_type,
+        headers={
+            # inline, because the point is to read it without leaving the
+            # matter. A type the browser cannot render still downloads.
+            "Content-Disposition": f'inline; filename="{attachment.filename}"',
+            "X-Content-Hash": attachment.content_hash,
+        },
+    )
 
 
 @router.get("/mine")

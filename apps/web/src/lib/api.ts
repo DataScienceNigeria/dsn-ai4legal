@@ -57,6 +57,44 @@ type RequestOptions = {
   raw?: boolean;
 };
 
+/*
+  Not every 401 means the session is over.
+
+  A step-up refusal is a 401 because the caller is not authenticated *enough*
+  for one particular act, and the authentication endpoints answer 401 for a
+  wrong password or a wrong six-digit code. Treating any of those as a dead
+  session signed people out at the exact moment they were proving who they
+  were, which made both enrolment and step-up impossible to finish.
+*/
+function endsTheSession(status: number, code: string, path: string): boolean {
+  if (status !== 401) return false;
+  if (code === "step_up_required") return false;
+  return !path.startsWith("/auth/");
+}
+
+function redirectToSignIn(): void {
+  const here = globalThis.location;
+  if (!here || here.pathname.startsWith("/sign-in")) return;
+  here.assign("/sign-in?expired=1");
+}
+
+/* The platform's own refusal shape where there is one, FastAPI's `detail`
+   where a framework-level error got there first, and the status on its own
+   when the body is not JSON at all. */
+async function readProblem(response: Response): Promise<ProblemDetail> {
+  try {
+    const parsed = await response.json();
+    if (parsed && typeof parsed === "object" && "code" in parsed) return parsed as ProblemDetail;
+    if (parsed?.detail) return { code: "error", message: String(parsed.detail) };
+  } catch {
+    // The response carried no JSON body.
+  }
+  return {
+    code: "unexpected",
+    message: `The request failed with status ${response.status}.`,
+  };
+}
+
 export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { "X-Entity": options.entity ?? getEntity() };
   const token = getToken();
@@ -71,18 +109,11 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   });
 
   if (!response.ok) {
-    let problem: ProblemDetail = {
-      code: "unexpected",
-      message: `The request failed with status ${response.status}.`,
-    };
-    try {
-      const parsed = await response.json();
-      if (parsed && typeof parsed === "object" && "code" in parsed) problem = parsed;
-      else if (parsed?.detail) problem = { code: "error", message: String(parsed.detail) };
-    } catch {
-      // The response carried no JSON body, so the default stands.
+    const problem = await readProblem(response);
+    if (endsTheSession(response.status, problem.code, path)) {
+      setToken(null);
+      if (token) redirectToSignIn();
     }
-    if (response.status === 401) setToken(null);
     throw new ApiError(response.status, problem);
   }
 
@@ -153,7 +184,43 @@ export function query(params: Record<string, string | number | boolean | null | 
 
 /* Multipart cannot go through api() because the body is a FormData and the
    browser must set the boundary itself. Everything else stays identical. */
-export async function upload<T>(path: string, file: File, field = "file"): Promise<T> {
+/* Multipart where the body is more than one file field. Same headers and the
+   same error shaping as the rest, because a refusal from an upload has to read
+   like every other refusal. */
+export async function postForm<T>(path: string, form: FormData): Promise<T> {
+  const headers: Record<string, string> = { "X-Entity": getEntity() };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const response = await fetch(`${BASE}/api/v1${path}`, {
+    method: "POST",
+    headers,
+    body: form,
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    let problem: ProblemDetail = {
+      code: "request_failed",
+      message: `The request failed with status ${response.status}.`,
+    };
+    try {
+      problem = (await response.json()) as ProblemDetail;
+    } catch {
+      // A response with no JSON body keeps the status-derived message.
+    }
+    throw new ApiError(response.status, problem);
+  }
+
+  return (await response.json()) as T;
+}
+
+export async function upload<T>(
+  path: string,
+  file: File,
+  method: "POST" | "PUT" = "POST",
+  field = "file",
+): Promise<T> {
   const headers: Record<string, string> = { "X-Entity": getEntity() };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -162,7 +229,7 @@ export async function upload<T>(path: string, file: File, field = "file"): Promi
   form.append(field, file);
 
   const response = await fetch(`${BASE}/api/v1${path}`, {
-    method: "POST",
+    method,
     headers,
     body: form,
     cache: "no-store",
@@ -200,4 +267,21 @@ export async function download(path: string, filename: string): Promise<void> {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+/* Viewing, rather than saving. Same problem as a download, in that the request
+   has to carry the token, so the file is fetched as a blob and the blob opened
+   in its own tab. The object URL is revoked on a timer instead of immediately,
+   because revoking it before the new tab has read it leaves a blank window. */
+export async function view(path: string): Promise<void> {
+  const blob = await api<Blob>(path, { raw: true });
+  const url = URL.createObjectURL(blob);
+  const opened = globalThis.open(url, "_blank", "noopener");
+  if (!opened) {
+    URL.revokeObjectURL(url);
+    throw new Error(
+      "The browser blocked the new tab. Allow pop-ups for this site, or use Save instead.",
+    );
+  }
+  globalThis.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
