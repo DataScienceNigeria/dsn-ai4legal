@@ -59,7 +59,7 @@ from app.schemas.governance import (
     SourceOut,
 )
 from app.schemas.matters import FindingOut, ObligationOut
-from app.services import sequences
+from app.services import notifications, sequences
 
 MESSAGE_NOT_FOUND = "That message was not found."
 
@@ -975,6 +975,19 @@ def review_counterparty_paper(
     if matter is None or document is None:
         raise NotFound("That matter or document was not found.")
 
+    # Reviewing our own generated draft against our own playbook measures the
+    # template against itself and reports nothing worth acting on. The review
+    # exists for their paper, so it insists on their paper.
+    if document.document_type != DocumentType.COUNTERPARTY.value:
+        raise Refused(
+            "This document cannot be reviewed against the playbook.",
+            [
+                f"{document.name} was generated here from an approved template, so "
+                "every clause in it is already house position. Add the counterparty's "
+                "draft to this matter and review that."
+            ],
+        )
+
     agreement_type = None
     if matter.request_type_id:
         from app.db.models.intake import RequestType
@@ -1072,6 +1085,24 @@ def review_counterparty_paper(
 
     matter.status = MatterState.IN_REVIEW.value
     matter.next_action = f"{len(created)} findings to clear"
+
+    critical = sum(1 for f in created if f.severity == Severity.CRITICAL.value)
+    notifications.raise_in_app(
+        db,
+        recipient_id=matter.responsible_lawyer_id,
+        entity=matter.entity,
+        kind="findings_raised",
+        title=f"{len(created)} findings on {matter.number}",
+        body=(
+            f"{critical} critical. Every suggestion is a draft until you accept it."
+            if critical
+            else "Every suggestion is a draft until you accept it."
+        ),
+        href="/workspace/review",
+        reference=matter.number,
+        matter_id=matter.id,
+    )
+
     db.flush()
     return created
 

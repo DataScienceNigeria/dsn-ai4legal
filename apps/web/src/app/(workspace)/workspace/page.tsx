@@ -10,6 +10,8 @@ import {
   CardHeader,
   Empty,
   Kpi,
+  MenuItem,
+  More,
   PageTitle,
   Pill,
   Row,
@@ -17,10 +19,21 @@ import {
 } from "@/components/ui";
 import { useApi } from "@/lib/hooks";
 import type { OperationalReport, WeeklyUpdate } from "@/lib/types";
-import { relativeHours, titleCase } from "@/lib/utils";
+import { firstName, relativeHours, titleCase } from "@/lib/utils";
+
+/*
+  A dashboard opened forty times a week should say who it belongs to. The hour
+  is the browser's, not the server's, because it greets the person reading it.
+*/
+function greeting(name: string | null | undefined): string {
+  const who = firstName(name);
+  const hour = new Date().getHours();
+  const part = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  return who ? `${part}, ${who}` : "Legal delivery";
+}
 
 export default function DeliveryDashboard() {
-  const { entity } = useSession();
+  const { entity, me } = useSession();
   const report = useApi<OperationalReport>("/reports/operational", [entity]);
   const weekly = useApi<WeeklyUpdate>("/reports/weekly-update", [entity]);
 
@@ -35,7 +48,7 @@ export default function DeliveryDashboard() {
   return (
     <div className="space-y-6">
       <PageTitle
-        title="Legal delivery"
+        title={greeting(me?.name)}
         subtitle={
           "Every figure here is computed from recorded lifecycle transitions, not from " +
           "manually entered dates, so a number on this page can always be traced to an event. " +
@@ -43,14 +56,16 @@ export default function DeliveryDashboard() {
         }
         actions={
           <>
-            <Link href="/workspace/triage" className="no-underline">
-              <Button size="sm">Triage queue</Button>
-            </Link>
             <Link href="/workspace/matters" className="no-underline">
               <Button size="sm" variant="primary">
                 All matters
               </Button>
             </Link>
+            <More>
+              <MenuItem href="/workspace/triage">Triage queue</MenuItem>
+              <MenuItem href="/workspace/review">Review queue</MenuItem>
+              <MenuItem href="/workspace/metrics">Metrics</MenuItem>
+            </More>
           </>
         }
       />

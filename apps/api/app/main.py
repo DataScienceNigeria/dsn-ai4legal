@@ -82,6 +82,7 @@ def register_routers() -> None:
         requests,
         scim,
         webhooks,
+        workspace,
     )
 
     prefix = "/api/v1"
@@ -99,6 +100,7 @@ def register_routers() -> None:
         assessments,
         reports,
         admin,
+        workspace,
         scim,
         webhooks,
     ):

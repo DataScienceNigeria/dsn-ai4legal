@@ -7,6 +7,7 @@ import {
   Button,
   Card,
   CardHeader,
+  Chips,
   Empty,
   Field,
   Input,
@@ -19,7 +20,6 @@ import {
   Row,
   Select,
   Spinner,
-  Tabs,
   Textarea,
 } from "@/components/ui";
 import { api, query } from "@/lib/api";
@@ -233,14 +233,15 @@ export default function Obligations() {
         </Notice>
       ) : null}
 
-      <Tabs
-        tabs={[
-          { id: "open", label: "Tracked", badge: counts.open },
-          { id: "proposed", label: "Proposed", badge: counts.proposed },
-          { id: "completed", label: "Completed", badge: counts.completed },
+      <Chips
+        options={[
+          { id: "open", label: "Tracked", count: counts.open },
+          { id: "proposed", label: "Proposed", count: counts.proposed },
+          { id: "completed", label: "Completed", count: counts.completed },
         ]}
         active={tab}
         onChange={setTab}
+        label="Narrow the obligations"
       />
 
       {decide.error || complete.error ? (

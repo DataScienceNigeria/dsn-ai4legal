@@ -349,6 +349,248 @@ export function DataState({
   return <>{children}</>;
 }
 
+/*
+  One screen, one obvious next step. Where a screen has several things you can
+  do, only the next one is a filled button; the rest go behind More. Seven
+  buttons of equal weight is the same as none, because nothing among them says
+  which one you came here to press.
+*/
+export function More({ children, label = "More" }: Readonly<{ children: React.ReactNode; label?: string }>) {
+  const [open, setOpen] = React.useState(false);
+  const box = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    function away(event: MouseEvent) {
+      if (!box.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function escape(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+
+  return (
+    <div ref={box} className="relative">
+      <Button aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((was) => !was)}>
+        {label}
+        <span aria-hidden className="text-xs">&#9662;</span>
+      </Button>
+      {open ? (
+        <div
+          role="menu"
+          onClick={() => setOpen(false)}
+          /*
+            Children are laid out as menu rows whatever they are, so a
+            component that renders its own trigger button can be dropped in
+            without knowing it is inside a menu.
+          */
+          className="absolute right-0 z-40 mt-1.5 flex w-max min-w-[14rem] flex-col gap-0.5 rounded-lg border bg-popover p-1.5 shadow-lg [&_a]:w-full [&_button]:h-9 [&_button]:w-full [&_button]:justify-start [&_button]:border-transparent [&_button]:bg-transparent [&_button]:font-normal [&_button]:hover:bg-muted"
+        >
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function MenuItem({
+  onClick,
+  href,
+  tone = "default",
+  children,
+}: Readonly<{
+  onClick?: () => void;
+  href?: string;
+  tone?: "default" | "destructive";
+  children: React.ReactNode;
+}>) {
+  const style = cn(
+    "flex w-full items-center gap-2 whitespace-nowrap rounded-md px-2.5 py-2 text-left text-sm no-underline transition-colors",
+    tone === "destructive"
+      ? "text-destructive hover:bg-destructive/10"
+      : "text-foreground hover:bg-muted",
+  );
+  if (href) {
+    return (
+      <Link role="menuitem" href={href} className={style}>
+        {children}
+      </Link>
+    );
+  }
+  return (
+    <button role="menuitem" type="button" onClick={onClick} className={style}>
+      {children}
+    </button>
+  );
+}
+
+/*
+  A short, fixed set of filters reads better as chips than as a select. The
+  options are visible without opening anything, the current one is obvious, and
+  choosing is one press rather than three.
+*/
+export function Chips({
+  options,
+  active,
+  onChange,
+  label = "Filter",
+}: Readonly<{
+  options: { id: string; label: string; count?: number }[];
+  active: string;
+  onChange: (id: string) => void;
+  label?: string;
+}>) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={label}>
+      {options.map((option) => {
+        const on = option.id === active;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            aria-pressed={on}
+            onClick={() => onChange(option.id)}
+            className={cn(
+              "inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 text-xs font-medium transition-colors",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+              on
+                ? "border-brand bg-brand text-brand-foreground"
+                : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground",
+            )}
+          >
+            {option.label}
+            {typeof option.count === "number" ? (
+              <span className={cn("text-2xs", on ? "opacity-80" : "opacity-70")}>{option.count}</span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export type TimelineStep = {
+  id: string;
+  title: string;
+  detail?: React.ReactNode;
+  meta?: React.ReactNode;
+  state: "done" | "current" | "pending" | "failed";
+  action?: React.ReactNode;
+};
+
+/*
+  A chain is a sequence, and a table does not say sequence. The spine carries
+  the order, the node carries the state, and what is waiting on you is the only
+  node that is filled.
+*/
+export function Timeline({ steps }: Readonly<{ steps: TimelineStep[] }>) {
+  return (
+    <ol className="space-y-0">
+      {steps.map((step, index) => (
+        <li key={step.id} className="relative grid grid-cols-[1.75rem_minmax(0,1fr)] gap-x-3">
+          {index < steps.length - 1 ? (
+            <span
+              aria-hidden
+              className={cn(
+                "absolute left-[0.8125rem] top-7 w-px",
+                "h-[calc(100%-1.25rem)]",
+                step.state === "done" ? "bg-primary/45" : "bg-border",
+              )}
+            />
+          ) : null}
+          <span
+            aria-hidden
+            className={cn(
+              "z-10 mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border text-2xs font-semibold",
+              step.state === "done" && "border-primary bg-primary text-primary-foreground",
+              step.state === "current" && "border-brand bg-brand text-brand-foreground",
+              step.state === "failed" && "border-destructive bg-destructive text-destructive-foreground",
+              step.state === "pending" && "border-border bg-muted text-muted-foreground",
+            )}
+          >
+            {step.state === "done" ? "\u2713" : step.state === "failed" ? "\u2715" : index + 1}
+          </span>
+          <div className="min-w-0 pb-6 last:pb-0">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <div
+                className={cn(
+                  "text-sm font-medium",
+                  step.state === "pending" && "text-muted-foreground",
+                  step.state === "current" && "text-brand",
+                )}
+              >
+                {step.title}
+              </div>
+              {step.meta ? (
+                <div className="text-xs text-muted-foreground">{step.meta}</div>
+              ) : null}
+            </div>
+            {step.detail ? (
+              <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {step.detail}
+              </div>
+            ) : null}
+            {step.action ? <div className="mt-2.5">{step.action}</div> : null}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/*
+  Two of three signatures is a fraction, and a fraction reads faster as an arc
+  than as three rows you have to count.
+*/
+export function Ring({
+  done,
+  total,
+  label,
+  detail,
+}: Readonly<{ done: number; total: number; label?: string; detail?: React.ReactNode }>) {
+  const safeTotal = Math.max(total, 1);
+  const fraction = Math.min(Math.max(done / safeTotal, 0), 1);
+  const radius = 26;
+  const circumference = 2 * Math.PI * radius;
+  const complete = done >= total && total > 0;
+
+  return (
+    <div className="flex items-center gap-4">
+      <svg
+        viewBox="0 0 64 64"
+        className="h-16 w-16 shrink-0 -rotate-90"
+        role="img"
+        aria-label={`${done} of ${total}`}
+      >
+        <circle cx="32" cy="32" r={radius} fill="none" strokeWidth="6" className="stroke-muted" />
+        <circle
+          cx="32"
+          cy="32"
+          r={radius}
+          fill="none"
+          strokeWidth="6"
+          strokeLinecap="round"
+          strokeDasharray={`${circumference * fraction} ${circumference}`}
+          className={complete ? "stroke-primary" : "stroke-brand"}
+        />
+      </svg>
+      <div className="min-w-0">
+        <div className="text-lg font-semibold leading-tight">
+          {done} of {total}
+        </div>
+        {label ? <div className="text-sm font-medium">{label}</div> : null}
+        {detail ? <div className="mt-0.5 text-xs text-muted-foreground">{detail}</div> : null}
+      </div>
+    </div>
+  );
+}
+
 export function PageTitle({
   title,
   subtitle,

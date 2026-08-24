@@ -6,7 +6,7 @@ import * as React from "react";
 
 import { useSession } from "@/components/app/session";
 import { SlaPill, StatusPill, TierPill } from "@/components/app/status";
-import { Button, Card, CardHeader, Empty, Notice, PageTitle, Row, Spinner } from "@/components/ui";
+import { Card, CardHeader, Chips, Empty, Notice, PageTitle, Row, Spinner } from "@/components/ui";
 import { useApi } from "@/lib/hooks";
 import type { Matter } from "@/lib/types";
 import { titleCase } from "@/lib/utils";
@@ -51,6 +51,23 @@ export default function Matters() {
     return all;
   }, [data, filter, owner, tier, me?.id]);
 
+  /*
+    Each chip carries how many it would leave. A filter that turns out to be
+    empty is worth knowing before pressing it, not after.
+  */
+  const chips = React.useMemo(() => {
+    let scoped = data ?? [];
+    if (owner) scoped = scoped.filter((m) => m.responsible_lawyer_id === owner);
+    if (tier) scoped = scoped.filter((m) => m.risk_tier === tier);
+    const sizes: Record<string, number> = {
+      all: scoped.length,
+      mine: scoped.filter((m) => m.responsible_lawyer_id === me?.id).length,
+      breach: scoped.filter((m) => m.sla?.breached).length,
+      waiting: scoped.filter((m) => m.blocker || m.sla?.running === false).length,
+    };
+    return FILTERS.map((option) => ({ ...option, count: sizes[option.id] ?? 0 }));
+  }, [data, owner, tier, me?.id]);
+
   return (
     <div className="space-y-6">
       <PageTitle
@@ -65,18 +82,7 @@ export default function Matters() {
         </Notice>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-1.5">
-        {FILTERS.map((option) => (
-          <Button
-            key={option.id}
-            size="sm"
-            variant={filter === option.id ? "dark" : "default"}
-            onClick={() => setFilter(option.id)}
-          >
-            {option.label}
-          </Button>
-        ))}
-      </div>
+      <Chips options={chips} active={filter} onChange={setFilter} label="Narrow the matters" />
 
       <Card>
         <CardHeader title={`${rows.length} matters`} subtitle={`Entity ${entity}`} />

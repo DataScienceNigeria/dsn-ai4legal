@@ -66,7 +66,14 @@ def get_principal(
         raise Unauthenticated()
 
     if settings.dsnlai_auth_mode == "local":
-        return decode_token(credentials.credentials)
+        # Bound to the live record, exactly as the federated path is. Trusting
+        # the claims alone meant a token kept working after the account behind
+        # it was deactivated or removed, until the token happened to expire,
+        # and it meant a session could carry a user id that resolves to nobody:
+        # every endpoint that reads only claims kept working, and the first one
+        # to look the account up answered with a refusal that named the wrong
+        # cause.
+        return _local_account(decode_token(credentials.credentials))
 
     from app.core import oidc
 

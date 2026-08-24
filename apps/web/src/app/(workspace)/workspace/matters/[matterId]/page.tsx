@@ -23,18 +23,63 @@ import {
   PageTitle,
   Pill,
   Refusal,
+  Ring,
   Row,
   Select,
   Spinner,
   Tabs,
   Textarea,
+  Timeline,
+  type TimelineStep,
 } from "@/components/ui";
 import { api, query } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
 import type { AiInteraction, Approval, DocumentRecord, Matter, RequestDetail } from "@/lib/types";
 import { formatDate, formatDateTime, formatMoney, titleCase } from "@/lib/utils";
 
-const APPROVAL_COLS = "minmax(0,1fr) 7.5rem 8.125rem 7.5rem 8.75rem 6.875rem";
+/*
+  A chain is a sequence, and the table it used to be did not say so: six equal
+  columns, with the bound hash given the same weight as the step name. As a
+  timeline the order is the spine, the state is the node, and the only filled
+  node is the step waiting on somebody. The hash stays, because an approval
+  means nothing without the document it was taken against, but it sits under
+  the step rather than beside it.
+*/
+function approvalStep(approval: Approval, onDone: () => void): TimelineStep {
+  const invalidated = Boolean(approval.invalidated_by_event);
+  let state: TimelineStep["state"] = "pending";
+  if (invalidated || approval.decision === "rejected") state = "failed";
+  else if (approval.decision === "approved") state = "done";
+  else if (approval.actionable) state = "current";
+
+  const decided = approval.invalidated_by_event ?? formatDateTime(approval.decided_at);
+
+  return {
+    id: approval.id,
+    state,
+    title: approval.step_name,
+    meta: state === "current" ? "Now" : decided || formatDateTime(approval.due_at) || null,
+    detail: (
+      <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+        <DecisionPill decision={approval.decision} />
+        <span>
+          {titleCase(approval.approver_role ?? "assigned")}, {approval.step_mode}
+        </span>
+        <span className="text-border">/</span>
+        <span>
+          bound to <Mono>{approval.document_hash.slice(0, 12)}</Mono>
+        </span>
+        {approval.due_at && !approval.decided_at ? (
+          <>
+            <span className="text-border">/</span>
+            <span>due {formatDateTime(approval.due_at)}</span>
+          </>
+        ) : null}
+      </span>
+    ),
+    action: <ApprovalDecision approval={approval} onDone={onDone} />,
+  };
+}
 
 function signatureTone(status: string): "good" | "bad" | "warn" {
   if (status === "completed") return "good";
@@ -161,6 +206,26 @@ function SignaturePanel({
         title="Signature requests"
         subtitle="Each is bound to the hash that was approved. Cancelling one voids the counterparty link immediately."
       />
+      {rows.length ? (
+        <CardBody className="border-b">
+          <Ring
+            done={rows.filter((row) => row.status === "completed").length}
+            total={rows.length}
+            label="requests executed"
+            detail={
+              /*
+                Requests, not signers. The internal provider reports a request
+                as sent or completed and never reports who has signed within
+                it, so a signer-by-signer figure would be a number the platform
+                does not hold. It is not shown rather than estimated.
+              */
+              rows.some((row) => row.status === "sent")
+                ? "One or more requests are still out. Signer-level progress is not reported by the provider."
+                : "Every request on this matter has closed."
+            }
+          />
+        </CardBody>
+      ) : null}
       <div className="table-scroll">
         <div className="min-w-[50rem]">
           <Row cols={cols} head>
@@ -342,6 +407,7 @@ export default function MatterDetail() {
           <MatterActions
             matter={data}
             documents={documents.data ?? []}
+            attachments={request.data?.attachments ?? []}
             onChanged={reloadAll}
           />
         }
@@ -515,15 +581,21 @@ export default function MatterDetail() {
             title="Approval chain"
             subtitle="Approval binds to an exact document hash. Any edit invalidates it."
           />
-          <div>
-            <Row cols={APPROVAL_COLS} head>
-              <div>Step</div>
-              <div>Decision</div>
-              <div>Bound hash</div>
-              <div>Due</div>
-              <div>Decided</div>
-              <div>Action</div>
-            </Row>
+          {approvals.data?.length ? (
+            <CardBody className="border-b">
+              <Ring
+                done={approvals.data.filter((a) => a.decision === "approved").length}
+                total={approvals.data.length}
+                label="steps approved"
+                detail={
+                  approvals.data.find((a) => a.actionable)?.step_name
+                    ? `Waiting on ${approvals.data.find((a) => a.actionable)?.step_name}.`
+                    : "Nothing is waiting on a decision."
+                }
+              />
+            </CardBody>
+          ) : null}
+          <CardBody>
             {approvals.loading ? (
               <Spinner />
             ) : !approvals.data?.length ? (
@@ -532,32 +604,9 @@ export default function MatterDetail() {
                 detail="Generate a document and route it for approval to open one."
               />
             ) : (
-              approvals.data.map((approval) => (
-                <Row key={approval.id} cols={APPROVAL_COLS}>
-                  <div>
-                    <div className="font-medium">{approval.step_name}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {titleCase(approval.approver_role ?? "assigned")}, {approval.step_mode}
-                      {approval.actionable ? ", actionable now" : ""}
-                    </div>
-                  </div>
-                  <div>
-                    <DecisionPill decision={approval.decision} />
-                  </div>
-                  <Mono>{approval.document_hash.slice(0, 12)}</Mono>
-                  <div className="text-xs text-muted-foreground">
-                    {formatDateTime(approval.due_at)}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {approval.invalidated_by_event ?? formatDateTime(approval.decided_at)}
-                  </div>
-                  <div>
-                    <ApprovalDecision approval={approval} onDone={reloadAll} />
-                  </div>
-                </Row>
-              ))
+              <Timeline steps={approvals.data.map((a) => approvalStep(a, reloadAll))} />
             )}
-          </div>
+          </CardBody>
         </Card>
       ) : null}
 

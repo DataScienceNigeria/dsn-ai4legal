@@ -15,6 +15,7 @@ from datetime import date
 from typing import Any
 
 from app.core.errors import Refused
+from app.services import placeholders
 from app.services.checks import CheckResult, run_all
 from app.services.checks import Clause as CheckClause
 from app.services.hashing import content_hash
@@ -170,6 +171,13 @@ def generate(
     used_clauses: list[str] = []
     counter = 0
 
+    # A template that arrived as a Word file writes its blanks as [Company
+    # Name] rather than {{company_name}}, because it was written for a person
+    # to fill in. Those are resolved here from the same facts, and anything
+    # left over is a refusal: a document that goes out with [Reseller Name]
+    # still in it is worse than one that was never produced.
+    unresolved: set[str] = set()
+
     for section in body:
         if not evaluate_condition(section.get("condition"), condition_facts):
             continue
@@ -215,8 +223,12 @@ def generate(
             def substitute(text: str, scope: dict = scope) -> str:
                 return VARIABLE.sub(lambda m: str(scope.get(m.group(1), "")), text)
 
-            rendered = substitute(raw_text)
-            heading = substitute(section.get("heading", ""))
+            rendered, unfilled = placeholders.resolve(substitute(raw_text), scope)
+            heading, unfilled_heading = placeholders.resolve(
+                substitute(section.get("heading", "")), scope
+            )
+            unresolved.update(unfilled)
+            unresolved.update(unfilled_heading)
             number = section.get("number") or str(counter)
             if repeat_over:
                 number = f"{number}.{index}"
@@ -231,6 +243,19 @@ def generate(
                     source_reference=source_reference,
                 )
             )
+
+    if unresolved:
+        # Named with its remedy. "Company Address is missing" and "Company
+        # Address is missing, set it once under Administration and every future
+        # document takes it from there" are the same fact and different amounts
+        # of use.
+        raise Refused(
+            "This document cannot be generated from the record as it stands.",
+            [
+                f"{item['label']}: {item['remedy']}"
+                for item in placeholders.diagnose(sorted(unresolved))
+            ],
+        )
 
     checks = run_all(
         [CheckClause(number=b.number, heading=b.heading, text=b.text) for b in blocks],

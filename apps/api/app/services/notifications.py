@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models.platform import Connector, EgressLog, OutboxEvent
+from app.db.models.platform import Connector, EgressLog, Notification, OutboxEvent
 from app.domain.enums import CLASS_RANK, DataClass
 
 
@@ -117,3 +117,55 @@ def notify(
             "record_reference": record_reference,
         },
     )
+
+
+def raise_in_app(
+    session: Session,
+    *,
+    recipient_id: uuid.UUID | None,
+    entity: str,
+    kind: str,
+    title: str,
+    body: str | None = None,
+    href: str | None = None,
+    reference: str | None = None,
+    matter_id: uuid.UUID | None = None,
+) -> Notification | None:
+    """Put a message in one person's bell.
+
+    Deliberately not routed through the outbox. The outbox carries mail to an
+    external connector and can be refused, deferred or switched off; this stays
+    inside the platform and is what the person sees when they next open it.
+    Both are raised together where an event matters enough to leave the
+    building, so the in-app record survives a connector that is unavailable.
+
+    An event with no identified recipient writes nothing. A notification with
+    nobody to read it is a row that accumulates and is never cleared.
+    """
+    if recipient_id is None:
+        return None
+
+    # The timestamps are set here rather than left to the column defaults, and
+    # that is load-bearing rather than tidiness. A server default makes
+    # SQLAlchemy add RETURNING to fetch it back, and Postgres applies the read
+    # policy to a row an INSERT returns. The read policy on this table is
+    # narrowed to the recipient, which is the point of it, so writing a
+    # notification addressed to somebody else was refused at the read rather
+    # than at the write. Supplying every value means there is nothing to
+    # return, and the strict read policy stays exactly as strict.
+    stamp = datetime.now(UTC)
+    record = Notification(
+        id=uuid.uuid4(),
+        created_at=stamp,
+        updated_at=stamp,
+        recipient_id=recipient_id,
+        entity=entity,
+        kind=kind,
+        title=title,
+        body=body,
+        href=href,
+        reference=reference,
+        matter_id=matter_id,
+    )
+    session.add(record)
+    return record

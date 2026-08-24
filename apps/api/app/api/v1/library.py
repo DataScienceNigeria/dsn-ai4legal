@@ -31,12 +31,13 @@ from app.schemas.matters import (
     ImportAcceptance,
     ImportCandidateAcceptance,
     TemplateOut,
+    TemplatePlaceholder,
     TemplateVersionOut,
     VersionDiff,
     VersionDiffLine,
     VersionProposal,
 )
-from app.services import docx_import, storage
+from app.services import docx_import, placeholders, storage
 from app.services.generation import GeneratedBlock, GenerationResult, render_docx
 
 router = APIRouter(tags=["library"])
@@ -344,13 +345,27 @@ def list_templates(db: Db, principal: CurrentUser, entity: WorkingEntity) -> lis
             continue
         model = TemplateOut.model_validate(template)
         current = _current_template_version(template)
-        model.current = TemplateVersionOut.model_validate(current) if current else None
-        model.versions = [TemplateVersionOut.model_validate(v) for v in template.versions]
+        model.current = _template_version_out(current) if current else None
+        model.versions = [_template_version_out(v) for v in template.versions]
         out.append(model)
     return out
 
 
 @router.get("/templates/{code}")
+def _template_version_out(version) -> TemplateVersionOut:
+    """The version, with the blanks its body actually contains.
+
+    Derived rather than stored. A template imported from Word declares no
+    variables, so the interface had nothing to ask for and generation refused
+    on blanks nobody was given the chance to fill.
+    """
+    model = TemplateVersionOut.model_validate(version)
+    model.placeholders = [
+        TemplatePlaceholder(**found) for found in placeholders.in_body(version.body or [])
+    ]
+    return model
+
+
 def get_template(code: str, db: Db, principal: CurrentUser) -> TemplateOut:
     principal.require_role(
         Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
@@ -361,8 +376,8 @@ def get_template(code: str, db: Db, principal: CurrentUser) -> TemplateOut:
 
     model = TemplateOut.model_validate(template)
     current = _current_template_version(template)
-    model.current = TemplateVersionOut.model_validate(current) if current else None
-    model.versions = [TemplateVersionOut.model_validate(v) for v in template.versions]
+    model.current = _template_version_out(current) if current else None
+    model.versions = [_template_version_out(v) for v in template.versions]
     return model
 
 

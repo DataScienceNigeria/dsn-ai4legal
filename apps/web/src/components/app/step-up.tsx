@@ -17,6 +17,13 @@ import { ApiError, stepUp } from "@/lib/api";
   It is one dialog, raised by whichever action was refused and retrying that
   same action once the re-authentication succeeds. Retrying is the point: being
   sent back to find the button again is how people give up.
+
+  The two halves of step-up are separate and the dialog only asks for the half
+  that applies. Freshness always applies: the password is asked for whatever
+  else is true. The second factor is asked for only when `mfa_required` says
+  this person owes one, which is false both when the role carries no factor and
+  when the module is switched off entirely. Rendering the code field regardless
+  made a disabled module look like a demand nobody could satisfy.
 */
 export function StepUpDialog({
   open,
@@ -34,6 +41,10 @@ export function StepUpDialog({
   const [code, setCode] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  const owesFactor = Boolean(me?.mfa_required);
+  const wantsFactor = owesFactor && Boolean(me?.mfa_enrolled);
+  const needsEnrolment = owesFactor && !me?.mfa_enrolled;
 
   React.useEffect(() => {
     if (open) {
@@ -71,7 +82,11 @@ export function StepUpDialog({
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={!password || busy} onClick={() => void confirm()}>
+          <Button
+            variant="primary"
+            disabled={!password || needsEnrolment || (wantsFactor && code.length < 6) || busy}
+            onClick={() => void confirm()}
+          >
             {busy ? "Confirming" : "Confirm and continue"}
           </Button>
         </>
@@ -87,23 +102,28 @@ export function StepUpDialog({
         />
       </Field>
 
-      <Field
-        label="Authenticator code"
-        hint="Required for the Head of Legal and for administrators. Leave it blank if your role has no second factor."
-      >
-        <Input
-          value={code}
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          placeholder="123456"
-          onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-        />
-      </Field>
+      {wantsFactor ? (
+        <Field
+          label="Authenticator code"
+          required
+          hint="Your role carries a second factor, so this act needs it as well as the password."
+        >
+          <Input
+            value={code}
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            placeholder="123456"
+            onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+          />
+        </Field>
+      ) : null}
 
-      <Notice tone="info" title="No authenticator yet?">
-        Enrol one under Administration, in the Security tab. Until a factor is enrolled, a role
-        that requires one cannot publish, sign or change configuration.
-      </Notice>
+      {needsEnrolment ? (
+        <Notice tone="warn" title="No authenticator yet">
+          Your role requires a second factor and none is enrolled, so this act cannot complete.
+          Enrol one under Administration, in the Security tab.
+        </Notice>
+      ) : null}
     </Modal>
   );
 }

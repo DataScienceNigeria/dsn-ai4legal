@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 
 from app.core import audit
@@ -15,7 +18,7 @@ from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Conflict, Forbidden, NotFound, ValidationFailed
 from app.db.models.ai import Capability, EvaluationRun
 from app.db.models.evaluation import GoldenCase, GoldenSet
-from app.db.models.organisation import ConfigSetting, User
+from app.db.models.organisation import ConfigSetting, Organisation, User
 from app.db.models.platform import (
     AuditEvent,
     Connector,
@@ -38,6 +41,8 @@ from app.schemas.governance import (
     GoldenSetOut,
     LegalHoldRequest,
     MfaReset,
+    OrganisationOut,
+    OrganisationUpdate,
     SecondApproval,
 )
 from app.services import evaluation
@@ -391,6 +396,110 @@ def audit_events(
     )
 
 
+CSV_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+
+AUDIT_CSV_COLUMNS = [
+    "sequence",
+    "occurred_at",
+    "actor_label",
+    "entity",
+    "object_type",
+    "object_id",
+    "action",
+    "result",
+    "detail",
+    "previous_digest",
+    "digest",
+]
+
+
+def _csv_safe(value: object) -> str:
+    """Neutralise a cell a spreadsheet would treat as a formula.
+
+    An audit export is opened in Excel by the people least able to inspect it,
+    and a field beginning with = or + is executed there rather than shown.
+    Quoting the value keeps it readable and inert. This is a property of the
+    export, not of the record: nothing in the audit table is altered.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    return f"'{text}" if text.startswith(CSV_FORMULA_LEAD) else text
+
+
+@router.get("/audit/events.csv")
+def audit_events_csv(
+    db: Db,
+    principal: CurrentUser,
+    object_type: str | None = None,
+    object_id: str | None = None,
+    action: str | None = None,
+    entity: str | None = None,
+    limit: int = Query(default=5000, le=50000),
+) -> StreamingResponse:
+    """The audit trail as a file, for an auditor who works outside the screen.
+
+    The chain columns travel with it. Without ``sequence``, ``previous_digest``
+    and ``digest`` the export is a list of assertions that cannot be checked
+    against anything, and the whole point of the trail is that it can be. The
+    export is itself an audited event, because taking the record out of the
+    platform is exactly the kind of act the record exists to capture.
+    """
+    principal.require_role(Role.ADMIN, Role.AUDITOR, Role.HEAD_OF_LEGAL)
+
+    stmt = select(AuditEvent)
+    if object_type:
+        stmt = stmt.where(AuditEvent.object_type == object_type)
+    if object_id:
+        stmt = stmt.where(AuditEvent.object_id == object_id)
+    if action:
+        stmt = stmt.where(AuditEvent.action == action)
+    if entity:
+        stmt = stmt.where(AuditEvent.entity == entity)
+
+    rows = list(
+        db.execute(stmt.order_by(AuditEvent.sequence.desc()).limit(limit)).scalars()
+    )
+
+    audit.record(
+        db,
+        action="audit_exported",
+        object_type="audit_event",
+        object_id=None,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=entity,
+        after_state={
+            "rows": len(rows),
+            "format": "csv",
+            "filters": {
+                "object_type": object_type,
+                "object_id": object_id,
+                "action": action,
+                "entity": entity,
+            },
+        },
+    )
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(AUDIT_CSV_COLUMNS)
+    for row in reversed(rows):
+        writer.writerow(
+            [_csv_safe(getattr(row, column, None)) for column in AUDIT_CSV_COLUMNS]
+        )
+
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M")
+    return StreamingResponse(
+        io.BytesIO(buffer.getvalue().encode("utf-8-sig")),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="audit-{stamp}.csv"',
+            "X-Row-Count": str(len(rows)),
+        },
+    )
+
+
 @router.get("/audit/verify")
 def verify_audit(db: Db, principal: CurrentUser) -> dict:
     """Recompute the audit chain and report any row that does not reconcile."""
@@ -405,6 +514,106 @@ def verify_audit(db: Db, principal: CurrentUser) -> dict:
             else "The audit chain does not reconcile. Investigate immediately."
         ),
     }
+
+
+#: Every particular a template is likely to name us by. Order is the order the
+#: form asks in, which is the order they appear in an agreement's preamble.
+ORGANISATION_FIELDS = [
+    ("legal_name", "Legal name"),
+    ("trading_name", "Trading name"),
+    ("registration_number", "Registration number"),
+    ("tax_identification_number", "Tax identification number"),
+    ("registered_address", "Registered address"),
+    ("default_jurisdiction", "Governing law"),
+    ("contact_email", "Contact email"),
+    ("contact_phone", "Contact phone"),
+    ("website", "Website"),
+    ("signatory_name", "Default signatory"),
+    ("signatory_title", "Signatory title"),
+]
+
+#: The ones an agreement will not assemble without. The rest are useful and
+#: not blocking, and marking everything mandatory would make the warning
+#: meaningless.
+ORGANISATION_REQUIRED = {
+    "legal_name",
+    "registration_number",
+    "registered_address",
+    "default_jurisdiction",
+}
+
+
+def _organisation_out(record: Organisation) -> OrganisationOut:
+    model = OrganisationOut.model_validate(record)
+    model.incomplete = [
+        label
+        for field, label in ORGANISATION_FIELDS
+        if field in ORGANISATION_REQUIRED and not getattr(record, field, None)
+    ]
+    return model
+
+
+@router.get("/organisations")
+def list_organisations(db: Db, principal: CurrentUser) -> list[OrganisationOut]:
+    """The particulars each entity is named by in an agreement.
+
+    Readable by anyone who drafts, because it is what a document will say about
+    us and a drafter needs to know whether it is right before generating.
+    """
+    principal.require_role(
+        Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN, Role.AUDITOR
+    )
+    records = db.execute(select(Organisation).order_by(Organisation.entity_code)).scalars()
+    return [_organisation_out(record) for record in records]
+
+
+@router.patch("/organisations/{entity_code}")
+def update_organisation(
+    entity_code: str, payload: OrganisationUpdate, db: Db, principal: CurrentUser
+) -> OrganisationOut:
+    """Change what an agreement says about us.
+
+    Administrative rather than clerical. These values are copied verbatim into
+    executed contracts, so a wrong registration number is wrong on paper that
+    has already been signed, and the change is audited with both states.
+    """
+    principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL)
+    principal.require_step_up("Changing an organisation's particulars")
+
+    record = db.execute(
+        select(Organisation).where(Organisation.entity_code == entity_code.upper())
+    ).scalar_one_or_none()
+    if record is None:
+        raise NotFound("That organisation was not found.")
+
+    changes = payload.model_dump(exclude_unset=True)
+    cleaned = {
+        field: (value.strip() or None) if isinstance(value, str) else value
+        for field, value in changes.items()
+    }
+    if "legal_name" in cleaned and not cleaned["legal_name"]:
+        raise ValidationFailed(
+            "An organisation needs a legal name.",
+            {"legal_name": "It is what every agreement names this entity by."},
+        )
+
+    before = {field: getattr(record, field) for field in cleaned}
+    for field, value in cleaned.items():
+        setattr(record, field, value)
+
+    audit.record(
+        db,
+        action="organisation_updated",
+        object_type="organisation",
+        object_id=record.entity_code,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=record.entity_code,
+        before_state=before,
+        after_state=cleaned,
+    )
+    db.flush()
+    return _organisation_out(record)
 
 
 @router.get("/config/{area}")

@@ -162,6 +162,10 @@ class ObligationStatus(StrEnum):
 
 class DocumentType(StrEnum):
     DRAFT = "draft"
+    #: Their paper, not ours. Kept apart from every other type because nothing
+    #: in it came from an approved clause, so it may never be approved, signed
+    #: or presented as house position.
+    COUNTERPARTY = "counterparty"
     REDLINE = "redline"
     EXECUTED = "executed"
     EVIDENCE = "evidence"

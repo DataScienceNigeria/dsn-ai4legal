@@ -2,10 +2,12 @@
 
 import * as React from "react";
 
+import { Icon } from "@/components/app/icons";
 import { MfaEnrolment } from "@/components/app/mfa-enrolment";
 import { useRoles, useSession } from "@/components/app/session";
 import { StepUpGate } from "@/components/app/step-up";
 import {
+  Actions,
   Button,
   Card,
   CardBody,
@@ -25,13 +27,14 @@ import {
   Tabs,
   Textarea,
 } from "@/components/ui";
-import { api, query } from "@/lib/api";
+import { api, download, query } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
 import type {
   AuditRow,
   ConnectorRow,
   DeletionRow,
   ExportRow,
+  OrganisationRow,
   QualitySampleRow,
   RetentionRow,
   UserRow,
@@ -581,6 +584,17 @@ function Audit() {
   const verify = useApi<{ reconciled: boolean; message: string }>("/audit/verify");
   const rows = events.data ?? [];
 
+  /*
+    The export carries the same filter as the screen, so what you take away is
+    what you were looking at. It also carries the chain columns the table has
+    no room for, which is what makes the file checkable rather than a list of
+    assertions. Exporting is itself an audited act.
+  */
+  const save = useAction(async () => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    await download(`/audit/events.csv${query}`, `audit-${stamp}.csv`);
+  });
+
   return (
     <div className="space-y-4">
       {verify.data ? (
@@ -594,13 +608,24 @@ function Audit() {
           title="Audit trail"
           subtitle="Append-only for the retention period. Administrators cannot alter it."
           actions={
-            <Input
-              value={action}
-              onChange={(event) => setAction(event.target.value)}
-              placeholder="Filter by action"
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                value={action}
+                onChange={(event) => setAction(event.target.value)}
+                placeholder="Filter by action"
+              />
+              <Button size="sm" disabled={save.busy} onClick={() => void save.run()}>
+                <Icon name="archive" className="h-4 w-4" />
+                {save.busy ? "Preparing" : "Export CSV"}
+              </Button>
+            </div>
           }
         />
+        {save.error ? (
+          <CardBody className="border-b">
+            <Refusal title="The export was refused" reason={save.error.message} />
+          </CardBody>
+        ) : null}
         <div className="table-scroll">
           <div className="min-w-[56.25rem]">
             <Row cols={AUDIT_COLS} head>
@@ -660,6 +685,144 @@ type ConfigRow = {
   version: number;
   description?: string | null;
 };
+
+/*
+  What an agreement names us by, held once per entity instead of typed into
+  each document. Two people typing a registered address from memory is two
+  versions of it in the archive, and the one that reaches an executed contract
+  is whichever was typed last.
+*/
+const ORGANISATION_FIELDS: { name: keyof OrganisationRow; label: string; hint?: string }[] = [
+  { name: "legal_name", label: "Legal name", hint: "Exactly as registered. This is what every agreement calls this entity." },
+  { name: "trading_name", label: "Trading name", hint: "Only where it differs from the legal name." },
+  { name: "registration_number", label: "Registration number" },
+  { name: "tax_identification_number", label: "Tax identification number" },
+  { name: "registered_address", label: "Registered address", hint: "One line, as it should read in a preamble." },
+  { name: "default_jurisdiction", label: "Governing law", hint: "Used where a template leaves the jurisdiction blank." },
+  { name: "contact_email", label: "Contact email" },
+  { name: "contact_phone", label: "Contact phone" },
+  { name: "website", label: "Website" },
+  { name: "signatory_name", label: "Default signatory" },
+  { name: "signatory_title", label: "Signatory title" },
+];
+
+function OrganisationCard({
+  record,
+  onSaved,
+}: Readonly<{ record: OrganisationRow; onSaved: () => void }>) {
+  const [draft, setDraft] = React.useState<Record<string, string>>({});
+
+  const save = useAction(async () => {
+    await api(`/organisations/${record.entity_code}`, { method: "PATCH", body: draft });
+    setDraft({});
+    onSaved();
+  });
+
+  const value = (name: keyof OrganisationRow) =>
+    draft[name] ?? (record[name] as string | null) ?? "";
+
+  const changed = Object.keys(draft).length > 0;
+  const renaming =
+    typeof draft.legal_name === "string" &&
+    draft.legal_name.trim() !== "" &&
+    draft.legal_name.trim() !== record.legal_name;
+
+  return (
+    /*
+      Titled by the entity code, not the legal name. Two organisations whose
+      names begin the same way made two cards that looked identical, and the
+      one thing that told them apart was grey subtitle text. Somebody edited
+      the wrong one and renamed it, which read afterwards as a duplicate rather
+      than as a mistake.
+    */
+    <Card>
+      <CardHeader
+        title={
+          <span className="flex flex-wrap items-center gap-2.5">
+            <span className="rounded-md bg-brand px-2 py-0.5 font-mono text-sm text-brand-foreground">
+              {record.entity_code}
+            </span>
+            <span>{record.legal_name}</span>
+          </span>
+        }
+        subtitle={`Every agreement ${record.entity_code} signs names this entity by these particulars.`}
+        actions={
+          record.incomplete.length ? (
+            <Pill tone="warn">{record.incomplete.length} still to fill</Pill>
+          ) : (
+            <Pill tone="good">Complete</Pill>
+          )
+        }
+      />
+      <CardBody className="space-y-4">
+        {renaming ? (
+          <Notice tone="bad" title={`This renames ${record.entity_code}`}>
+            {`${record.legal_name} becomes ${draft.legal_name}. The legal name is what every
+            future agreement calls ${record.entity_code}, and it is a different organisation
+            from the other card on this page. Check you are editing the one you meant.`}
+          </Notice>
+        ) : null}
+        {record.incomplete.length ? (
+          <Notice tone="warn" title="Generation will ask for these on every document">
+            {record.incomplete.join(", ")}. A template that names one of them refuses until the
+            record answers it, so filling them here is one edit rather than a question every time.
+          </Notice>
+        ) : null}
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          {ORGANISATION_FIELDS.map((field) => (
+            <Field key={field.name} label={field.label} hint={field.hint}>
+              <Input
+                value={value(field.name)}
+                onChange={(event) =>
+                  setDraft((previous) => ({ ...previous, [field.name]: event.target.value }))
+                }
+              />
+            </Field>
+          ))}
+        </div>
+
+        <StepUpGate action="Changing an organisation's particulars" state={save} />
+        {save.error ? (
+          <Refusal
+            title="That change was refused"
+            reason={save.error.message}
+            reasons={Object.values(save.error.fieldErrors ?? {})}
+          />
+        ) : null}
+
+        <Actions>
+          <Button variant="primary" disabled={!changed || save.busy} onClick={() => void save.run()}>
+            {save.busy ? "Saving" : "Save these particulars"}
+          </Button>
+          {changed ? <Button onClick={() => setDraft({})}>Discard changes</Button> : null}
+          <span className="text-xs text-muted-foreground sm:ml-auto">
+            These values are copied verbatim into executed contracts, so the change is audited
+            with both states.
+          </span>
+        </Actions>
+      </CardBody>
+    </Card>
+  );
+}
+
+function Organisations() {
+  const records = useApi<OrganisationRow[]>("/organisations");
+  return (
+    <div className="space-y-4">
+      <DataState
+        loading={records.loading}
+        errorMessage={records.error?.message}
+        isEmpty={!records.data?.length}
+        emptyTitle="No organisation is configured"
+      >
+        {(records.data ?? []).map((record) => (
+          <OrganisationCard key={record.id} record={record} onSaved={records.reload} />
+        ))}
+      </DataState>
+    </div>
+  );
+}
 
 function Configuration() {
   const [area, setArea] = React.useState("sla");
@@ -929,6 +1092,7 @@ export default function Administration() {
           { id: "boundary", label: "Export and deletion" },
           { id: "connectors", label: "Connectors" },
           { id: "people", label: "People" },
+          { id: "organisation", label: "Organisation" },
           { id: "config", label: "Configuration" },
           { id: "security", label: "Your security" },
           { id: "quality", label: "Quality sample" },
@@ -942,6 +1106,7 @@ export default function Administration() {
       {tab === "boundary" ? <Boundary /> : null}
       {tab === "connectors" ? <Connectors /> : null}
       {tab === "people" ? <People /> : null}
+      {tab === "organisation" ? <Organisations /> : null}
       {tab === "config" ? <Configuration /> : null}
       {tab === "security" ? <MfaEnrolment /> : null}
       {tab === "quality" ? <QualitySamples /> : null}

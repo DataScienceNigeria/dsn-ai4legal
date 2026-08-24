@@ -23,6 +23,21 @@ class Organisation(UUIDPrimaryKey, Timestamped, Base):
     branding: Mapped[dict] = mapped_column(JSONB, default=dict)
     retention_profile: Mapped[str] = mapped_column(String(64), default="standard")
 
+    # The particulars an agreement names us by. Held here rather than typed
+    # into each document, because two people typing the registered address
+    # from memory is two versions of it in the archive, and the one that ends
+    # up in an executed contract is whichever was typed last.
+    trading_name: Mapped[str | None] = mapped_column(String(255))
+    registered_address: Mapped[str | None] = mapped_column(Text)
+    tax_identification_number: Mapped[str | None] = mapped_column(String(64))
+    contact_email: Mapped[str | None] = mapped_column(String(320))
+    contact_phone: Mapped[str | None] = mapped_column(String(64))
+    website: Mapped[str | None] = mapped_column(String(255))
+    #: Who signs for this entity by default, and in what capacity. Named on the
+    #: document rather than assumed from whoever pressed the button.
+    signatory_name: Mapped[str | None] = mapped_column(String(255))
+    signatory_title: Mapped[str | None] = mapped_column(String(128))
+
     users: Mapped[list["UserEntity"]] = relationship(back_populates="organisation")
 
 class User(UUIDPrimaryKey, Timestamped, Base):

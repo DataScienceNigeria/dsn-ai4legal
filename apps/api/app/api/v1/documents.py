@@ -4,17 +4,18 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, File, Response, UploadFile
 from sqlalchemy import select, text
 
 from app.core import audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
-from app.core.errors import Conflict, Forbidden, NotFound, Refused
+from app.core.errors import Conflict, Forbidden, NotFound, Refused, ValidationFailed
 from app.db.models.contract import Approval, SignatureRequest
 from app.db.models.counterparty import Counterparty
 from app.db.models.document import Document, ReviewFinding, Suggestion
-from app.db.models.intake import RequestType
+from app.db.models.intake import Attachment, RequestType
 from app.db.models.library import ClauseVersion, Template, TemplateVersion
 from app.db.models.matter import Matter
 from app.db.models.organisation import Organisation
@@ -39,10 +40,13 @@ from app.schemas.matters import (
     GenerateRequest,
 )
 from app.services import approvals as approval_service
-from app.services import autoissue
+from app.services import autoissue, docx_import, storage
 from app.services.generation import generate, render_docx
+from app.services.hashing import file_hash
 
 DOCUMENT_NOT_FOUND = "That document was not found."
+
+DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 router = APIRouter(tags=["documents"])
 
@@ -63,6 +67,230 @@ def _clause_texts(db, references: list[str]) -> dict[str, dict]:
             "provenance": "approved_clause",
         }
     return out
+
+
+def _first_address(addresses: list[dict] | None) -> str | None:
+    """The counterparty's address as one line.
+
+    A counterparty holds several addresses over time. The registered one is
+    what an agreement names, and where none is marked, the first recorded is
+    the best the record offers.
+    """
+    entries = addresses or []
+    if not entries:
+        return None
+    chosen = next((a for a in entries if a.get("type") == "registered"), entries[0])
+    if chosen.get("full"):
+        return str(chosen["full"])
+    parts = [
+        chosen.get(field)
+        for field in ("line1", "line2", "city", "state", "postcode", "country")
+    ]
+    joined = ", ".join(str(p).strip() for p in parts if p)
+    return joined or None
+
+
+COUNTERPARTY_DISCLAIMER = (
+    "Counterparty paper. Nothing in this document came from an approved clause, "
+    "so it is never presented as house position and cannot be approved or signed "
+    "from here."
+)
+
+
+def _store_counterparty_paper(
+    db,
+    principal,
+    matter: Matter,
+    *,
+    filename: str,
+    content_type: str,
+    data: bytes,
+    source: str,
+) -> Document:
+    """Turn their file into a document the review can walk.
+
+    The split into blocks is the same deterministic heading and numbering split
+    a template import uses, so what a reviewer reads on screen is what the
+    comparison was given. Every block is marked ``counterparty``, which is what
+    keeps it out of everything a generated document is eligible for.
+    """
+    try:
+        blocks = docx_import.read_blocks(data)
+    except docx_import.NotADocx as exc:
+        # The comparison walks the paper clause by clause, so it needs the
+        # document structure and not an image of it. A PDF is the usual case
+        # here, and saying so is more use than repeating that it failed.
+        hint = (
+            "Counterparty paper has to be a Word file, because the review reads it "
+            "clause by clause. Ask them for the .docx, or save the PDF as one."
+            if filename.lower().endswith(".pdf")
+            else str(exc)
+        )
+        raise ValidationFailed("That paper could not be read.", {"file": hint}) from exc
+
+    if not blocks:
+        raise ValidationFailed(
+            "That paper could not be read.",
+            {"file": "No clauses could be found in it, so there is nothing to compare."},
+        )
+
+    digest = file_hash(data)
+    existing = db.execute(
+        select(Document).where(
+            Document.matter_id == matter.id, Document.content_hash == digest
+        )
+    ).scalars().first()
+    if existing is not None:
+        return existing
+
+    key = f"matters/{matter.number}/counterparty/{digest[:12]}-{filename}"
+    storage.store.put(key, data, content_type)
+
+    previous = list(
+        db.execute(select(Document).where(Document.matter_id == matter.id)).scalars()
+    )
+
+    document = Document(
+        matter_id=matter.id,
+        entity=matter.entity,
+        name=filename,
+        document_type=DocumentType.COUNTERPARTY.value,
+        version=len(previous) + 1,
+        template_version_ref=None,
+        clause_versions=[],
+        input_values={},
+        blocks=blocks,
+        content_hash=digest,
+        storage_key=key,
+        classification=matter.classification,
+        generated_by_id=uuid.UUID(principal.user_id),
+        generated_at=datetime.now(UTC),
+        novel_clause_count=0,
+        open_items=[COUNTERPARTY_DISCLAIMER],
+        consistency_checks=[],
+    )
+    db.add(document)
+    db.flush()
+
+    audit.record(
+        db,
+        action="counterparty_paper_added",
+        object_type="document",
+        object_id=str(document.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=matter.entity,
+        after_state={
+            "matter": matter.number,
+            "filename": filename,
+            "hash": digest,
+            "clauses": len(blocks),
+            "source": source,
+        },
+    )
+    return document
+
+
+@router.post("/matters/{matter_id}/paper", status_code=201)
+def add_counterparty_paper(
+    matter_id: uuid.UUID,
+    db: Db,
+    principal: CurrentUser,
+    file: Annotated[UploadFile, File()],
+) -> DocumentOut:
+    """Upload their draft so it can be measured against the playbook.
+
+    Scanned before it is stored, like every other upload. A file that fails the
+    scan is quarantined and the refusal is recorded, because a document that
+    arrived from outside is exactly where a hostile payload would be.
+    """
+    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+
+    matter = db.get(Matter, matter_id)
+    if matter is None:
+        raise NotFound("That matter was not found.")
+
+    data = file.file.read()
+    content_type = file.content_type or DOCX_MEDIA_TYPE
+    storage.validate_upload(file.filename or "", content_type, data)
+
+    clean, scan_detail = storage.scan_upload(data)
+    if not clean:
+        audit.record(
+            db,
+            action="upload_quarantined",
+            object_type="matter",
+            object_id=matter.number,
+            actor_id=principal.user_id,
+            actor_label=principal.name,
+            entity=matter.entity,
+            result="failure",
+            detail=scan_detail,
+        )
+        raise ValidationFailed(
+            "This file was refused and has been quarantined.", {"file": scan_detail}
+        )
+
+    document = _store_counterparty_paper(
+        db,
+        principal,
+        matter,
+        filename=file.filename or "counterparty-paper.docx",
+        content_type=content_type,
+        data=data,
+        source="upload",
+    )
+    return _to_out(document)
+
+
+@router.post("/matters/{matter_id}/paper/from-attachment/{attachment_id}", status_code=201)
+def adopt_attachment_as_paper(
+    matter_id: uuid.UUID, attachment_id: uuid.UUID, db: Db, principal: CurrentUser
+) -> DocumentOut:
+    """Take paper that arrived with the request and make it reviewable.
+
+    Most counterparty drafts arrive attached to the request rather than by
+    email afterwards, and an attachment is stored evidence rather than a
+    document the review can walk. This copies it across without re-uploading,
+    so the reviewer is looking at the bytes the requester actually sent. The
+    attachment stays where it is: it is the record of what arrived.
+    """
+    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+
+    matter = db.get(Matter, matter_id)
+    if matter is None:
+        raise NotFound("That matter was not found.")
+
+    attachment = db.get(Attachment, attachment_id)
+    if attachment is None or attachment.request_id != matter.request_id:
+        raise NotFound("That attachment is not on the request this matter came from.")
+
+    if attachment.scan_status != "clean":
+        raise Refused(
+            "That attachment cannot be used as paper.",
+            [f"It is recorded as {attachment.scan_status} rather than clean."],
+        )
+
+    try:
+        data = storage.store.get(attachment.storage_key)
+    except Exception as exc:
+        # Broad on purpose. The object store raises its own error type and the
+        # local fallback raises OSError, and either way the answer to the
+        # caller is the same: the row says there is a file and there is not.
+        raise NotFound(
+            "The stored file behind that attachment could not be read."
+        ) from exc
+
+    document = _store_counterparty_paper(
+        db,
+        principal,
+        matter,
+        filename=attachment.filename,
+        content_type=attachment.content_type,
+        data=data,
+        source=f"attachment {attachment.id}",
+    )
+    return _to_out(document)
 
 
 @router.post("/documents/generate", status_code=201)
@@ -118,8 +346,18 @@ def generate_document(
     facts = {
         "matter_number": matter.number,
         "our_entity": organisation.legal_name if organisation else matter.entity,
+        "our_trading_name": organisation.trading_name if organisation else None,
+        "our_address": organisation.registered_address if organisation else None,
+        "our_registration_number": organisation.registration_number if organisation else None,
+        "our_tax_identification_number": (
+            organisation.tax_identification_number if organisation else None
+        ),
+        "our_signatory": organisation.signatory_name if organisation else None,
+        "our_signatory_title": organisation.signatory_title if organisation else None,
         "counterparty": counterparty.legal_name,
         "counterparty_jurisdiction": counterparty.jurisdiction,
+        "counterparty_address": _first_address(counterparty.addresses),
+        "counterparty_registration_number": counterparty.registration_number,
         "effective_date": date.today().isoformat(),
         "governing_law": organisation.default_jurisdiction if organisation else "Nigeria",
         "value_amount": float(matter.value_amount) if matter.value_amount else None,

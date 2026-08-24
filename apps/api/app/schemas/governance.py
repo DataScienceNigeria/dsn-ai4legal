@@ -505,3 +505,39 @@ class MfaReset(BaseModel):
 
     reason: str
 
+
+
+class OrganisationOut(ApiModel):
+    """The particulars an agreement names this entity by."""
+
+    id: UUID
+    entity_code: str
+    legal_name: str
+    trading_name: str | None = None
+    registration_number: str | None = None
+    tax_identification_number: str | None = None
+    registered_address: str | None = None
+    default_jurisdiction: str
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    website: str | None = None
+    signatory_name: str | None = None
+    signatory_title: str | None = None
+    #: Which of the above are still empty. Generation asks for a blank the
+    #: record cannot answer, so an incomplete record is a question somebody
+    #: gets asked on every document until it is filled in.
+    incomplete: list[str] = Field(default_factory=list)
+
+
+class OrganisationUpdate(BaseModel):
+    legal_name: str | None = Field(default=None, min_length=2, max_length=255)
+    trading_name: str | None = Field(default=None, max_length=255)
+    registration_number: str | None = Field(default=None, max_length=64)
+    tax_identification_number: str | None = Field(default=None, max_length=64)
+    registered_address: str | None = None
+    default_jurisdiction: str | None = Field(default=None, min_length=2, max_length=64)
+    contact_email: str | None = Field(default=None, max_length=320)
+    contact_phone: str | None = Field(default=None, max_length=64)
+    website: str | None = Field(default=None, max_length=255)
+    signatory_name: str | None = Field(default=None, max_length=255)
+    signatory_title: str | None = Field(default=None, max_length=128)

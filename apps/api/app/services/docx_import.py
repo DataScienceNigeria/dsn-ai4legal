@@ -304,3 +304,30 @@ def _close(current: dict) -> CandidateClause:
         last_paragraph=current["last"],
         confidence=confidence,
     )
+
+
+def read_blocks(data: bytes) -> list[dict]:
+    """The document as numbered blocks, in the shape review reads.
+
+    Counterparty paper arrives as a file and has to become something the
+    playbook comparison can walk clause by clause. The split is the same
+    deterministic heading and numbering split used for a template import, so
+    what a reviewer sees on screen is what the model was given.
+
+    Every block is marked as counterparty text. That is the whole point of
+    keeping it apart from a generated document: nothing here came from an
+    approved clause, and nothing here may be presented as house position.
+    """
+    candidates, _ = extract(data)
+    return [
+        {
+            "key": f"cp{index}",
+            "number": candidate.number or str(index),
+            "heading": candidate.heading,
+            "text": candidate.text,
+            "provenance": "counterparty",
+            "source_reference": None,
+            "novel": False,
+        }
+        for index, candidate in enumerate(candidates, start=1)
+    ]

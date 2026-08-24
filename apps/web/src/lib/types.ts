@@ -6,6 +6,13 @@ export type Me = {
   roles: string[];
   entities: string[];
   step_up_valid: boolean;
+  /*
+    False when the module is switched off as well as when the role carries no
+    factor. Either way nothing is wanted from this person, which is the only
+    thing the interface needs to know.
+  */
+  mfa_required: boolean;
+  mfa_enrolled: boolean;
 };
 
 export type Sla = {
@@ -298,6 +305,13 @@ export type Clause = {
   versions: ClauseVersion[];
 };
 
+export type TemplatePlaceholder = {
+  label: string;
+  name: string;
+  fact: string | null;
+  supplied: boolean;
+};
+
 export type TemplateVersion = {
   id: string;
   reference: string;
@@ -307,6 +321,7 @@ export type TemplateVersion = {
   body: Record<string, unknown>[];
   variables: Record<string, unknown>[];
   clause_references: string[];
+  placeholders: TemplatePlaceholder[];
   approval_date: string | null;
   effective_date: string | null;
   review_date: string | null;
@@ -680,4 +695,61 @@ export type QualitySampleRow = {
   outcome: string | null;
   notes: string | null;
   created_at: string;
+};
+
+export type NavCounts = {
+  triage: number;
+  matters: number;
+  review: number;
+  obligations: number;
+  inbox: number;
+  assessments: number;
+  compliance: number;
+};
+
+export type SearchHit = {
+  kind: string;
+  label: string;
+  reference: string;
+  detail: string | null;
+  href: string;
+};
+
+export type SearchResults = {
+  query: string;
+  hits: SearchHit[];
+  searched_at: string;
+};
+
+export type NotificationItem = {
+  id: string;
+  kind: string;
+  title: string;
+  body: string | null;
+  href: string | null;
+  reference: string | null;
+  created_at: string;
+  read_at: string | null;
+};
+
+export type NotificationPage = {
+  unread: number;
+  notifications: NotificationItem[];
+};
+
+export type OrganisationRow = {
+  id: string;
+  entity_code: string;
+  legal_name: string;
+  trading_name: string | null;
+  registration_number: string | null;
+  tax_identification_number: string | null;
+  registered_address: string | null;
+  default_jurisdiction: string;
+  contact_email: string | null;
+  contact_phone: string | null;
+  website: string | null;
+  signatory_name: string | null;
+  signatory_title: string | null;
+  incomplete: string[];
 };

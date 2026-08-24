@@ -33,9 +33,18 @@ export type IconName =
   | "send"
   | "trash"
   | "rename"
+  | "bell"
+  | "check"
   | "stop";
 
 const PATHS: Record<IconName, React.ReactNode> = {
+  bell: (
+    <>
+      <path d="M18 8a6 6 0 1 0-12 0c0 6-2 7-2 7h16s-2-1-2-7" />
+      <path d="M13.7 20a2 2 0 0 1-3.4 0" />
+    </>
+  ),
+  check: <path d="m4.5 12.5 5 5 10-11" />,
   delivery: (
     <>
       <path d="M3 13.5 10 6l4 4 7-7" />

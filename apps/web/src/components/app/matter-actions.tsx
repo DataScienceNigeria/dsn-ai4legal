@@ -2,6 +2,7 @@
 
 import * as React from "react";
 
+import { Rename } from "@/components/app/rename";
 import { useRoles } from "@/components/app/session";
 import { StepUpGate } from "@/components/app/step-up";
 import {
@@ -10,15 +11,25 @@ import {
   Confirm,
   Field,
   Input,
+  MenuItem,
   Modal,
+  More,
   Notice,
   Refusal,
   Select,
   Textarea,
 } from "@/components/ui";
-import { api, query } from "@/lib/api";
+import { api, query, upload } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
-import type { CounterpartyRow, DocumentRecord, Matter, Template, UserRow } from "@/lib/types";
+import type {
+  AttachmentBrief,
+  CounterpartyRow,
+  DocumentRecord,
+  Matter,
+  Template,
+  TemplatePlaceholder,
+  UserRow,
+} from "@/lib/types";
 import { titleCase } from "@/lib/utils";
 
 const TIERS = ["tier_1", "tier_2", "tier_3", "tier_4"];
@@ -51,38 +62,81 @@ function useTemplates(entity: string) {
   );
 }
 
+/*
+  A template authored here declares its merge fields. One that arrived as a
+  Word file does not: it was written for a person to fill in, so its blanks
+  read [Company Name] rather than {{company_name}}. The API derives those from
+  the body and says which the matter already answers, so the two kinds of
+  template ask the same way and only the remainder is put to anyone.
+*/
 function FactFields({
   variables,
+  placeholders,
   facts,
   onChange,
 }: Readonly<{
   variables: Variable[];
+  placeholders: TemplatePlaceholder[];
   facts: Record<string, string>;
   onChange: (name: string, value: string) => void;
 }>) {
-  const asked = variables.filter((variable) => !SUPPLIED_BY_THE_MATTER.has(variable.name));
+  const declared = variables
+    .filter((variable) => !SUPPLIED_BY_THE_MATTER.has(variable.name))
+    .map((variable) => ({
+      name: variable.name,
+      label: variable.label ?? titleCase(variable.name),
+      mandatory: variable.mandatory !== false,
+    }));
+
+  const blanks = placeholders
+    .filter((placeholder) => !placeholder.supplied)
+    .filter((placeholder) => !declared.some((field) => field.name === placeholder.name))
+    .map((placeholder) => ({
+      name: placeholder.name,
+      label: placeholder.label,
+      mandatory: true,
+    }));
+
+  const answered = placeholders.filter((placeholder) => placeholder.supplied);
+  const asked = [...declared, ...blanks];
+
   if (asked.length === 0) {
     return (
       <Notice tone="good" title="Everything this template needs is already on the matter">
-        No further facts are required, so the document assembles from the record as it stands.
+        {answered.length
+          ? `${answered.length} blanks fill from the record, so the document assembles as it stands.`
+          : "No further facts are required, so the document assembles from the record as it stands."}
       </Notice>
     );
   }
+
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {asked.map((variable) => (
-        <Field
-          key={variable.name}
-          label={variable.label ?? titleCase(variable.name)}
-          required={variable.mandatory}
-          hint={variable.mandatory ? null : "Left blank, this appears as an open item."}
-        >
-          <Input
-            value={facts[variable.name] ?? ""}
-            onChange={(event) => onChange(variable.name, event.target.value)}
-          />
-        </Field>
-      ))}
+    <div className="space-y-3">
+      {answered.length ? (
+        <Notice tone="info" title={`${answered.length} blanks fill from the matter`}>
+          {answered.map((placeholder) => placeholder.label).join(", ")}. These are taken from
+          the record rather than typed, so the document cannot disagree with it.
+        </Notice>
+      ) : null}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {asked.map((field) => (
+          <Field
+            key={field.name}
+            label={field.label}
+            required={field.mandatory}
+            hint={
+              field.mandatory
+                ? "The template leaves this blank and the matter does not answer it."
+                : "Left blank, this appears as an open item."
+            }
+          >
+            <Input
+              value={facts[field.name] ?? ""}
+              onChange={(event) => onChange(field.name, event.target.value)}
+            />
+          </Field>
+        ))}
+      </div>
     </div>
   );
 }
@@ -161,6 +215,7 @@ function GenerateDialog({
       {chosen ? (
         <FactFields
           variables={variables}
+          placeholders={chosen.current?.placeholders ?? []}
           facts={facts}
           onChange={(key, value) => setFacts((previous) => ({ ...previous, [key]: value }))}
         />
@@ -253,6 +308,107 @@ function DraftDialog({
   );
 }
 
+/*
+  Their paper has to reach the platform before it can be measured against
+  anything, and until now there was no way to put it there. The review runs
+  over the clauses in a document, and the only documents that existed were the
+  ones we generated ourselves, so "Review counterparty paper" was reviewing our
+  own draft against our own playbook.
+
+  Two ways in, because paper arrives two ways. Most of it comes attached to the
+  original request, so that path copies it across without asking anyone to
+  find the file again; the rest arrives later by email and is uploaded here.
+*/
+function PaperDialog({
+  matterId,
+  attachments,
+  open,
+  onClose,
+  onDone,
+}: Readonly<{
+  matterId: string;
+  attachments: AttachmentBrief[];
+  open: boolean;
+  onClose: () => void;
+  onDone: () => void;
+}>) {
+  const [file, setFile] = React.useState<File | null>(null);
+
+  const send = useAction(async () => {
+    if (!file) return;
+    await upload(`/matters/${matterId}/paper`, file);
+    setFile(null);
+    onDone();
+    onClose();
+  });
+
+  const adopt = useAction(async (attachmentId: string) => {
+    await api(`/matters/${matterId}/paper/from-attachment/${attachmentId}`, { method: "POST" });
+    onDone();
+    onClose();
+  });
+
+  const word = attachments.filter((a) => a.filename.toLowerCase().endsWith(".docx"));
+  const failed = send.error ?? adopt.error;
+
+  return (
+    <Modal
+      open={open}
+      title="Add the counterparty's paper"
+      subtitle="Their draft is held for comparison only. Nothing in it is house position, and it cannot be approved or signed."
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" disabled={!file || send.busy} onClick={() => void send.run()}>
+            {send.busy ? "Reading" : "Add the paper"}
+          </Button>
+        </>
+      }
+    >
+      {word.length ? (
+        <Field
+          label="It came with the request"
+          hint="Copied across as it arrived, so you are reading the bytes the requester sent."
+        >
+          <div className="space-y-1.5">
+            {word.map((attachment) => (
+              <Button
+                key={attachment.id}
+                className="w-full justify-start"
+                disabled={adopt.busy}
+                onClick={() => void adopt.run(attachment.id)}
+              >
+                {attachment.filename}
+              </Button>
+            ))}
+          </div>
+        </Field>
+      ) : null}
+
+      <Field
+        label="Or upload it"
+        required={word.length === 0}
+        hint="Word only. The review reads it clause by clause, so it needs the document rather than a picture of one."
+      >
+        <Input
+          type="file"
+          accept=".docx"
+          onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+        />
+      </Field>
+
+      {failed ? (
+        <Refusal
+          title="That paper was not added"
+          reason={failed.message}
+          reasons={Object.values(failed.fieldErrors ?? {})}
+        />
+      ) : null}
+    </Modal>
+  );
+}
+
 function ReviewDialog({
   matterId,
   documents,
@@ -267,6 +423,7 @@ function ReviewDialog({
   onDone: () => void;
 }>) {
   const [documentId, setDocumentId] = React.useState("");
+  const paper = documents.filter((document) => document.document_type === "counterparty");
 
   const review = useAction(async () => {
     await api(`/ai/review/${matterId}${query({ document_id: documentId })}`, { method: "POST" });
@@ -289,16 +446,27 @@ function ReviewDialog({
         </>
       }
     >
-      <Field label="Document" required>
-        <Select value={documentId} onChange={(event) => setDocumentId(event.target.value)}>
-          <option value="">Choose the counterparty paper</option>
-          {documents.map((document) => (
-            <option key={document.id} value={document.id}>
-              {document.name}, v{document.version}
-            </option>
-          ))}
-        </Select>
-      </Field>
+      {paper.length === 0 ? (
+        <Notice tone="warn" title="No counterparty paper is on this matter">
+          The comparison runs over their draft. Add it first, from the request it came with
+          or by uploading it, and the review has something to measure.
+        </Notice>
+      ) : (
+        <Field
+          label="Their paper"
+          required
+          hint="Only counterparty documents are listed. Reviewing our own draft against our own playbook would measure the template against itself."
+        >
+          <Select value={documentId} onChange={(event) => setDocumentId(event.target.value)}>
+            <option value="">Choose the counterparty paper</option>
+            {paper.map((document) => (
+              <option key={document.id} value={document.id}>
+                {document.name}, v{document.version}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      )}
       {review.error ? (
         <Refusal
           title="The review was refused"
@@ -736,11 +904,42 @@ export function LinkCounterparty({
   );
 }
 
+type NextStep = { id: "generate" | "paper" | "review" | "signature"; label: string };
+
+/*
+  What this matter is waiting for, from the state machine rather than from a
+  fixed order. A matter in review is waiting on the findings, but only once
+  their paper is actually here: before that it is waiting on the paper, which
+  is the step that used to have no button at all.
+*/
+function nextStep(
+  status: string,
+  documents: number,
+  paper: number,
+  canSign: boolean,
+): NextStep {
+  if (status === "in_review") {
+    return paper > 0
+      ? { id: "review", label: "Review their paper" }
+      : { id: "paper", label: "Add their paper" };
+  }
+  if (status === "awaiting_signature" && documents > 0 && canSign) {
+    return { id: "signature", label: "Request a signature" };
+  }
+  return { id: "generate", label: "Generate a document" };
+}
+
 export function MatterActions({
   matter,
   documents,
+  attachments = [],
   onChanged,
-}: Readonly<{ matter: Matter; documents: DocumentRecord[]; onChanged: () => void }>) {
+}: Readonly<{
+  matter: Matter;
+  documents: DocumentRecord[];
+  attachments?: AttachmentBrief[];
+  onChanged: () => void;
+}>) {
   const { has, readOnly } = useRoles();
   const [dialog, setDialog] = React.useState<string | null>(null);
   const close = React.useCallback(() => setDialog(null), []);
@@ -758,33 +957,54 @@ export function MatterActions({
 
   const canSign = has("counsel", "head_of_legal", "admin");
 
+  /*
+    One filled button, and it follows the state the matter is actually in. The
+    row used to carry seven of equal weight, which is the same as carrying
+    none: nothing among them said which one this matter was waiting for.
+  */
+  const paper = documents.filter((document) => document.document_type === "counterparty");
+  const next = nextStep(matter.status, documents.length, paper.length, canSign);
+
   return (
     <>
       <Actions>
-        <Button variant="primary" onClick={() => setDialog("generate")}>
-          Generate
+        <Button variant="primary" onClick={() => setDialog(next.id)}>
+          {next.label}
         </Button>
-        <Button onClick={() => setDialog("draft")}>First draft</Button>
-        <Button onClick={() => setDialog("review")} disabled={documents.length === 0}>
-          Review paper
-        </Button>
-        {canSign ? (
-          <>
-            <Button onClick={() => setDialog("signature")} disabled={documents.length === 0}>
-              Signature
-            </Button>
-            <Button onClick={() => setDialog("wetink")} disabled={documents.length === 0}>
-              Wet ink
-            </Button>
-          </>
-        ) : null}
-        <Button onClick={() => setDialog("governance")}>Governance</Button>
-        <Button
-          variant={matter.restricted ? "default" : "destructive"}
-          onClick={() => setDialog("restrict")}
-        >
-          {matter.restricted ? "Lift the restriction" : "Restrict"}
-        </Button>
+        <More>
+          {next.id === "generate" ? null : (
+            <MenuItem onClick={() => setDialog("generate")}>Generate a document</MenuItem>
+          )}
+          <MenuItem onClick={() => setDialog("draft")}>Propose a first draft</MenuItem>
+          {next.id === "paper" ? null : (
+            <MenuItem onClick={() => setDialog("paper")}>Add counterparty paper</MenuItem>
+          )}
+          {next.id === "review" ? null : (
+            <MenuItem onClick={() => setDialog("review")}>Review counterparty paper</MenuItem>
+          )}
+          {canSign && documents.length > 0 ? (
+            <>
+              {next.id === "signature" ? null : (
+                <MenuItem onClick={() => setDialog("signature")}>Request a signature</MenuItem>
+              )}
+              <MenuItem onClick={() => setDialog("wetink")}>Record a wet ink execution</MenuItem>
+            </>
+          ) : null}
+          <Rename
+            path={`/matters/${matter.id}`}
+            field="title"
+            label="matter"
+            current={matter.title}
+            onDone={onChanged}
+          />
+          <MenuItem onClick={() => setDialog("governance")}>Governance</MenuItem>
+          <MenuItem
+            tone={matter.restricted ? "default" : "destructive"}
+            onClick={() => setDialog("restrict")}
+          >
+            {matter.restricted ? "Lift the restriction" : "Restrict this matter"}
+          </MenuItem>
+        </More>
       </Actions>
 
       <GenerateDialog
@@ -794,6 +1014,13 @@ export function MatterActions({
         onDone={onChanged}
       />
       <DraftDialog matterId={matter.id} open={dialog === "draft"} onClose={close} onDone={onChanged} />
+      <PaperDialog
+        matterId={matter.id}
+        attachments={attachments}
+        open={dialog === "paper"}
+        onClose={close}
+        onDone={onChanged}
+      />
       <ReviewDialog
         matterId={matter.id}
         documents={documents}

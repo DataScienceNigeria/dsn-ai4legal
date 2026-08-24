@@ -19,7 +19,12 @@ import {
 import { api } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
 
-type Status = { enrolled: boolean; required: boolean; recovery_codes_remaining: number };
+type Status = {
+  enabled: boolean;
+  enrolled: boolean;
+  required: boolean;
+  recovery_codes_remaining: number;
+};
 
 type Enrolment = {
   secret: string;
@@ -74,30 +79,46 @@ export function MfaEnrolment() {
       <CardHeader
         title="Second factor"
         subtitle="Publishing house position, issuing a signature request, restricting a matter and changing configuration all need one."
-        actions={
-          data?.enrolled ? (
-            <Pill tone="good">Enrolled</Pill>
-          ) : (
-            <Button variant="primary" disabled={start.busy} onClick={() => void start.run(false)}>
+        actions={(() => {
+          if (data && !data.enabled) return <Pill tone="neutral">Switched off</Pill>;
+          if (data?.enrolled) return <Pill tone="good">Enrolled</Pill>;
+          return (
+            <Button
+              variant="primary"
+              disabled={!data || start.busy}
+              onClick={() => void start.run(false)}
+            >
               Enrol an authenticator
             </Button>
-          )
-        }
+          );
+        })()}
       />
       <CardBody className="space-y-3">
         {start.error ? (
           <Refusal title="Enrolment could not start" reason={start.error.message} />
         ) : null}
 
-        {data && !data.required && !data.enrolled ? (
-          <Notice tone="info" title="The second factor is not being demanded">
-            Either your role does not require one, or the module is switched off for this
-            deployment. You can still enrol, and it will be used the moment it is required
-            again.
+        {/*
+          Off means off. Offering enrolment for a factor nothing will check
+          reads as protection that is not there, and an account that enrolled
+          against an inert module is the state that locked the only
+          administrator out of this platform once already.
+        */}
+        {data && !data.enabled ? (
+          <Notice tone="info" title="The second factor is switched off on this deployment">
+            Nothing will ask for a code, whether or not an authenticator was enrolled before,
+            so there is nothing to enrol. Privileged actions still ask for your password,
+            because a fresh sign-in and a second factor are separate checks.
           </Notice>
         ) : null}
 
-        {data?.required && !data.enrolled ? (
+        {data?.enabled && !data.required && !data.enrolled ? (
+          <Notice tone="info" title="Your role does not require a second factor">
+            You can still enrol one, and it will be used the moment your role requires it.
+          </Notice>
+        ) : null}
+
+        {data?.enabled && data.required && !data.enrolled ? (
           <Notice tone="warn" title="Your role requires a second factor">
             You can sign in and read without one. The privileged actions above will refuse until
             an authenticator is enrolled.
@@ -107,6 +128,7 @@ export function MfaEnrolment() {
         {data ? (
           <KeyValue
             rows={[
+              ["Module", data.enabled ? "In force" : "Switched off for this deployment"],
               ["Enrolled", data.enrolled ? "Yes" : "No"],
               ["Required for your role", data.required ? "Yes" : "No"],
               ["Recovery codes left", String(data.recovery_codes_remaining)],

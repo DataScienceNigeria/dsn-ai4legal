@@ -55,11 +55,21 @@ class MatterOut(MatterListItem):
 
 
 class MatterUpdate(BaseModel):
+    #: The title is the working name, not the identity. The matter number is
+    #: the identity and it never changes, which is what makes renaming safe.
+    title: str | None = Field(default=None, min_length=3, max_length=255)
     priority: str | None = None
     next_action: str | None = None
     due_date: date | None = None
     blocker: str | None = None
     business_owner_id: UUID | None = None
+
+
+class RequestRename(BaseModel):
+    subject: str = Field(min_length=3, max_length=255)
+    #: Optional. The requester wrote the original wording, so a note saying why
+    #: it was changed is worth having when they ask.
+    reason: str | None = None
 
 
 class CounterpartyLink(BaseModel):
@@ -136,6 +146,17 @@ class TemplateVariable(BaseModel):
     default: Any = None
 
 
+class TemplatePlaceholder(BaseModel):
+    #: As written in the document, so the person recognises it.
+    label: str
+    #: What it is asked for and supplied under.
+    name: str
+    #: The fact it fills from, where the record already holds one.
+    fact: str | None = None
+    #: True where the matter answers it and nobody needs to be asked.
+    supplied: bool = False
+
+
 class TemplateVersionOut(ApiModel):
     id: UUID
     reference: str
@@ -152,6 +173,12 @@ class TemplateVersionOut(ApiModel):
     #: Set where this version came from a Word document. It is what makes the
     #: clause candidates extracted at import reachable from the template.
     import_id: UUID | None = None
+    #: Blanks written the way a Word template writes them, [Company Name]
+    #: rather than {{company_name}}, derived from the body rather than stored.
+    #: An imported template declares no variables, so without this the
+    #: interface has nothing to ask for and generation refuses on blanks the
+    #: person was never given a chance to fill.
+    placeholders: list[TemplatePlaceholder] = Field(default_factory=list)
 
 
 class TemplateOut(ApiModel):

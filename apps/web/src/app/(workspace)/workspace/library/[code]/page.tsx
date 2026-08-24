@@ -19,8 +19,10 @@ import {
   CardBody,
   Empty,
   Field,
+  MenuItem,
   Modal,
   Mono,
+  More,
   PageTitle,
   Pill,
   Refusal,
@@ -99,14 +101,14 @@ function TemplateHeader({
           ) : null}
         </span>
       }
+      /*
+        One next step, filled, and everything else behind More. Seven buttons of
+        equal weight was the same as none: nothing among them said which one you
+        opened the page to press. The next step here is the draft, or publishing
+        it once one exists, so those two are the only ones that stay out.
+      */
       actions={
         <>
-          <Link href="/workspace/library" className="no-underline">
-            <Button size="sm">Back</Button>
-          </Link>
-          {/* One control, two states. Two buttons for two modes spent a whole
-              row of the page saying which of them was already obvious from the
-              document being editable or not. */}
           <Button
             size="sm"
             variant={editing ? "dark" : "primary"}
@@ -117,29 +119,23 @@ function TemplateHeader({
             <Icon name={editing ? "templates" : "rename"} className="h-4 w-4" />
             {editLabel(editing, Boolean(draft))}
           </Button>
-          <PlaybookView agreementType={template.agreement_type} />
-          <Button
-            size="sm"
-            onClick={() => void download(`/templates/${code}/preview`, `${code}.docx`)}
-          >
-            <Icon name="archive" className="h-4 w-4" />
-            Save as .docx
-          </Button>
-          {canExtract ? (
-            <Button size="sm" onClick={onExtract}>
-              <Icon name="templates" className="h-4 w-4" />
-              Extract clauses
-            </Button>
-          ) : null}
-          {canPropose ? (
-            <ProposeVersion kind="template" code={code} current={null} onDone={onChanged} />
-          ) : null}
           {/* A draft is only worth writing if it can be put into force from
               here. Publishing needs the Head of Legal and a fresh sign-in;
               the control renders nothing for anyone else. */}
           {draft ? (
             <VersionDecision reference={draft.reference} status={draft.status} onDone={onChanged} />
           ) : null}
+          <More>
+            <MenuItem href="/workspace/library">Back to the library</MenuItem>
+            <PlaybookView agreementType={template.agreement_type} />
+            <MenuItem onClick={() => void download(`/templates/${code}/preview`, `${code}.docx`)}>
+              Save as .docx
+            </MenuItem>
+            {canExtract ? <MenuItem onClick={onExtract}>Extract clauses</MenuItem> : null}
+            {canPropose ? (
+              <ProposeVersion kind="template" code={code} current={null} onDone={onChanged} />
+            ) : null}
+          </More>
         </>
       }
     />

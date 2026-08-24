@@ -3,6 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import * as React from "react";
 
+import { Rename } from "@/components/app/rename";
 import { RequestPanel } from "@/components/app/request-panel";
 import { TierPill } from "@/components/app/status";
 import {
@@ -11,7 +12,10 @@ import {
   CardBody,
   CardHeader,
   Field,
+  MenuItem,
   Modal,
+  Mono,
+  More,
   Notice,
   PageTitle,
   Pill,
@@ -211,16 +215,15 @@ export default function TriageDetail() {
   return (
     <div className="space-y-6">
       <PageTitle
-        title="Triage"
-        subtitle="Both proposals are editable. Any change is recorded with a reason."
+        title={data.request?.subject ?? "Triage"}
+        subtitle={
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            {data.request ? <Mono>{data.request.reference}</Mono> : null}
+            <span>Both proposals are editable. Any change is recorded with a reason.</span>
+          </span>
+        }
         actions={
           <>
-            <Button onClick={() => openOutcome("close")} disabled={closeIt.busy}>
-              Answer and close
-            </Button>
-            <Button onClick={() => openOutcome("return")} disabled={returnForInfo.busy}>
-              Return for information
-            </Button>
             <Button
               variant="primary"
               onClick={() => void accept.run()}
@@ -228,6 +231,23 @@ export default function TriageDetail() {
             >
               {accept.busy ? "Creating" : "Accept and create matter"}
             </Button>
+            <More>
+              {/* The subject becomes the matter title at acceptance, so this
+                  is the last point at which a description of the counterparty
+                  can be turned into a description of the work. */}
+              <Rename
+                path={`/triage/${requestId}`}
+                field="subject"
+                label="request"
+                current={data.request?.subject ?? ""}
+                askReason
+                onDone={() => proposal.reload()}
+              />
+              <MenuItem onClick={() => openOutcome("close")}>Answer and close</MenuItem>
+              <MenuItem onClick={() => openOutcome("return")}>
+                Return for information
+              </MenuItem>
+            </More>
           </>
         }
       />

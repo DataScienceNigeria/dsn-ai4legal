@@ -257,3 +257,35 @@ class DeletionRequest(UUIDPrimaryKey, Timestamped, Base):
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     certificate_reference: Mapped[str | None] = mapped_column(String(32), unique=True)
     certificate: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+class Notification(UUIDPrimaryKey, Timestamped, Base):
+    """A message to one person inside the platform.
+
+    Separate from the outbox, which carries administrative mail to an external
+    connector. This is what a person sees when they open the workspace, and it
+    exists because the events that most need someone's attention, a matter
+    assigned, an approval waiting, a finding raised, were announced only by
+    email the platform may not be permitted to send.
+
+    Personal rather than entity-wide. The policy on this table narrows to the
+    recipient, because a notification names work that was routed to them.
+    """
+
+    __tablename__ = "notification"
+
+    recipient_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("app_user.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    entity: Mapped[str] = mapped_column(String(3), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str | None] = mapped_column(Text)
+    href: Mapped[str | None] = mapped_column(String(512))
+    reference: Mapped[str | None] = mapped_column(String(64))
+    matter_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("matter.id", ondelete="CASCADE")
+    )
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)

@@ -26,6 +26,22 @@ def _canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
+def _jsonable(state: dict | None) -> dict | None:
+    """Make a state dictionary something JSONB will accept.
+
+    Callers hand this whatever the record holds, which includes dates, UUIDs
+    and decimals. psycopg raises on those, and it raises at commit rather than
+    at the call, by which point the response has been built and returned. That
+    is the worst possible failure for this table in particular: the change was
+    committed, the audit row was not, and the caller was told it worked. A
+    round trip through the canonical encoder gives every value the same string
+    form the digest is computed over.
+    """
+    if state is None:
+        return None
+    return json.loads(_canonical(state))
+
+
 def compute_digest(
     *,
     sequence: int,
@@ -132,8 +148,8 @@ def record(
         object_type=object_type,
         object_id=str(object_id) if object_id is not None else None,
         action=action,
-        before_state=before_state,
-        after_state=after_state,
+        before_state=_jsonable(before_state),
+        after_state=_jsonable(after_state),
         ip_address=ip_address,
         session_id=session_id,
         result=result,

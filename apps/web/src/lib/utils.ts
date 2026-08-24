@@ -5,6 +5,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function firstName(name: string | null | undefined): string {
+  return (name ?? "").trim().split(/\s+/)[0] ?? "";
+}
+
 export function initials(name: string): string {
   const parts = name.split(" ").filter(Boolean);
   return parts.slice(0, 2).map((p) => p[0]?.toUpperCase() ?? "").join("") || "?";

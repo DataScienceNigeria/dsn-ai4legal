@@ -6,11 +6,14 @@ import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
 
 import { Icon, type IconName } from "@/components/app/icons";
+import { Notifications } from "@/components/app/notifications";
+import { Search } from "@/components/app/search";
 import { useSession } from "@/components/app/session";
 import { ThemeToggle } from "@/components/app/theme-toggle";
 import { Button, Spinner } from "@/components/ui";
 import { logout } from "@/lib/api";
-import type { Me } from "@/lib/types";
+import { useApi } from "@/lib/hooks";
+import type { Me, NavCounts, SearchHit, SearchResults } from "@/lib/types";
 import { cn, initials, titleCase } from "@/lib/utils";
 
 /*
@@ -24,6 +27,13 @@ type NavItem = {
   label: string;
   module: string;
   roles: string[];
+  /*
+    Which outstanding count belongs on this item. Only work waiting is
+    counted, never a total: a screen holding 248 records tells nobody
+    anything, and a screen holding 12 awaiting a decision tells them where
+    to go next.
+  */
+  counter?: keyof NavCounts;
 };
 
 const LEGAL = ["legal_ops", "counsel", "head_of_legal", "admin"];
@@ -39,9 +49,30 @@ const NAV: { group: string; items: NavItem[] }[] = [
         module: "M14",
         roles: [...LEGAL, "management"],
       },
-      { href: "/workspace/triage", icon: "triage", label: "Triage", module: "M02", roles: LEGAL },
-      { href: "/workspace/matters", icon: "matters", label: "Matters", module: "M02", roles: LEGAL },
-      { href: "/workspace/review", icon: "review", label: "Review", module: "M06", roles: LEGAL },
+      {
+        href: "/workspace/triage",
+        icon: "triage",
+        label: "Triage",
+        module: "M02",
+        roles: LEGAL,
+        counter: "triage",
+      },
+      {
+        href: "/workspace/matters",
+        icon: "matters",
+        label: "Matters",
+        module: "M02",
+        roles: LEGAL,
+        counter: "matters",
+      },
+      {
+        href: "/workspace/review",
+        icon: "review",
+        label: "Review",
+        module: "M06",
+        roles: LEGAL,
+        counter: "review",
+      },
       {
         href: "/workspace/archive",
         icon: "archive",
@@ -55,6 +86,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
         label: "Obligations",
         module: "M08",
         roles: LEGAL,
+        counter: "obligations",
       },
     ],
   },
@@ -69,7 +101,14 @@ const NAV: { group: string; items: NavItem[] }[] = [
         roles: LEGAL,
       },
       { href: "/workspace/memory", icon: "memory", label: "Memory", module: "M10", roles: LEGAL },
-      { href: "/workspace/inbox", icon: "inbox", label: "Inbox", module: "M09", roles: LEGAL },
+      {
+        href: "/workspace/inbox",
+        icon: "inbox",
+        label: "Inbox",
+        module: "M09",
+        roles: LEGAL,
+        counter: "inbox",
+      },
     ],
   },
   {
@@ -81,6 +120,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
         label: "Assessments",
         module: "M11",
         roles: [...LEGAL, "privacy"],
+        counter: "assessments",
       },
       {
         href: "/workspace/compliance",
@@ -88,6 +128,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
         label: "Compliance",
         module: "M12",
         roles: LEGAL,
+        counter: "compliance",
       },
       {
         href: "/workspace/counterparties",
@@ -338,18 +379,22 @@ function NavLink({
   item,
   active,
   collapsed,
+  count,
   onNavigate,
 }: Readonly<{
   item: NavItem;
   active: boolean;
   collapsed: boolean;
+  count?: number;
   onNavigate: () => void;
 }>) {
+  const badge = count && count > 0 ? count : null;
+  const hint = badge ? `${item.label}, ${badge} waiting` : item.label;
   return (
     <Link
       href={item.href}
       onClick={onNavigate}
-      title={collapsed ? item.label : `${item.label}, ${item.module}`}
+      title={collapsed ? hint : `${hint}, ${item.module}`}
       aria-label={collapsed ? item.label : undefined}
       aria-current={active ? "page" : undefined}
       className={cn(
@@ -360,14 +405,38 @@ function NavLink({
           : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
       )}
     >
-      <Icon
-        name={item.icon}
-        className={cn(
-          "h-[1.15rem] w-[1.15rem] shrink-0",
-          active ? "text-heading" : "text-muted-foreground/70",
-        )}
-      />
-      {collapsed ? null : <span className="truncate">{item.label}</span>}
+      <span className="relative shrink-0">
+        <Icon
+          name={item.icon}
+          className={cn(
+            "h-[1.15rem] w-[1.15rem]",
+            active ? "text-heading" : "text-muted-foreground/70",
+          )}
+        />
+        {collapsed && badge ? (
+          <span
+            aria-hidden
+            className="absolute -right-1.5 -top-1.5 h-2 w-2 rounded-full bg-brand ring-2 ring-sidebar"
+          />
+        ) : null}
+      </span>
+      {collapsed ? null : (
+        <>
+          <span className="truncate">{item.label}</span>
+          {badge ? (
+            <span
+              className={cn(
+                "ml-auto min-w-[1.375rem] shrink-0 rounded-full px-1.5 py-0.5 text-center text-2xs font-semibold tabular-nums",
+                active
+                  ? "bg-heading text-background"
+                  : "bg-foreground/[0.08] text-muted-foreground",
+              )}
+            >
+              {badge > 99 ? "99+" : badge}
+            </span>
+          ) : null}
+        </>
+      )}
     </Link>
   );
 }
@@ -376,11 +445,13 @@ function SidebarNav({
   sections,
   pathname,
   collapsed,
+  counts,
   onNavigate,
 }: Readonly<{
   sections: { group: string; items: NavItem[] }[];
   pathname: string;
   collapsed: boolean;
+  counts: NavCounts | null;
   onNavigate: () => void;
 }>) {
   return (
@@ -404,6 +475,7 @@ function SidebarNav({
                 item={item}
                 active={isActive(pathname, item.href)}
                 collapsed={collapsed}
+                count={item.counter && counts ? counts[item.counter] : undefined}
                 onNavigate={onNavigate}
               />
             ))}
@@ -455,6 +527,7 @@ function Sidebar({
   pathname,
   collapsed,
   onToggle,
+  counts,
   onNavigate,
 }: Readonly<{
   me: Me;
@@ -462,6 +535,7 @@ function Sidebar({
   setEntity: (code: string) => void;
   pathname: string;
   collapsed: boolean;
+  counts: NavCounts | null;
   onToggle?: () => void;
   onNavigate: () => void;
 }>) {
@@ -478,6 +552,7 @@ function Sidebar({
         sections={visibleNav(me.roles)}
         pathname={pathname}
         collapsed={collapsed}
+        counts={counts}
         onNavigate={onNavigate}
       />
       <SidebarFooter me={me} collapsed={collapsed} />
@@ -540,6 +615,14 @@ export function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
   }, [drawerOpen]);
 
   const sections = me ? visibleNav(me.roles) : [];
+
+  /*
+    Reloaded on every navigation as well as on an entity switch, because a
+    badge that is stale after you clear the queue it counted is worse than no
+    badge. A refusal leaves the counts absent rather than showing zero, since
+    zero is a claim that there is no work.
+  */
+  const counts = useApi<NavCounts>("/workspace/counts", [entity, pathname]);
 
   React.useEffect(() => {
     if (me && sections.length === 0) router.replace("/portal");
@@ -617,6 +700,7 @@ export function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
             setEntity={switchEntity}
             pathname={pathname}
             collapsed={collapsed}
+            counts={counts.data ?? null}
             onToggle={toggleSidebar}
             onNavigate={() => undefined}
           />
@@ -638,6 +722,7 @@ export function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
               setEntity={switchEntity}
               pathname={pathname}
               collapsed={false}
+              counts={counts.data ?? null}
               onNavigate={() => setDrawerOpen(false)}
             />
           </div>
@@ -646,7 +731,7 @@ export function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between gap-3 border-b bg-card px-4 sm:px-6">
-          <div className="flex min-w-0 items-center gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
             <Button
               variant="ghost"
               size="sm"
@@ -659,19 +744,22 @@ export function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
                 &#9776;
               </span>
             </Button>
-            <div className="min-w-0 truncate text-sm">
+            <div className="min-w-0 shrink-0 truncate text-sm">
               <span className="font-semibold text-heading">{entity}</span>
-              <span className="hidden text-muted-foreground sm:inline"> workspace</span>
-              <span className="mx-2 hidden text-border sm:inline">/</span>
-              <span className="hidden text-muted-foreground sm:inline">
+              <span className="mx-2 hidden text-border lg:inline">/</span>
+              <span className="hidden text-muted-foreground lg:inline">
                 {currentLabel(pathname)}
               </span>
+            </div>
+            <div className="hidden min-w-0 flex-1 md:block">
+              <Search entity={entity} />
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             <span className="hidden rounded-md border bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground md:inline">
               {primaryRole(me.roles)}
             </span>
+            <Notifications entity={entity} />
             <ThemeToggle />
             <Button
               size="sm"

@@ -43,6 +43,7 @@ from app.schemas.matters import (
     MatterOut,
     MatterUpdate,
     ReassignRequest,
+    RequestRename,
     RestrictRequest,
     SlaOut,
     TierOverride,
@@ -154,6 +155,55 @@ def triage_queue(
             }
         )
     return queue
+
+
+@router.patch("/triage/{request_id}")
+def rename_request(
+    request_id: uuid.UUID, payload: RequestRename, db: Db, principal: CurrentUser
+) -> TriageProposal:
+    """Correct the subject a request arrived under, before it becomes a matter.
+
+    Requesters describe their own problem, and the description is often the
+    counterparty's name or a sentence of context rather than the piece of work.
+    Triage is where that is put right, because the subject becomes the matter
+    title at acceptance and everything downstream reads it.
+
+    Only while it is still a request. Once accepted, the matter carries the
+    name and is renamed there, so the two cannot drift apart.
+    """
+    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    record = db.get(RequestRecord, request_id)
+    if record is None:
+        raise NotFound(REQUEST_NOT_FOUND)
+
+    if record.status not in (MatterState.SUBMITTED.value, MatterState.IN_TRIAGE.value):
+        raise Conflict(
+            f"{record.reference} has already left triage. Rename the matter it became, "
+            "so the request and the matter cannot disagree about what this is."
+        )
+
+    subject = payload.subject.strip()
+    if not subject:
+        raise ValidationFailed(
+            "A request needs a subject.",
+            {"subject": "Give it something a colleague could recognise it by."},
+        )
+
+    before = record.subject
+    record.subject = subject
+
+    audit.record(
+        db,
+        action="request_renamed",
+        object_type="request",
+        object_id=record.reference,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=record.entity,
+        before_state={"subject": before},
+        after_state={"subject": subject, "reason": payload.reason},
+    )
+    return triage_detail(request_id, db, principal)
 
 
 @router.get("/triage/{request_id}")
@@ -391,6 +441,17 @@ def accept_request(
         owner = db.get(User, owner_id)
         if owner:
             owner.workload += 1
+        notifications.raise_in_app(
+            db,
+            recipient_id=owner_id,
+            entity=matter.entity,
+            kind="matter_assigned",
+            title=f"{matter.number} assigned to you",
+            body=f"{matter.title}. {matter.next_action}.",
+            href=f"/workspace/matters/{matter.id}",
+            reference=matter.number,
+            matter_id=matter.id,
+        )
 
     audit.record(
         db,
@@ -618,13 +679,41 @@ def update_matter(
         raise NotFound(MATTER_NOT_FOUND)
 
     before = {
+        "title": matter.title,
         "priority": matter.priority,
         "next_action": matter.next_action,
         "due_date": matter.due_date,
         "blocker": matter.blocker,
     }
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    if "title" in changes:
+        title = (changes["title"] or "").strip()
+        if not title:
+            raise ValidationFailed(
+                "A matter needs a name.",
+                {"title": "Give it something a colleague could recognise it by."},
+            )
+        changes["title"] = title
+
+    for field, value in changes.items():
         setattr(matter, field, value)
+
+    # A rename is recorded as a rename. The matter number does not change, so
+    # the audit trail and every document reference still resolve, but somebody
+    # reading the history later needs to see that the name they are looking for
+    # used to be something else.
+    if "title" in changes and changes["title"] != before["title"]:
+        audit.record(
+            db,
+            action="matter_renamed",
+            object_type="matter",
+            object_id=matter.number,
+            actor_id=principal.user_id,
+            actor_label=principal.name,
+            entity=matter.entity,
+            before_state={"title": before["title"]},
+            after_state={"title": matter.title},
+        )
 
     audit.record(
         db,
@@ -635,7 +724,7 @@ def update_matter(
         actor_label=principal.name,
         entity=matter.entity,
         before_state=before,
-        after_state=payload.model_dump(exclude_unset=True),
+        after_state=changes,
     )
     return get_matter(matter_id, db, principal)
 
@@ -873,6 +962,24 @@ def reassign(
                 f"Reason: {payload.reason}"
             ),
             record_reference=matter.number,
+            matter_id=matter.id,
+        )
+        # In-app as well as out. Work landing on somebody's desk should be
+        # visible when they open the platform, not only if the mail connector
+        # is configured and cleared to carry it.
+        notifications.raise_in_app(
+            db,
+            recipient_id=user.id,
+            entity=matter.entity,
+            kind="matter_assigned" if user is incoming else "matter_reassigned",
+            title=(
+                f"{matter.number} is now yours"
+                if user is incoming
+                else f"{matter.number} moved to {incoming.name}"
+            ),
+            body=payload.reason,
+            href=f"/workspace/matters/{matter.id}",
+            reference=matter.number,
             matter_id=matter.id,
         )
 

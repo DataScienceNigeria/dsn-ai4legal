@@ -45,6 +45,11 @@ class MfaConfirm(BaseModel):
 
 
 class MfaStatus(BaseModel):
+    #: Whether the module is in force at all. Off is off: an account that
+    #: enrolled while it was on is not asked for a code, and no account can
+    #: enrol while it is off. Without this the interface would keep offering
+    #: enrolment for a factor nothing will ever check.
+    enabled: bool
     enrolled: bool
     required: bool
     recovery_codes_remaining: int
@@ -79,16 +84,31 @@ def _consume_recovery_code(user: User, code: str) -> bool:
     return True
 
 
+def _refuse_when_disabled() -> None:
+    """One switch, one meaning.
+
+    ``DSNLAI_MFA_ENABLED=false`` turns the module off everywhere, whether or
+    not an account already holds a secret. Enrolment is refused as well as
+    verification, because a factor enrolled while nothing will check it is
+    worse than none: it looks like protection, and it is the state that locked
+    the only administrator out of this platform once already.
+    """
+    if not mfa.enabled():
+        raise Conflict(
+            "The second factor module is switched off on this deployment. "
+            "Nothing will ask for a code, so there is nothing to enrol."
+        )
+
+
 def _check_second_factor(
     db, user: User, code: str | None, request: Request
 ) -> bool:
-    """Returns whether a second factor was actually presented and accepted."""
-    """Enforce the factor where the account has one, and demand enrolment
-    where the role requires one and the account does not.
+    """Whether a second factor was actually presented and accepted.
 
-    Refusing to sign someone in until they enrol is deliberate. A role that can
-    publish house position or issue a signature request should not be reachable
-    with a password alone.
+    Enforce the factor where the account has one. Signing in is never gated on
+    it, because someone who cannot yet enrol still has reading to do; the
+    privileged act is what the factor protects, and ``require_step_up`` is
+    where that is enforced.
     """
     if not mfa.enabled():
         # Turned off wholesale. An account that enrolled while it was on is
@@ -230,10 +250,37 @@ def step_up(
     user = db.execute(
         select(User).where(User.id == uuid.UUID(principal.user_id))
     ).scalar_one_or_none()
-    if user is None or not user.password_hash or not verify_password(
-        payload.password, user.password_hash
-    ):
-        raise Unauthenticated("Re-authentication failed.")
+
+    # Three different failures, and answering all of them with one sentence is
+    # how a stale session came to look like a mistyped password. Each says what
+    # the person can actually do about it.
+    if user is None or not user.active:
+        raise Unauthenticated(
+            "This session belongs to an account that is no longer active. "
+            "Sign in again."
+        )
+    if not user.password_hash:
+        raise Unauthenticated(
+            "This account signs in through the directory and has no password here, "
+            "so it cannot re-authenticate this way."
+        )
+    if not verify_password(payload.password, user.password_hash):
+        # Recorded. A failed re-authentication in front of a privileged act is
+        # precisely the event an audit trail exists to hold, and until now the
+        # refusal returned before anything was written.
+        audit.record(
+            db,
+            action="step_up_failed",
+            object_type="app_user",
+            object_id=str(user.id),
+            actor_id=user.id,
+            actor_label=user.name,
+            session_id=principal.session_id,
+            ip_address=client_ip(request),
+            result="failure",
+            detail="The password did not match.",
+        )
+        raise Unauthenticated("That password was not accepted.")
 
     # Step-up is the moment the factor matters most, so it is demanded here
     # even where sign-in let it pass.
@@ -273,7 +320,12 @@ def mfa_status(principal: CurrentUser, db: AnonDb) -> MfaStatus:
     if user is None:
         raise Unauthenticated("That account was not found.")
     return MfaStatus(
-        enrolled=user.mfa_enrolled,
+        enabled=mfa.enabled(),
+        # An enrolment that survives the module being switched off is reported
+        # as what it is: a stored secret nothing consults. Saying "enrolled"
+        # while no code is ever demanded would be a claim about protection
+        # that is not there.
+        enrolled=user.mfa_enrolled and mfa.enabled(),
         required=mfa.is_required_for(list(user.roles or [])),
         recovery_codes_remaining=len(user.mfa_recovery_codes or []),
     )
@@ -293,6 +345,7 @@ def enrol_mfa(
     ).scalar_one_or_none()
     if user is None:
         raise Unauthenticated("That account was not found.")
+    _refuse_when_disabled()
     if user.mfa_enrolled:
         raise Conflict(
             "A second factor is already enrolled. Remove it before enrolling another."
@@ -360,6 +413,7 @@ def confirm_mfa(
     payload: MfaConfirm, principal: CurrentUser, db: AnonDb, request: Request
 ) -> MfaStatus:
     """Prove the authenticator holds the secret, and the factor goes live."""
+    _refuse_when_disabled()
     user = db.execute(
         select(User).where(User.id == uuid.UUID(principal.user_id))
     ).scalar_one_or_none()
@@ -392,6 +446,7 @@ def confirm_mfa(
         ip_address=client_ip(request),
     )
     return MfaStatus(
+        enabled=mfa.enabled(),
         enrolled=True,
         required=mfa.is_required_for(list(user.roles or [])),
         recovery_codes_remaining=len(user.mfa_recovery_codes or []),

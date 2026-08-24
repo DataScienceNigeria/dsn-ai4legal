@@ -57,6 +57,24 @@ def _resolve_approver(db, entity: str):
     return resolve
 
 
+def _refuse_counterparty_paper(document: Document, act: str, instead: str) -> None:
+    """Their paper is evidence, not our position.
+
+    Nothing in it came from an approved clause, so approving or executing it
+    would bind the organisation to wording no clause owner ever cleared. The
+    review compares it; everything else refuses it.
+    """
+    if document.document_type == DocumentType.COUNTERPARTY.value:
+        raise Refused(
+            f"Counterparty paper cannot be {act}.",
+            [
+                f"{document.name} is their draft, held for comparison against the "
+                f"playbook. Generate our own document from an approved template and "
+                f"{instead}."
+            ],
+        )
+
+
 @router.post("/matters/{matter_id}/approvals", status_code=201)
 def open_approvals(
     matter_id: uuid.UUID,
@@ -71,6 +89,7 @@ def open_approvals(
     document = db.get(Document, payload.document_id)
     if matter is None or document is None:
         raise NotFound("That matter or document was not found.")
+    _refuse_counterparty_paper(document, "routed for approval", "route that instead")
 
     existing = list(
         db.execute(
@@ -130,6 +149,20 @@ def open_approvals(
                     "Action requires authenticated single sign-on."
                 ),
                 record_reference=matter.number,
+                matter_id=matter.id,
+            )
+            notifications.raise_in_app(
+                db,
+                recipient_id=approver.id,
+                entity=matter.entity,
+                kind="approval_waiting",
+                title=f"{approval.step_name} on {matter.number}",
+                body=(
+                    f"Bound to {document.content_hash[:12]}. "
+                    f"{document.novel_clause_count} novel clauses."
+                ),
+                href=f"/workspace/matters/{matter.id}",
+                reference=matter.number,
                 matter_id=matter.id,
             )
 
@@ -219,6 +252,37 @@ def decide(
     elif matter and service.fully_approved(siblings, approval.document_hash):
         matter.next_action = "Ready for signature"
 
+    if matter:
+        # The lawyer who owns the matter is told what happened to it, and the
+        # next approver is told it has reached them. A chain that advances in
+        # silence is one somebody has to remember to check.
+        notifications.raise_in_app(
+            db,
+            recipient_id=matter.responsible_lawyer_id,
+            entity=matter.entity,
+            kind="approval_decided",
+            title=f"{approval.step_name} {payload.decision} on {matter.number}",
+            body=payload.comments or matter.next_action,
+            href=f"/workspace/matters/{matter.id}",
+            reference=matter.number,
+            matter_id=matter.id,
+        )
+        if payload.decision == ApprovalDecision.APPROVED.value:
+            for following in service.current_step(siblings):
+                if following.id == approval.id or following.approver_id is None:
+                    continue
+                notifications.raise_in_app(
+                    db,
+                    recipient_id=following.approver_id,
+                    entity=matter.entity,
+                    kind="approval_waiting",
+                    title=f"{following.step_name} on {matter.number}",
+                    body=f"{approval.step_name} has approved. This step is now yours.",
+                    href=f"/workspace/matters/{matter.id}",
+                    reference=matter.number,
+                    matter_id=matter.id,
+                )
+
     audit.record(
         db,
         action="approval_decided",
@@ -247,6 +311,7 @@ def request_signature(
     document = db.get(Document, payload.document_id)
     if document is None:
         raise NotFound("That document was not found.")
+    _refuse_counterparty_paper(document, "sent for signature", "send that instead")
 
     approvals = list(
         db.execute(
@@ -496,6 +561,7 @@ def wet_ink(
     document = db.get(Document, payload.document_id)
     if matter is None or document is None:
         raise NotFound("That matter or document was not found.")
+    _refuse_counterparty_paper(document, "recorded as executed", "record that instead")
     if not payload.signatories:
         raise Refused(
             "This execution cannot be recorded.",
