@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import * as React from "react";
 
 import { LinkCounterparty, MatterActions } from "@/components/app/matter-actions";
+import { Rename } from "@/components/app/rename";
 import { RequestPanel } from "@/components/app/request-panel";
 import { useRoles } from "@/components/app/session";
 import { DecisionPill, SlaPill, StatusPill, TierPill } from "@/components/app/status";
@@ -17,6 +18,7 @@ import {
   DataState,
   Empty,
   Field,
+  KeyValue,
   Modal,
   Mono,
   Notice,
@@ -27,6 +29,8 @@ import {
   Row,
   Select,
   Spinner,
+  type Stage,
+  Stepper,
   Tabs,
   Textarea,
   Timeline,
@@ -34,7 +38,13 @@ import {
 } from "@/components/ui";
 import { api, query } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
-import type { AiInteraction, Approval, DocumentRecord, Matter, RequestDetail } from "@/lib/types";
+import type {
+  AiInteraction,
+  Approval,
+  DocumentRecord,
+  Matter,
+  RequestDetail,
+} from "@/lib/types";
 import { formatDate, formatDateTime, formatMoney, titleCase } from "@/lib/utils";
 
 /*
@@ -45,40 +55,233 @@ import { formatDate, formatDateTime, formatMoney, titleCase } from "@/lib/utils"
   means nothing without the document it was taken against, but it sits under
   the step rather than beside it.
 */
-function approvalStep(approval: Approval, onDone: () => void): TimelineStep {
-  const invalidated = Boolean(approval.invalidated_by_event);
-  let state: TimelineStep["state"] = "pending";
-  if (invalidated || approval.decision === "rejected") state = "failed";
-  else if (approval.decision === "approved") state = "done";
-  else if (approval.actionable) state = "current";
+/*
+  The journey, not the state column.
 
-  const decided = approval.invalidated_by_event ?? formatDateTime(approval.decided_at);
+  The first attempt listed the raw states a matter can hold, so a matter whose
+  status was "amended" showed Amended as step two of seven, between Accepted
+  and In review, which is not a thing that happens. Worse, it answered "where
+  are we" from one field when the answer is spread across the record: whether a
+  document exists, whether a chain is open, whether anything has been signed.
 
-  return {
-    id: approval.id,
-    state,
-    title: approval.step_name,
-    meta: state === "current" ? "Now" : decided || formatDateTime(approval.due_at) || null,
-    detail: (
-      <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-        <DecisionPill decision={approval.decision} />
-        <span>
-          {titleCase(approval.approver_role ?? "assigned")}, {approval.step_mode}
-        </span>
-        <span className="text-border">/</span>
-        <span>
-          bound to <Mono>{approval.document_hash.slice(0, 12)}</Mono>
-        </span>
-        {approval.due_at && !approval.decided_at ? (
-          <>
-            <span className="text-border">/</span>
-            <span>due {formatDateTime(approval.due_at)}</span>
-          </>
-        ) : null}
-      </span>
-    ),
-    action: <ApprovalDecision approval={approval} onDone={onDone} />,
+  So each stage is derived from what is actually there. That also makes the
+  track honest about work done outside the expected order, which is most work:
+  a matter whose counterparty paper arrived before we drafted anything is past
+  the document stage, whatever its status field says.
+*/
+type Progress = {
+  documents: DocumentRecord[];
+  approvals: Approval[];
+  signatures: SignatureRow[];
+};
+
+function lifecycle(matter: Matter, at: Progress, act: (id: string) => void): Stage[] {
+  const ours = at.documents.filter((d) => d.document_type !== "counterparty");
+  const paper = at.documents.filter((d) => d.document_type === "counterparty");
+  const executed = at.documents.some((d) => d.immutable);
+  const openChain = at.approvals.filter((a) => !a.invalidated_by_event);
+  const approved = openChain.length > 0 && openChain.every((a) => a.decision === "approved");
+  const signed = at.signatures.some((r) => r.status === "completed");
+  const sent = at.signatures.some((r) => r.status === "sent");
+  const waitingOn = openChain.find((a) => a.actionable);
+
+  /*
+    Each stage says only whether it is finished. Which one is in hand follows
+    from that: the first unfinished one, always, and never more than one.
+
+    The first version had each stage decide for itself whether it was current,
+    and a stage that was neither finished nor able to name a reason to call
+    itself current came out "pending". So a matter with both approvals in and
+    nothing sent had no current stage at all: approval was done, signature was
+    pending because nothing had been sent, and the track went quiet at exactly
+    the point somebody needed the button.
+  */
+  const stages: (Omit<Stage, "state"> & { done: boolean })[] = [
+    {
+      id: "created",
+      label: "Matter opened",
+      done: true,
+      detail: `${matter.number}, opened ${formatDate(matter.created_at ?? null)}.`,
+    },
+    {
+      id: "document",
+      label: "Drafting",
+      done: at.documents.length > 0,
+      detail: at.documents.length
+        ? `${ours.length} of ours, ${paper.length} of theirs.`
+        : "Nothing to work from yet. Assemble ours from a template, or add the draft they sent.",
+      action: (
+        <>
+          <Button variant="primary" onClick={() => act("generate")}>
+            Generate a document
+          </Button>
+          <Button onClick={() => act("paper")}>Add their paper</Button>
+        </>
+      ),
+    },
+    {
+      id: "approval",
+      label: "Approval",
+      done: approved,
+      detail: approved
+        ? "Both parties confirmed."
+        : waitingOn
+          ? `Waiting on ${waitingOn.approver_name ?? waitingOn.step_name}.`
+          : openChain.length
+            ? "A chain is open."
+            : "Nobody has been asked. Routing binds every approval to one document hash.",
+      action: openChain.length ? (
+        <Button variant="primary" onClick={() => act("open-approvals")}>
+          Open the approvals
+        </Button>
+      ) : (
+        <Button
+          variant="primary"
+          disabled={ours.length === 0}
+          onClick={() => act("approval")}
+        >
+          Route for approval
+        </Button>
+      ),
+    },
+    {
+      id: "signature",
+      label: "Signature",
+      done: signed,
+      detail: signed
+        ? "Executed by every party."
+        : sent
+          ? "Out for signature. Execution is recorded when the provider reports it back."
+          : approved
+            ? "Both approvals are in, so this document can be sent."
+            : "Only an approved hash can be sent, so approval comes first.",
+      action: (
+        <>
+          <Button variant="primary" disabled={!approved} onClick={() => act("signature")}>
+            {sent ? "Send another request" : "Request a signature"}
+          </Button>
+          <Button disabled={!approved} onClick={() => act("wetink")}>
+            Signed on paper
+          </Button>
+        </>
+      ),
+    },
+    {
+      id: "executed",
+      label: "Executed",
+      done: executed,
+      detail: executed
+        ? "The executed copy is write-once and archived."
+        : "Recorded when the last signature lands.",
+    },
+    {
+      id: "live",
+      label: "Live",
+      done: matter.status === "active",
+      detail:
+        matter.status === "active"
+          ? "In force. Obligations are tracked from the executed contract."
+          : "The agreement runs, and its obligations become tracked tasks.",
+    },
+  ];
+
+  const here = stages.findIndex((stage) => !stage.done);
+  return stages.map(({ done, ...stage }, index) => ({
+    ...stage,
+    state: done ? "done" : index === here ? "current" : "pending",
+  }));
+}
+
+/*
+  One party's decision, as a card. What the reader wants to know is whose desk
+  it is on, what they are being asked, and whether they have answered, and the
+  timeline row said none of those: it led with a step name and a role.
+
+  The two steps ask genuinely different questions. The business knows whether
+  the draft is the arrangement they agreed; Legal knows whether the wording is
+  safe to sign. Saying which is which is most of what this card is for.
+*/
+const ASKS: Record<string, { who: string; question: string }> = {
+  requester: {
+    who: "The business",
+    question: "Is this the arrangement we asked for?",
+  },
+  head_of_legal: {
+    who: "Head of Legal",
+    question: "Is this safe to sign?",
+  },
+};
+
+function ApprovalCard({
+  approval,
+  onDone,
+}: Readonly<{ approval: Approval; onDone: () => void }>) {
+  const asked = ASKS[approval.approver_role ?? ""] ?? {
+    who: titleCase(approval.approver_role ?? "Assigned"),
+    question: approval.step_name,
   };
+
+  const invalidated = Boolean(approval.invalidated_by_event);
+  const decided = approval.decision === "approved" || approval.decision === "rejected";
+  const askedForChanges = Boolean(approval.comments) && !decided && !invalidated;
+
+  const tone = invalidated
+    ? "bad"
+    : approval.decision === "approved"
+      ? "good"
+      : approval.decision === "rejected"
+        ? "bad"
+        : askedForChanges
+          ? "warn"
+          : approval.actionable
+            ? "info"
+            : "neutral";
+
+  const state = invalidated
+    ? "Invalidated"
+    : approval.decision === "approved"
+      ? "Confirmed"
+      : approval.decision === "rejected"
+        ? "Rejected"
+        : askedForChanges
+          ? "Changes asked for"
+          : approval.actionable
+            ? "Waiting on them"
+            : "Not yet asked";
+
+  return (
+    <Card className={approval.actionable && !decided ? "border-brand" : undefined}>
+      <CardHeader
+        title={asked.who}
+        subtitle={approval.approver_name ?? "Nobody holds this role in this entity"}
+        actions={<Pill tone={tone}>{state}</Pill>}
+      />
+      <CardBody className="space-y-3">
+        <p className="text-sm leading-relaxed text-muted-foreground">{asked.question}</p>
+
+        {approval.comments ? (
+          <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm leading-relaxed">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              {decided ? "They said" : "They asked for"}
+            </div>
+            <p className="mt-1">{approval.comments}</p>
+          </div>
+        ) : null}
+
+        <div className="text-xs text-muted-foreground">
+          {invalidated
+            ? approval.invalidated_by_event
+            : decided
+              ? `${approval.decision === "approved" ? "Confirmed" : "Rejected"} ${formatDateTime(approval.decided_at)}`
+              : approval.due_at
+                ? `Expected by ${formatDateTime(approval.due_at)}`
+                : "No date set"}
+        </div>
+
+        <ApprovalDecision approval={approval} onDone={onDone} />
+      </CardBody>
+    </Card>
+  );
 }
 
 function signatureTone(status: string): "good" | "bad" | "warn" {
@@ -356,6 +559,23 @@ export default function MatterDetail() {
   const matter = useApi<Matter>(`/matters/${matterId}`);
   const documents = useApi<DocumentRecord[]>(`/matters/${matterId}/documents`);
   const approvals = useApi<Approval[]>(`/matters/${matterId}/approvals`);
+  /*
+    The track reads the record rather than the status field, so it needs to
+    know whether anything has been sent for signature.
+  */
+  const signatures = useApi<SignatureRow[]>(`/matters/${matterId}/signature-requests`);
+  /*
+    What the track asked for. Most are dialogs the actions component owns; one,
+    opening the approvals, is a tab on this page, so it is handled here and
+    never reaches the dialogs.
+  */
+  const [act, setAct] = React.useState("");
+
+  React.useEffect(() => {
+    if (act !== "open-approvals") return;
+    setTab("approvals");
+    setAct("");
+  }, [act]);
   const decisions = useApi<DecisionRow[]>(`/matters/${matterId}/decisions`);
   const trace = useApi<AiInteraction[]>(`/ai/interactions?matter_id=${matterId}`);
   const request = useApi<RequestDetail | null>(`/matters/${matterId}/request`);
@@ -367,10 +587,18 @@ export default function MatterDetail() {
     matter.reload();
     documents.reload();
     approvals.reload();
+    signatures.reload();
     decisions.reload();
     trace.reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /*
+    Everything permitted that the track above does not already offer: a hold,
+    an escalation, a reversal. Forward moves belong on the track, and listing
+    them twice invites the reader to wonder whether the two do the same thing.
+  */
+  const detours = matter.data?.permitted_transitions ?? [];
 
   const transition = useAction(async () => {
     await api(`/matters/${matterId}/transitions`, {
@@ -392,7 +620,19 @@ export default function MatterDetail() {
   return (
     <div className="space-y-6">
       <PageTitle
-        title={data.title}
+        title={
+          <span className="inline-flex flex-wrap items-center gap-1.5">
+            {data.title}
+            <Rename
+              inline
+              path={`/matters/${matterId}`}
+              field="title"
+              label="matter"
+              current={data.title}
+              onDone={reloadAll}
+            />
+          </span>
+        }
         subtitle={
           <span className="flex flex-wrap items-center gap-2">
             <Mono>{data.number}</Mono>
@@ -408,19 +648,42 @@ export default function MatterDetail() {
             matter={data}
             documents={documents.data ?? []}
             attachments={request.data?.attachments ?? []}
+            requested={act}
+            onRequestHandled={() => setAct("")}
             onChanged={reloadAll}
           />
         }
       />
 
-      {request.data ? (
-        <RequestPanel
-          request={request.data}
-          facts={false}
-          title="What was asked for"
-          subtitle={`Raised as ${request.data.request_type}. This is the request the matter came from, in the requester's own words.`}
-        />
-      ) : null}
+      {/*
+        Where the matter is, and the moves it can make from here. This was a
+        status pill and a dropdown of state names, and neither said what came
+        next or what had already happened.
+      */}
+      <Stepper
+        stages={lifecycle(
+          data,
+          {
+            documents: documents.data ?? [],
+            approvals: approvals.data ?? [],
+            signatures: signatures.data ?? [],
+          },
+          setAct,
+        )}
+        note={
+          data.next_action ? (
+            <span>
+              Next: <span className="text-foreground">{data.next_action}</span>
+              {data.blocker ? (
+                <span className="text-warning-foreground dark:text-warning">
+                  {" "}
+                  Blocked: {data.blocker}
+                </span>
+              ) : null}
+            </span>
+          ) : null
+        }
+      />
 
       <Tabs
         tabs={[
@@ -435,99 +698,151 @@ export default function MatterDetail() {
         onChange={setTab}
       />
 
-      {tab === "overview" ? (
-        <div className="grid gap-4 lg:gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-          <div className="space-y-4">
-            <Card>
-              <CardHeader title="Why this tier" subtitle="Derived by rule, recorded on the matter" />
-              <CardBody>
-                <ul className="space-y-1.5 text-sm">
-                  {(data.tier_rationale ?? []).map((line) => (
-                    <li key={line} className="flex gap-2 leading-relaxed">
-                      <span aria-hidden className="text-muted-foreground">&bull;</span>
-                      <span>{line}</span>
-                    </li>
-                  ))}
-                </ul>
-                {data.tier_overridden ? (
-                  <Notice tone="warn" title="Tier overridden">
-                    {data.tier_override_reason}
-                  </Notice>
-                ) : null}
-              </CardBody>
-            </Card>
+      {/*
+        One column of what was asked for, one of what the record now says.
+        This was four boxes: the request, a card holding a single sentence of
+        tier rationale, a form duplicating the moves the spine above already
+        offers, and the record. Four headings for one subject, and the reader
+        had to assemble the matter from them.
 
+        The forward moves live in the spine. What is left here is the moves
+        that are not forward, a hold, an escalation, a reversal, and those
+        carry a reason, so they are a deliberate control rather than a
+        dropdown of every state name the machine will accept.
+      */}
+      {tab === "overview" ? (
+        <div className="grid gap-4 lg:gap-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+          {request.data ? (
+            <RequestPanel
+              request={request.data}
+              facts={false}
+              title="What was asked for"
+              subtitle="The request this matter came from, in the requester's own words."
+            />
+          ) : (
             <Card>
-              <CardHeader
-                title="Move this matter"
-                subtitle="The state model decides what is reachable from here"
-              />
-              <CardBody className="space-y-3">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Next state">
-                    <Select value={target} onChange={(event) => setTarget(event.target.value)}>
-                      <option value="">Choose a state</option>
-                      {(data.permitted_transitions ?? []).map((state) => (
-                        <option key={state} value={state}>
-                          {titleCase(state)}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                  <Field
-                    label="Reason"
-                    hint="Required for a reversal or a hold, recorded either way."
-                  >
-                    <Textarea
-                      value={reason}
-                      onChange={(event) => setReason(event.target.value)}
-                      className="min-h-[34px]"
-                    />
-                  </Field>
-                </div>
-                {transition.error ? (
-                  <Refusal title="That transition was refused" reason={transition.error.message} />
-                ) : null}
-                <Button
-                  variant="primary"
-                  disabled={!target || transition.busy}
-                  onClick={() => void transition.run()}
-                >
-                  Record the transition
-                </Button>
+              <CardHeader title="What was asked for" />
+              <CardBody>
+                <Empty
+                  title="No request is linked to this matter"
+                  detail="It was raised inside Legal rather than through the portal."
+                />
               </CardBody>
             </Card>
-          </div>
+          )}
 
           <Card>
             <CardHeader
-              title="Record"
+              title="This matter"
+              subtitle="What the record holds, and what a document is assembled from"
               actions={<LinkCounterparty matter={data} onDone={reloadAll} />}
             />
-            <CardBody className="space-y-2.5 text-sm">
-              {(
-                [
+            <CardBody className="space-y-4">
+              <KeyValue
+                rows={
                   [
-                    "Counterparty",
-                    data.counterparty?.legal_name ?? "Not linked to a counterparty yet",
-                  ],
-                  ["Practice", data.practice_code],
-                  ["Classification", titleCase(data.classification ?? "confidential")],
-                  ["Value", formatMoney(data.value_amount ?? null, data.value_currency)],
-                  ["Days open", String(data.days_open)],
-                  ["Next action", data.next_action ?? "None recorded"],
-                  ["Blocker", data.blocker ?? "None"],
-                ] as const
-              ).map(([label, value]) => (
-                <div key={label} className="flex justify-between gap-3">
-                  <span className="text-muted-foreground">{label}</span>
-                  <span className="text-right font-medium">{value}</span>
+                    [
+                      "Counterparty",
+                      data.counterparty?.legal_name ?? "Not linked yet",
+                    ],
+                    ["Value", formatMoney(data.value_amount ?? null, data.value_currency)],
+                    ["Classification", titleCase(data.classification ?? "confidential")],
+                    ["Practice", data.practice_code],
+                    [
+                      "Open",
+                      `${data.days_open} days, since ${formatDate(data.created_at ?? null)}`,
+                    ],
+                    ...(data.blocker ? [["Blocked by", data.blocker] as const] : []),
+                  ] as [string, React.ReactNode][]
+                }
+              />
+
+              {/*
+                The tier and why it is the tier, together. A rule that produced
+                a decision and the decision it produced are one fact, and they
+                were a heading apart.
+              */}
+              <div className="border-t pt-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-sm text-muted-foreground">Risk tier</span>
+                  <TierPill tier={data.risk_tier} />
                 </div>
-              ))}
+                <ul className="mt-1.5 space-y-1 text-xs leading-relaxed text-muted-foreground">
+                  {(data.tier_rationale ?? ["No rationale was recorded."]).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+                {data.tier_overridden ? (
+                  <Notice tone="warn" title="Overridden by hand">
+                    {data.tier_override_reason}
+                  </Notice>
+                ) : null}
+              </div>
+
+              {detours.length ? (
+                <div className="border-t pt-3">
+                  <div className="text-sm text-muted-foreground">Other moves</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {detours.map((state) => (
+                      <Button key={state} size="sm" onClick={() => setTarget(state)}>
+                        {titleCase(state)}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    Forward moves are on the track above. These are the ones that are not
+                    forward, and each is recorded with the reason given.
+                  </p>
+                </div>
+              ) : null}
             </CardBody>
           </Card>
         </div>
       ) : null}
+
+      <Modal
+        open={Boolean(target)}
+        title={`Move to ${titleCase(target || "")}`}
+        subtitle="Recorded as a transition against this matter, with the reason and who made it."
+        width="sm"
+        onClose={() => {
+          setTarget("");
+          setReason("");
+        }}
+        footer={
+          <>
+            <Button
+              onClick={() => {
+                setTarget("");
+                setReason("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              disabled={transition.busy}
+              onClick={() => void transition.run()}
+            >
+              {transition.busy ? "Recording" : "Record the move"}
+            </Button>
+          </>
+        }
+      >
+        <Field
+          label="Reason"
+          hint="Required for a reversal or a hold, and recorded either way."
+        >
+          <Textarea value={reason} onChange={(event) => setReason(event.target.value)} />
+        </Field>
+        {transition.error ? (
+          <Refusal
+            title="That move was refused"
+            reason={transition.error.message}
+            reasons={transition.error.reasons}
+          />
+        ) : null}
+      </Modal>
 
       {tab === "documents" ? (
         <Card>
@@ -575,39 +890,62 @@ export default function MatterDetail() {
         </Card>
       ) : null}
 
+      {/*
+        Two parties, two cards. It was a ring and a vertical timeline, which is
+        the right shape for a chain of four or five and overkill for two: the
+        ring said "1 of 2" where the cards say which one, and the timeline
+        spent a column on the bound hash that is the same on every row.
+
+        The hash sits once at the top, where it belongs. It is a property of
+        the document both parties are deciding about, not of either decision.
+      */}
       {tab === "approvals" ? (
-        <Card>
-          <CardHeader
-            title="Approval chain"
-            subtitle="Approval binds to an exact document hash. Any edit invalidates it."
-          />
-          {approvals.data?.length ? (
-            <CardBody className="border-b">
-              <Ring
-                done={approvals.data.filter((a) => a.decision === "approved").length}
-                total={approvals.data.length}
-                label="steps approved"
-                detail={
-                  approvals.data.find((a) => a.actionable)?.step_name
-                    ? `Waiting on ${approvals.data.find((a) => a.actionable)?.step_name}.`
-                    : "Nothing is waiting on a decision."
-                }
+        approvals.loading ? (
+          <Spinner />
+        ) : !approvals.data?.length ? (
+          <Card>
+            <CardBody>
+              <Empty
+                title="Nobody has been asked yet"
+                detail="Route a document for approval and both parties are asked against the same version of it."
               />
             </CardBody>
-          ) : null}
-          <CardBody>
-            {approvals.loading ? (
-              <Spinner />
-            ) : !approvals.data?.length ? (
-              <Empty
-                title="No approval chain is open"
-                detail="Generate a document and route it for approval to open one."
-              />
-            ) : (
-              <Timeline steps={approvals.data.map((a) => approvalStep(a, reloadAll))} />
-            )}
-          </CardBody>
-        </Card>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {/*
+              Two cards, one row, and nothing above them. A summary card
+              restating the count the two cards already show is a third thing
+              to read before reading the two things.
+            */}
+            <div className="grid gap-4 lg:gap-5 md:grid-cols-2">
+              {approvals.data.map((approval) => (
+                <ApprovalCard key={approval.id} approval={approval} onDone={reloadAll} />
+              ))}
+            </div>
+
+            {/*
+              The hash belongs once, under both. It is a property of the
+              document they are both deciding about, not of either decision,
+              and it was a column on every row of the table this replaced.
+            */}
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              <span>
+                Both decide against{" "}
+                <Mono>{approvals.data[0].document_hash.slice(0, 16)}</Mono>
+              </span>
+              <span>Any edit to it invalidates every decision already given.</span>
+            </div>
+
+            {approvals.data[0].notes.length ? (
+              <ul className="space-y-1 text-xs leading-relaxed text-muted-foreground">
+                {approvals.data[0].notes.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        )
       ) : null}
 
       {tab === "signature" ? (

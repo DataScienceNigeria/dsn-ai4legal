@@ -63,12 +63,17 @@ services:
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
+      # By service name from inside the network. The .env value is the
+      # published port, which is what the host process needs and what a
+      # container would fail to resolve.
+      DOCUSEAL_BASE_URL: http://docuseal:3000/api
     ports:
       - "${DSNLAI_API_PORT:-8000}:8000"
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
       minio: {condition: service_healthy}
+      docuseal: {condition: service_started}
     command: >
       sh -c "alembic upgrade head && python -m app.seed --if-empty &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
@@ -83,6 +88,7 @@ services:
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
+      DOCUSEAL_BASE_URL: http://docuseal:3000/api
     depends_on:
       api: {condition: service_healthy}
     command: ["celery", "-A", "app.worker.celery_app", "worker", "--beat", "--loglevel=info"]
@@ -107,6 +113,48 @@ services:
       - "${DSNLAI_WEB_PORT:-3000}:3000"
     depends_on:
       api: {condition: service_healthy}
+
+  docuseal:
+    # Signature, run here rather than as somebody else's service.
+    #
+    # DocuSeal is AGPL-3.0 and self-hostable, and the hosted API was the wrong
+    # default for this platform twice over. An executed agreement is the most
+    # confidential record the organisation holds, and sending every draft to a
+    # third party to be signed is a data transfer nobody asked for and the
+    # entity separation cannot follow. It also broke the loop in development:
+    # completion arrives by webhook, and a hosted service cannot reach an API
+    # on localhost, so a document could be signed and the platform would never
+    # learn of it.
+    #
+    # On this network the two reach each other by name, which is what closes
+    # that loop.
+    image: docuseal/docuseal:latest
+    environment:
+      # Its own schema in the platform's database rather than the bundled
+      # SQLite file, so one backup covers the agreements and the signatures
+      # taken against them.
+      DATABASE_URL: >-
+        postgresql://${POSTGRES_USER:-dsnlai_owner}:${POSTGRES_PASSWORD:-dsnlai_owner_dev_password}@db:5432/${DOCUSEAL_DB:-docuseal}
+      SECRET_KEY_BASE: ${DOCUSEAL_SECRET_KEY_BASE:-change-me-in-every-environment}
+      # Where a signer's link points. It is opened by a person in a browser,
+      # not by a container, so it is the host address rather than the service
+      # name.
+      HOST: ${DOCUSEAL_HOST:-localhost:3100}
+      FORCE_SSL: "false"
+    ports:
+      # 3000 inside, because that is what the image serves. Not 3000 outside,
+      # because the workspace is already there.
+      - "${DSNLAI_DOCUSEAL_PORT:-3100}:3000"
+    volumes:
+      - docuseal_data:/data
+    depends_on:
+      db: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
 
   n8n:
     # Plumbing, not the platform. n8n polls approved mailboxes, fans out
@@ -140,4 +188,5 @@ volumes:
   db_data:
   redis_data:
   minio_data:
+  docuseal_data:
   n8n_data:

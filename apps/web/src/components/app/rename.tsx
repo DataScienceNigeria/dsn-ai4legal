@@ -28,6 +28,13 @@ export function Rename({
   label,
   current,
   askReason = false,
+  /*
+    "inline" puts a pencil beside the name itself rather than a labelled row in
+    an overflow menu. Renaming a thing belongs next to the thing: a menu entry
+    called Rename makes the reader look away from what they are renaming, and
+    it competed for a row with the acts that actually move the matter forward.
+  */
+  inline = false,
   onDone,
 }: Readonly<{
   path: string;
@@ -35,6 +42,7 @@ export function Rename({
   label: string;
   current: string;
   askReason?: boolean;
+  inline?: boolean;
   onDone: () => void;
 }>) {
   const [open, setOpen] = React.useState(false);
@@ -62,10 +70,22 @@ export function Rename({
 
   return (
     <>
-      <Button size="sm" onClick={() => setOpen(true)}>
-        <Icon name="rename" className="h-4 w-4" />
-        Rename
-      </Button>
+      {inline ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title={`Rename this ${label}`}
+          aria-label={`Rename this ${label}`}
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md align-middle text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Icon name="rename" className="h-4 w-4" />
+        </button>
+      ) : (
+        <Button size="sm" onClick={() => setOpen(true)}>
+          <Icon name="rename" className="h-4 w-4" />
+          Rename
+        </Button>
+      )}
 
       <Modal
         open={open}

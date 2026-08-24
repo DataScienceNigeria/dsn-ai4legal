@@ -139,15 +139,84 @@ def read_paragraphs(data: bytes) -> list[Paragraph]:
     except ElementTree.ParseError as exc:
         raise NotADocx("That Word file has a document body that could not be parsed.") from exc
 
+    body = root.find(f"{WORD_NS}body")
     paragraphs: list[Paragraph] = []
-    for index, node in enumerate(root.iter(f"{WORD_NS}p")):
-        text = "".join(run.text or "" for run in node.iter(f"{WORD_NS}t")).strip()
-        if not text:
+    counter = 0
+
+    for node in list(body if body is not None else root):
+        if node.tag == f"{WORD_NS}tbl":
+            for paragraph_node in _table_paragraphs(node):
+                built = _paragraph(paragraph_node, counter)
+                if built:
+                    paragraphs.append(built)
+                    counter += 1
             continue
-        style_node = node.find(f"{WORD_NS}pPr/{WORD_NS}pStyle")
-        style = style_node.get(f"{WORD_NS}val", "") if style_node is not None else ""
-        paragraphs.append(Paragraph(index=index, text=text, style=style, bold=_all_runs_bold(node)))
+        for paragraph_node in node.iter(f"{WORD_NS}p"):
+            built = _paragraph(paragraph_node, counter)
+            if built:
+                paragraphs.append(built)
+                counter += 1
+
     return paragraphs
+
+
+def _paragraph(node, index: int) -> Paragraph | None:
+    text = "".join(run.text or "" for run in node.iter(f"{WORD_NS}t")).strip()
+    if not text:
+        return None
+    style_node = node.find(f"{WORD_NS}pPr/{WORD_NS}pStyle")
+    style = style_node.get(f"{WORD_NS}val", "") if style_node is not None else ""
+    return Paragraph(index=index, text=text, style=style, bold=_all_runs_bold(node))
+
+
+def _looks_like_parallel_blocks(rows: list[list]) -> bool:
+    """Whether this table is two things side by side rather than a grid.
+
+    A signature block is a two-column table with a party heading at the top of
+    each column, and the two columns are two separate passages that happen to
+    be laid out beside each other. Read in document order it comes out
+    interleaved: both headings, then both first lines, then both second lines,
+    so one party's block swallows the other's contents and the first heading
+    ends up with nothing under it.
+
+    A definitions table is also two columns and must not be transposed, since
+    term and meaning belong on the same line. The heading is what tells them
+    apart: a signature column is headed, a definition row is not.
+    """
+    if len(rows) < 2 or any(len(row) != 2 for row in rows):
+        return False
+
+    heads = ["".join(cell.itertext()).strip() for cell in rows[0]]
+    if not all(heads):
+        return False
+    return all(
+        head.endswith(":") or (head.isupper() and len(head.split()) <= 4) for head in heads
+    )
+
+
+def _table_paragraphs(table) -> list:
+    """Every paragraph in a table, in an order that keeps a passage together.
+
+    Column by column where the table is two passages side by side, row by row
+    otherwise, which is what a grid means.
+    """
+    rows = [
+        [cell for cell in row.findall(f"{WORD_NS}tc")]
+        for row in table.findall(f"{WORD_NS}tr")
+    ]
+    rows = [row for row in rows if row]
+    if not rows:
+        return []
+
+    if _looks_like_parallel_blocks(rows):
+        ordered = []
+        for column in range(len(rows[0])):
+            for row in rows:
+                if column < len(row):
+                    ordered.extend(row[column].iter(f"{WORD_NS}p"))
+        return ordered
+
+    return list(table.iter(f"{WORD_NS}p"))
 
 
 def _all_runs_bold(node) -> bool:

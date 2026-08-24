@@ -20,6 +20,11 @@ never produced.
 from __future__ import annotations
 
 import re
+from datetime import date
+
+#: An ISO date and nothing else, so a value that merely contains digits is not
+#: reformatted into something the record never said.
+DATE_ONLY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 #: A blank a person was meant to fill in. Deliberately narrow: no newline, and
 #: bounded length, so a bracketed cross-reference in prose ("[sic]", "[1]") or
@@ -138,13 +143,20 @@ FACT_SYNONYMS: list[tuple[str, tuple[str, ...]]] = [
             "applicable law",
         ),
     ),
+    # Deliberately narrow, and narrower than the first attempt. A signature
+    # block names both parties and writes each line the same way, so a bare
+    # [Name] or [Title] belongs to whichever party that half of the block is
+    # for, and nothing in the text says which. Mapping them to our own
+    # signatory filled the counterparty's line with our person's name, which
+    # is worse than leaving it blank: a blank is obviously unfinished, and a
+    # confident wrong name is not. Those lines are completed at signing.
     (
         "our_signatory_title",
-        ("signatory title", "title", "our title", "designation"),
+        ("our signatory title", "company signatory title"),
     ),
     (
         "our_signatory",
-        ("signatory", "signatory name", "authorised signatory", "our signatory"),
+        ("our signatory", "company signatory", "our authorised signatory"),
     ),
     (
         "our_registration_number",
@@ -223,14 +235,91 @@ def in_body(body: list[dict]) -> list[dict]:
     return found
 
 
-def resolve(text: str, values: dict[str, object]) -> tuple[str, list[str]]:
+#: How a fact reads in a contract rather than in a record. A date stored as
+#: 2026-08-24 belongs in an agreement as 24 August 2026, and an amount belongs
+#: with its separators. Declared variables get this from their type; a bracket
+#: blank has no declaration, so the fact it resolved from decides.
+def _present(fact: str | None, value: object) -> str:
+    text = str(value)
+    if fact in {"effective_date"} and DATE_ONLY.fullmatch(text):
+        return date.fromisoformat(text).strftime("%d %B %Y")
+    if fact in {"value_amount"}:
+        try:
+            return f"{float(text):,.2f}"
+        except ValueError:
+            return text
+    return text
+
+
+#: A run of underscores is a signature rule: the line somebody signs on.
+SIGNATURE_RULE = re.compile(r"_{5,}")
+
+#: The heading over one half of an execution block. Written as a party role
+#: with a colon, which is how every agreement lays the page out.
+SIGNATURE_HEADINGS = {
+    "company",
+    "reseller",
+    "supplier",
+    "client",
+    "customer",
+    "vendor",
+    "partner",
+    "distributor",
+    "licensor",
+    "licensee",
+    "disclosing party",
+    "receiving party",
+    "first party",
+    "second party",
+    "signed",
+    "signatures",
+    "signature block",
+}
+
+#: Not "execution" and not "in witness whereof". Both usually head the witness
+#: clause, which is prose and often carries the effective date, so treating
+#: them as signature blocks would leave a real blank unfilled in the sentence
+#: that states when the agreement takes effect. Where such a heading sits over
+#: actual signature lines, the By/Name/Title rule catches it anyway.
+
+#: The lines an execution block is made of. Two of these together is a
+#: signature block even where nobody drew a rule to sign on.
+SIGNATURE_LINES = re.compile(r"^\s*(by|name|title|signature|date|witness)\s*:", re.I | re.M)
+
+
+def is_signature_block(text: str, heading: str = "") -> bool:
+    """Whether this passage is where the agreement gets signed.
+
+    Recognised three ways, because templates draw it three ways: a rule of
+    underscores to sign on, a heading naming a party role, or the By/Name/Title
+    lines an execution block is built from. Any one of them is enough; a
+    passage that is none of them is prose.
+    """
+    label = normalise(heading)
+    if label in SIGNATURE_HEADINGS:
+        return True
+    body = text or ""
+    if SIGNATURE_RULE.search(body):
+        return True
+    return len(SIGNATURE_LINES.findall(body)) >= 2
+
+
+def resolve(
+    text: str, values: dict[str, object], heading: str = ""
+) -> tuple[str, list[str]]:
     """Fill the blanks in one piece of text.
 
     Returns the filled text and the labels that could not be filled. The caller
     decides what an unfilled blank means; generation refuses on it, and a
     preview shows it as outstanding.
+
+    A blank inside a signature block is not reported. The block is where names
+    and titles are written at signing, beside the rule the signature goes on,
+    so refusing to produce the document until they are filled would refuse to
+    produce the thing that exists to be signed.
     """
     missing: list[str] = []
+    signing = is_signature_block(text, heading)
 
     def substitute(match: re.Match[str]) -> str:
         label = match.group(1).strip()
@@ -241,9 +330,10 @@ def resolve(text: str, values: dict[str, object]) -> tuple[str, list[str]]:
         for key in filter(None, (fact, slug(label))):
             value = values.get(key)
             if value not in (None, ""):
-                return str(value)
+                return _present(fact, value)
 
-        missing.append(label)
+        if not signing:
+            missing.append(label)
         return match.group(0)
 
     return PLACEHOLDER.sub(substitute, text), missing

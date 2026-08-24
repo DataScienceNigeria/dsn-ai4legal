@@ -73,3 +73,39 @@ export function percent(value: number | null): string {
   if (value === null) return "No reading";
   return `${Math.round(value * 100)}%`;
 }
+
+/*
+  Fixed hues per organisation, and deliberately not --brand.
+
+  --brand is whichever organisation you are currently in, which is right for
+  everything that acts: a button, a tab, a selected row. It is useless anywhere
+  both organisations appear at once, because then both are the same colour and
+  the colour says nothing. The entity switcher was the first such place; the
+  organisation particulars screen was the second, and titling both cards in
+  --brand made two near-identical names look like one record listed twice.
+
+  DSN is the brand blue, EqualyzAI the brand green, whichever organisation the
+  reader happens to be working in.
+*/
+export const ENTITY_TONE: Record<string, { mark: string; chip: string; edge: string }> = {
+  DSN: {
+    mark: "bg-info",
+    chip: "bg-info text-info-foreground",
+    edge: "border-l-4 border-l-info",
+  },
+  EAI: {
+    mark: "bg-primary",
+    chip: "bg-primary text-primary-foreground",
+    edge: "border-l-4 border-l-primary",
+  },
+};
+
+export function entityTone(code: string) {
+  return (
+    ENTITY_TONE[code] ?? {
+      mark: "bg-muted-foreground",
+      chip: "bg-muted text-muted-foreground",
+      edge: "border-l-4 border-l-border",
+    }
+  );
+}

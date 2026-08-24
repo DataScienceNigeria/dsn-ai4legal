@@ -26,14 +26,91 @@ class ChainContext:
     risk_tier: str
     value_amount: float | None
     privacy_flag: bool = False
+    #: Who raised the request this matter came from, where one did. They are
+    #: the party who says whether the draft is the deal they asked for.
+    requester_id: uuid.UUID | None = None
+    #: Who assembled the document, and what they may do. A drafter cannot be
+    #: their own second pair of eyes.
+    drafter_id: uuid.UUID | None = None
+    drafter_is_head: bool = False
+    #: Their paper rather than ours. It goes straight to Legal: the document
+    #: already exists, and what Legal is doing is aligning it, not producing
+    #: something the business has not seen.
+    counterparty_paper: bool = False
+
+
+#: Two steps, derived from the matter rather than matched from a table.
+#:
+#: The old chain was configuration: entity, agreement type, value band and risk
+#: tier selected one of four definitions, one of which inserted a Finance step
+#: above five million. That is machinery for an organisation with a Finance
+#: approval function. This one has a legal team of six, and the two questions
+#: that actually get asked are whether the business got what it asked for and
+#: whether it is safe to sign.
+#:
+#: What survives from the old engine is the part that was load-bearing: every
+#: approval binds to one document hash, an edit invalidates them all, steps run
+#: in order, and the chain applied is snapshotted onto the matter. None of that
+#: depended on how many steps there were.
+REQUESTER_STEP = {
+    "name": "Requester confirms",
+    "mode": "sequential",
+    "role": "requester",
+    "due_hours": 48,
+}
+
+HEAD_STEP = {
+    "name": "Head of Legal",
+    "mode": "sequential",
+    "role": "head_of_legal",
+    "due_hours": 24,
+}
+
+
+def derive_chain(context: ChainContext) -> tuple[str, list[dict], list[str]]:
+    """The steps this matter needs, and anything worth saying about them.
+
+    The notes are part of the record rather than an aside. A matter that never
+    went to its requester should say so on its face instead of looking like one
+    where the step is outstanding, and a matter the Head of Legal drafted and
+    signed off themselves should say that too, since the step is there and only
+    the note distinguishes it from a second pair of eyes.
+    """
+    steps: list[dict] = []
+    notes: list[str] = []
+
+    if context.counterparty_paper:
+        notes.append(
+            "The requester does not confirm counterparty paper. The document already "
+            "exists and Legal is aligning it, not producing something the business "
+            "has not seen."
+        )
+    elif context.requester_id is None:
+        notes.append(
+            "No requester to confirm. This matter was raised inside Legal rather than "
+            "through the portal."
+        )
+    else:
+        steps.append({**REQUESTER_STEP, "user_id": str(context.requester_id)})
+
+    if context.drafter_is_head:
+        notes.append(
+            "The Head of Legal drafted this, so their step is their own sign-off "
+            "rather than a second pair of eyes. Routing it to somebody who did not "
+            "read it would look like review and be none."
+        )
+    steps.append(HEAD_STEP)
+
+    name = "Requester and Head of Legal" if len(steps) > 1 else "Head of Legal"
+    return name, steps, notes
 
 
 def resolve_chain(session: Session, context: ChainContext) -> ApprovalChainDefinition:
-    """Select the approval chain that applies.
+    """Kept for a deployment that configures its own chains.
 
-    Chains are configuration, matched on entity, agreement type, value band and
-    risk tier. The most specific active chain wins, and the chain applied is
-    recorded on the matter so a later reader can see which rule ran.
+    Nothing in the platform calls this now. The two-step chain is derived from
+    the matter, which is what a team of this size actually does, and a stored
+    definition matched on value bands was answering a question nobody asked.
     """
     candidates = session.execute(
         select(ApprovalChainDefinition)
@@ -83,43 +160,39 @@ def open_chain(
     matter_id: uuid.UUID,
     document_id: uuid.UUID,
     document_hash: str,
-    chain: ApprovalChainDefinition,
-    context: ChainContext,
+    name: str,
+    steps: list[dict],
+    notes: list[str],
     resolve_approver,
 ) -> list[Approval]:
     """Create the approval steps for one document hash.
 
-    ``resolve_approver`` maps a step definition to a user identifier, so the
-    routing rule stays here and the directory lookup stays with the caller.
+    ``resolve_approver`` maps a step to a user, so the rule stays here and the
+    directory lookup stays with the caller. The snapshot carries the notes as
+    well as the steps, because why a chain looks the way it does is part of the
+    record and is unanswerable later from the steps alone.
     """
+    del session
     created: list[Approval] = []
     now = datetime.now(UTC)
+    snapshot = {"name": name, "steps": steps, "notes": notes}
 
-    for index, step in enumerate(chain.steps):
-        condition = step.get("condition")
-        if condition == "privacy_flag" and not context.privacy_flag:
-            continue
-        if condition == "value_above" and (context.value_amount or 0) <= float(
-            step.get("value_threshold", 0)
-        ):
-            continue
-
-        approval = Approval(
-            matter_id=matter_id,
-            document_id=document_id,
-            document_hash=document_hash,
-            chain_definition_id=chain.id,
-            chain_snapshot={"name": chain.name, "steps": chain.steps},
-            step_index=index,
-            step_name=step.get("name", f"Step {index + 1}"),
-            step_mode=step.get("mode", "sequential"),
-            approver_role=step.get("role"),
-            approver_id=resolve_approver(step),
-            decision=ApprovalDecision.PENDING.value,
-            due_at=now + timedelta(hours=int(step.get("due_hours", 48))),
+    for index, step in enumerate(steps):
+        created.append(
+            Approval(
+                matter_id=matter_id,
+                document_id=document_id,
+                document_hash=document_hash,
+                chain_snapshot=snapshot,
+                step_index=index,
+                step_name=step.get("name", f"Step {index + 1}"),
+                step_mode=step.get("mode", "sequential"),
+                approver_role=step.get("role"),
+                approver_id=resolve_approver(step),
+                decision=ApprovalDecision.PENDING.value,
+                due_at=now + timedelta(hours=int(step.get("due_hours", 48))),
+            )
         )
-        session.add(approval)
-        created.append(approval)
 
     return created
 
@@ -145,6 +218,16 @@ def record_decision(
             f"This approval was already recorded as {approval.decision}. "
             "Re-approval happens against a new document hash."
         )
+
+    if decision == ApprovalDecision.CHANGES_REQUESTED.value:
+        # The step stays open. Asking for a change is not a decision about the
+        # document; it is a statement that this document is not the one to
+        # decide about. It closes when a new draft supersedes this hash, which
+        # invalidates the whole chain, or when they approve the one in front of
+        # them after all.
+        approval.comments = comments
+        return
+
     approval.decision = decision
     approval.comments = comments
     approval.decided_at = datetime.now(UTC)

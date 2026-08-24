@@ -11,6 +11,8 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 
+from app.services import placeholders
+
 DEFINITION_PATTERN = re.compile(r'[\("“]\s*(?:the\s+)?[“"]([A-Z][A-Za-z ]{2,40})[”"]')
 QUOTED_TERM = re.compile(r'[“"]([A-Z][A-Za-z ]{2,40})[”"]')
 CROSS_REFERENCE = re.compile(r"\bclause\s+(\d+(?:\.\d+)*)\b", re.I)
@@ -126,8 +128,18 @@ def check_numbering(clauses: list[Clause]) -> CheckResult:
     )
 
 def check_placeholders(clauses: list[Clause]) -> CheckResult:
+    """An unfilled blank, except where the blank is the point.
+
+    A signature block is a rule to sign on and lines to write a name and title
+    on, and it is completed at signing rather than at assembly. Reporting it as
+    an unfilled placeholder reports the execution page of every agreement as a
+    fault, and a check that is wrong on every document is a check people learn
+    to skip past.
+    """
     found: list[str] = []
     for clause in clauses:
+        if placeholders.is_signature_block(clause.text, clause.heading):
+            continue
         for match in PLACEHOLDER.finditer(clause.text):
             found.append(f"clause {clause.number}: {match.group(0)[:40]}")
     return CheckResult(

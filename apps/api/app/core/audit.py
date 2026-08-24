@@ -7,6 +7,7 @@ row so that removal or alteration is detectable.
 
 import hashlib
 import json
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -20,6 +21,8 @@ from app.db.models.platform import AuditEvent
 # written out rather than hashed so it is greppable when a lock shows up in
 # pg_locks during an investigation.
 CHAIN_LOCK = 8_150_112_026
+
+logger = logging.getLogger(__name__)
 
 
 def _canonical(value: Any) -> str:
@@ -102,6 +105,57 @@ def legacy_digest(
         }
     )
     return hashlib.sha256(material.encode()).hexdigest()
+
+
+def record_refusal(
+    *,
+    action: str,
+    object_type: str,
+    object_id: str | None = None,
+    actor_id: uuid.UUID | str | None = None,
+    actor_label: str = "system",
+    entity: str | None = None,
+    ip_address: str | None = None,
+    session_id: str | None = None,
+    detail: str | None = None,
+) -> None:
+    """Append an event that survives the refusal that follows it.
+
+    A refusal raises, the request's transaction rolls back, and everything
+    written in it goes with the change it was rolling back, including the audit
+    row. So a rejected password, a quarantined upload and every other refused
+    act recorded nothing at all, which is precisely backwards: the refused
+    attempts are the ones a trail exists to hold.
+
+    This writes on its own connection and commits by itself. It takes the same
+    chain lock, so it serialises against every other writer, and it must
+    therefore be called before any in-transaction ``record`` in the same
+    request: two connections in one request waiting on one lock is a deadlock
+    with only itself to blame.
+
+    Failing to write the trail never turns into a second failure on top of the
+    first. The caller is refusing already, and a refusal that becomes a 500
+    because the logging failed tells the person even less than it did before.
+    """
+    from app.db.session import owner_session
+
+    try:
+        with owner_session() as session:
+            record(
+                session,
+                action=action,
+                object_type=object_type,
+                object_id=object_id,
+                actor_id=actor_id,
+                actor_label=actor_label,
+                entity=entity,
+                ip_address=ip_address,
+                session_id=session_id,
+                result="failure",
+                detail=detail,
+            )
+    except Exception:
+        logger.exception("The audit trail could not record a refusal of %s", action)
 
 
 def record(

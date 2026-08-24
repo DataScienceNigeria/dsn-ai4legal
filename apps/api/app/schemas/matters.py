@@ -287,6 +287,13 @@ class ApprovalOut(ApiModel):
     decided_at: datetime | None
     invalidated_by_event: str | None
     actionable: bool = False
+    #: Who is being asked, by name. The screen showed a role and a step name,
+    #: which does not tell the reader whose desk it is sitting on.
+    approver_name: str | None = None
+    #: Why this chain looks the way it does, carried from the snapshot. A
+    #: step left out, or a step that is a sign-off rather than a review. Not
+    #: answerable later from the steps alone.
+    notes: list[str] = Field(default_factory=list)
 
 
 class ApprovalDecisionRequest(BaseModel):

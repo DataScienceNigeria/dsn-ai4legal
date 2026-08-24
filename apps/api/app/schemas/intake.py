@@ -99,9 +99,31 @@ class TimelineEntry(BaseModel):
     owner_first_name: str | None = None
 
 
+class AwaitingConfirmation(BaseModel):
+    """A draft waiting on the person who asked for it.
+
+    Legal drafts, and the business is the only party that knows whether the
+    draft is the deal they agreed. Nothing asked them before this: the platform
+    produced a document and routed it internally, and the requester found out
+    what was in their agreement when it was already signed.
+    """
+
+    approval_id: UUID
+    document_id: UUID
+    document_name: str
+    step_name: str
+    due_at: datetime | None
+    #: Set where they have already asked for a change and are waiting on a new
+    #: draft, so the portal shows what they said rather than asking again.
+    changes_requested: str | None = None
+
+
 class RequestStatusOut(BaseModel):
     """What a requester sees. No other requester's data is visible."""
 
+    #: The portal reads a draft by request, and had only the reference, which
+    #: is the name of the thing rather than a way to reach it.
+    id: UUID
     reference: str
     subject: str
     status: str
@@ -111,6 +133,31 @@ class RequestStatusOut(BaseModel):
     last_update: datetime
     matter_number: str | None
     timeline: list[TimelineEntry]
+    awaiting_confirmation: AwaitingConfirmation | None = None
+
+
+class DraftBlock(BaseModel):
+    number: str
+    heading: str
+    text: str
+
+
+class DraftForConfirmation(BaseModel):
+    """The draft as the requester reads it.
+
+    Deliberately the assembled text rather than the file. They are confirming
+    that the terms are the ones they asked for, and a download is a copy of a
+    confidential agreement leaving the platform for a reason nobody needs.
+    """
+
+    reference: str
+    subject: str
+    document_name: str
+    generated_at: datetime | None
+    blocks: list[DraftBlock] = Field(default_factory=list)
+    approval_id: UUID
+    step_name: str
+    changes_requested: str | None = None
 
 
 class RequestAnswer(BaseModel):

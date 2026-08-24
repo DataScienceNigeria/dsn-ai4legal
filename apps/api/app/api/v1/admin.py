@@ -554,8 +554,17 @@ def _organisation_out(record: Organisation) -> OrganisationOut:
 
 
 @router.get("/organisations")
-def list_organisations(db: Db, principal: CurrentUser) -> list[OrganisationOut]:
-    """The particulars each entity is named by in an agreement.
+def current_organisation(
+    db: Db, principal: CurrentUser, entity: WorkingEntity
+) -> OrganisationOut:
+    """The particulars the organisation you are working in is named by.
+
+    One organisation, not both. Every other screen in the workspace shows the
+    working entity and nothing else, and this was the one that showed them
+    side by side. Two near-identical names in two identical cards is how the
+    wrong record came to be renamed: the edit was correct, the card was not.
+    The entity switch is how you reach the other, exactly as it is everywhere
+    else.
 
     Readable by anyone who drafts, because it is what a document will say about
     us and a drafter needs to know whether it is right before generating.
@@ -563,13 +572,21 @@ def list_organisations(db: Db, principal: CurrentUser) -> list[OrganisationOut]:
     principal.require_role(
         Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN, Role.AUDITOR
     )
-    records = db.execute(select(Organisation).order_by(Organisation.entity_code)).scalars()
-    return [_organisation_out(record) for record in records]
+    record = db.execute(
+        select(Organisation).where(Organisation.entity_code == entity)
+    ).scalar_one_or_none()
+    if record is None:
+        raise NotFound("That organisation was not found.")
+    return _organisation_out(record)
 
 
 @router.patch("/organisations/{entity_code}")
 def update_organisation(
-    entity_code: str, payload: OrganisationUpdate, db: Db, principal: CurrentUser
+    entity_code: str,
+    payload: OrganisationUpdate,
+    db: Db,
+    principal: CurrentUser,
+    entity: WorkingEntity,
 ) -> OrganisationOut:
     """Change what an agreement says about us.
 
@@ -580,8 +597,18 @@ def update_organisation(
     principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL)
     principal.require_step_up("Changing an organisation's particulars")
 
+    wanted = entity_code.upper()
+    if wanted != entity:
+        # The working entity is the one on screen. Editing the other from here
+        # is how a record gets changed by somebody who believed they were
+        # looking at it.
+        raise Conflict(
+            f"You are working in {entity}. Switch to {wanted} before changing its "
+            "particulars, so the record you edit is the one you are reading."
+        )
+
     record = db.execute(
-        select(Organisation).where(Organisation.entity_code == entity_code.upper())
+        select(Organisation).where(Organisation.entity_code == wanted)
     ).scalar_one_or_none()
     if record is None:
         raise NotFound("That organisation was not found.")

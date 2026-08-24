@@ -39,7 +39,7 @@ import type {
   RetentionRow,
   UserRow,
 } from "@/lib/types";
-import { decisionTone, formatDateTime, titleCase } from "@/lib/utils";
+import { cn, decisionTone, entityTone, formatDateTime, titleCase } from "@/lib/utils";
 
 const RETENTION_COLS = "minmax(0,1fr) 6.875rem 8.75rem 8.125rem minmax(0,1.2fr)";
 const EXPORT_COLS = "9.375rem minmax(0,1.4fr) 7.5rem 10rem";
@@ -722,6 +722,7 @@ function OrganisationCard({
     draft[name] ?? (record[name] as string | null) ?? "";
 
   const changed = Object.keys(draft).length > 0;
+  const tone = entityTone(record.entity_code);
   const renaming =
     typeof draft.legal_name === "string" &&
     draft.legal_name.trim() !== "" &&
@@ -729,17 +730,16 @@ function OrganisationCard({
 
   return (
     /*
-      Titled by the entity code, not the legal name. Two organisations whose
-      names begin the same way made two cards that looked identical, and the
-      one thing that told them apart was grey subtitle text. Somebody edited
-      the wrong one and renamed it, which read afterwards as a duplicate rather
-      than as a mistake.
+      Titled by the entity code in the organisation's own fixed hue, blue for
+      DSN and green for EqualyzAI, rather than in --brand. --brand is whichever
+      organisation you are currently in, so it would paint whatever is on
+      screen the same colour and say nothing about which record this is.
     */
-    <Card>
+    <Card className={tone.edge}>
       <CardHeader
         title={
           <span className="flex flex-wrap items-center gap-2.5">
-            <span className="rounded-md bg-brand px-2 py-0.5 font-mono text-sm text-brand-foreground">
+            <span className={cn("rounded-md px-2 py-0.5 font-mono text-sm", tone.chip)}>
               {record.entity_code}
             </span>
             <span>{record.legal_name}</span>
@@ -806,20 +806,33 @@ function OrganisationCard({
   );
 }
 
+/*
+  One organisation, the one you are working in. Both were shown side by side,
+  which is the only screen in the workspace that did, and two near-identical
+  names in two identical cards is how the wrong record came to be renamed. The
+  entity switch reaches the other, exactly as it does everywhere else.
+*/
 function Organisations() {
-  const records = useApi<OrganisationRow[]>("/organisations");
+  const { entity } = useSession();
+  const record = useApi<OrganisationRow>("/organisations", [entity]);
+  const other = entity === "DSN" ? "EqualyzAI" : "Data Science Nigeria";
+
   return (
     <div className="space-y-4">
       <DataState
-        loading={records.loading}
-        errorMessage={records.error?.message}
-        isEmpty={!records.data?.length}
-        emptyTitle="No organisation is configured"
+        loading={record.loading}
+        errorMessage={record.error?.message}
+        isEmpty={!record.data}
+        emptyTitle="No organisation is configured for this entity"
       >
-        {(records.data ?? []).map((record) => (
-          <OrganisationCard key={record.id} record={record} onSaved={records.reload} />
-        ))}
+        {record.data ? (
+          <OrganisationCard record={record.data} onSaved={record.reload} />
+        ) : null}
       </DataState>
+      <p className="text-xs text-muted-foreground">
+        {`These are ${entity}'s particulars only. Switch organisation in the sidebar to read or
+        change ${other}'s.`}
+      </p>
     </div>
   );
 }

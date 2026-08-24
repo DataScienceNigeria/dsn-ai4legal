@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 from app.core import audit
 from app.core.deps import CurrentUser, Db
-from app.core.errors import Conflict, NotFound
+from app.core.errors import Conflict, NotFound, ValidationFailed
 from app.db.models.contract import Contract
 from app.db.models.counterparty import Counterparty, Vendor
 from app.db.models.matter import DecisionRecord, Matter
@@ -19,6 +19,7 @@ from app.schemas.governance import (
     CounterpartyCreate,
     CounterpartyCreateResult,
     CounterpartyOut,
+    CounterpartyUpdate,
     DuplicateWarning,
     MergeRequest,
     VendorOut,
@@ -142,14 +143,105 @@ def create_counterparty(
     )
 
 
+def _with_address(record: Counterparty) -> CounterpartyOut:
+    """The record, with its registered address surfaced as one line.
+
+    Addresses are held as a list because a counterparty has several over time
+    and the history matters. An agreement names one of them, so the one it
+    names is lifted out rather than left for every caller to dig for.
+    """
+    model = CounterpartyOut.model_validate(record)
+    model.registered_address = registered_address(record.addresses)
+    return model
+
+
+def registered_address(addresses: list[dict] | None) -> str | None:
+    entries = addresses or []
+    if not entries:
+        return None
+    chosen = next((a for a in entries if a.get("type") == "registered"), entries[0])
+    if chosen.get("full"):
+        return str(chosen["full"]).strip() or None
+    parts = [
+        chosen.get(field)
+        for field in ("line1", "line2", "city", "state", "postcode", "country")
+    ]
+    joined = ", ".join(str(part).strip() for part in parts if part)
+    return joined or None
+
+
 @router.get("/counterparties/{counterparty_id}", response_model=CounterpartyOut)
 def get_counterparty(
     counterparty_id: uuid.UUID, db: Db, principal: CurrentUser
-) -> Counterparty:
+) -> CounterpartyOut:
     record = db.get(Counterparty, counterparty_id)
     if record is None:
         raise NotFound(COUNTERPARTY_NOT_FOUND)
-    return record
+    return _with_address(record)
+
+
+@router.patch("/counterparties/{counterparty_id}", response_model=CounterpartyOut)
+def update_counterparty(
+    counterparty_id: uuid.UUID,
+    payload: CounterpartyUpdate,
+    db: Db,
+    principal: CurrentUser,
+) -> CounterpartyOut:
+    """Correct or complete what we hold about a counterparty.
+
+    There was no way to do this at all, so an address an agreement needs could
+    only be typed into each document, and a registration number learned during
+    diligence had nowhere to live. Changes are audited with both states,
+    because a counterparty's legal name and registration number are what an
+    executed contract names, and a correction after execution is a different
+    conversation from a correction before it.
+    """
+    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+
+    record = db.get(Counterparty, counterparty_id)
+    if record is None:
+        raise NotFound(COUNTERPARTY_NOT_FOUND)
+
+    changes = payload.model_dump(exclude_unset=True)
+    address = changes.pop("registered_address", None)
+
+    cleaned = {
+        field: (value.strip() or None) if isinstance(value, str) else value
+        for field, value in changes.items()
+    }
+    if "legal_name" in cleaned and not cleaned["legal_name"]:
+        raise ValidationFailed(
+            "A counterparty needs a legal name.",
+            {"legal_name": "It is what an agreement names this party by."},
+        )
+
+    before = {field: getattr(record, field) for field in cleaned}
+    for field, value in cleaned.items():
+        setattr(record, field, value)
+
+    if address is not None:
+        before["registered_address"] = registered_address(record.addresses)
+        # Replaced in place rather than appended, so the record holds one
+        # registered address and not a pile of them in an order nobody set.
+        others = [a for a in (record.addresses or []) if a.get("type") != "registered"]
+        line = address.strip()
+        record.addresses = (
+            [*others, {"type": "registered", "full": line}] if line else others
+        )
+        cleaned["registered_address"] = line or None
+
+    audit.record(
+        db,
+        action="counterparty_updated",
+        object_type="counterparty",
+        object_id=record.reference,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        before_state=before,
+        after_state=cleaned,
+    )
+    db.flush()
+    return _with_address(record)
 
 
 @router.get("/counterparties/{counterparty_id}/history")

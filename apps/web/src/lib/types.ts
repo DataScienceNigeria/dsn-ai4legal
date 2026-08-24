@@ -148,7 +148,30 @@ export type TimelineEntry = {
   owner_first_name: string | null;
 };
 
+export type AwaitingConfirmation = {
+  approval_id: string;
+  document_id: string;
+  document_name: string;
+  step_name: string;
+  due_at: string | null;
+  changes_requested: string | null;
+};
+
+export type DraftBlock = { number: string; heading: string; text: string };
+
+export type DraftForConfirmation = {
+  reference: string;
+  subject: string;
+  document_name: string;
+  generated_at: string | null;
+  blocks: DraftBlock[];
+  approval_id: string;
+  step_name: string;
+  changes_requested: string | null;
+};
+
 export type RequestStatus = {
+  id: string;
   reference: string;
   subject: string;
   status: string;
@@ -158,6 +181,7 @@ export type RequestStatus = {
   last_update: string;
   matter_number: string | null;
   timeline: TimelineEntry[];
+  awaiting_confirmation: AwaitingConfirmation | null;
 };
 
 export type Block = {
@@ -204,6 +228,8 @@ export type Approval = {
   decided_at: string | null;
   invalidated_by_event: string | null;
   actionable: boolean;
+  approver_name: string | null;
+  notes: string[];
 };
 
 export type Finding = {
@@ -617,6 +643,8 @@ export type CounterpartyRow = {
   jurisdiction: string;
   relationship_class: string;
   risk_class: string;
+  negotiation_notes: string | null;
+  registered_address: string | null;
 };
 
 export type VendorRow = {

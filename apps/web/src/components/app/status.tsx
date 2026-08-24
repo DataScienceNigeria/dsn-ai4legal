@@ -105,6 +105,12 @@ export function ProvenancePill({ provenance, reference }: Readonly<{ provenance:
   if (provenance === "novel") {
     return <Pill tone="novel">Novel, unapproved</Pill>;
   }
+  if (provenance === "signature_block") {
+    // Untouched on purpose, and said so. A reader who finds blank name and
+    // title lines in an assembled document should be told they are blank
+    // because signing fills them, not left wondering what failed.
+    return <Pill tone="info">Completed at signing</Pill>;
+  }
   const labels: Record<string, string> = {
     approved_clause: "Approved clause",
     approved_fallback: "Approved fallback",

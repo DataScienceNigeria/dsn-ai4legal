@@ -150,6 +150,11 @@ AUTHORITY_MATRIX: dict[AuthorityLevel, dict[str, object]] = {
 class ApprovalDecision(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
+    #: The requester wants something different, not something refused. It goes
+    #: back to drafting with their comment attached and their step stays open,
+    #: because they have not decided yet. Rejection is a different act and says
+    #: a different thing to everyone reading the matter afterwards.
+    CHANGES_REQUESTED = "changes_requested"
     REJECTED = "rejected"
     INVALIDATED = "invalidated"
 

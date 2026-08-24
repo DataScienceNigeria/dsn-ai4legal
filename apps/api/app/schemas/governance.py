@@ -170,6 +170,24 @@ class CounterpartyOut(ApiModel):
     relationship_class: str
     risk_class: str
     negotiation_notes: str | None
+    #: An agreement names the counterparty by its registered address, so the
+    #: record has to be able to hold one. It could not, and generation asked
+    #: for it on every document instead.
+    addresses: list[dict] = Field(default_factory=list)
+    registered_address: str | None = None
+
+
+class CounterpartyUpdate(BaseModel):
+    legal_name: str | None = Field(default=None, min_length=2, max_length=255)
+    counterparty_type: str | None = None
+    registration_number: str | None = Field(default=None, max_length=64)
+    domain: str | None = Field(default=None, max_length=255)
+    jurisdiction: str | None = Field(default=None, min_length=2, max_length=64)
+    relationship_class: str | None = None
+    negotiation_notes: str | None = None
+    #: One line, as it should read in a preamble. Stored on the address list as
+    #: the registered entry, which is what an agreement names.
+    registered_address: str | None = None
 
 
 class CounterpartyCreate(BaseModel):

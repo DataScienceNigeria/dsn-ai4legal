@@ -28,7 +28,7 @@ import { useAction, useApi } from "@/lib/hooks";
 import type { CounterpartyRow, VendorRow } from "@/lib/types";
 import { formatDate, titleCase } from "@/lib/utils";
 
-const PARTY_COLS = "7.5rem minmax(0,1.4fr) 8.75rem 9.375rem 8.125rem 6.875rem 5.625rem";
+const PARTY_COLS = "7.5rem minmax(0,1.4fr) 8.125rem 9.375rem 8.125rem 6.25rem 10.625rem";
 
 const COUNTERPARTY_TYPES = ["company", "individual", "government", "ngo", "academic"];
 const RELATIONSHIP_CLASSES = ["commercial", "strategic", "regulator", "funder", "vendor", "partner"];
@@ -262,6 +262,98 @@ function CreateCounterparty({ onDone }: Readonly<{ onDone: () => void }>) {
   );
 }
 
+/*
+  There was no way to change a counterparty at all. An address an agreement
+  names could only be typed into each document, and a registration number
+  learned during diligence had nowhere to live, so the same facts were retyped
+  every time and disagreed with each other in the archive.
+*/
+function EditCounterparty({
+  row,
+  onDone,
+}: Readonly<{ row: CounterpartyRow; onDone: () => void }>) {
+  const { has } = useRoles();
+  const [open, setOpen] = React.useState(false);
+  const [draft, setDraft] = React.useState<Record<string, string>>({});
+
+  const save = useAction(async () => {
+    await api(`/counterparties/${row.id}`, { method: "PATCH", body: draft });
+    setDraft({});
+    onDone();
+    setOpen(false);
+  });
+
+  if (!has("legal_ops", "counsel", "head_of_legal", "admin")) return null;
+
+  const value = (name: keyof CounterpartyRow) =>
+    draft[name] ?? ((row[name] as string | null) ?? "");
+
+  const set = (name: string) => (event: { target: { value: string } }) =>
+    setDraft((previous) => ({ ...previous, [name]: event.target.value }));
+
+  return (
+    <>
+      <Button size="sm" onClick={() => setOpen(true)}>
+        Edit
+      </Button>
+      <Modal
+        open={open}
+        title={row.legal_name}
+        subtitle="What an agreement names this party by. Changes are audited with both states, because these are copied into contracts that may already be signed."
+        onClose={() => setOpen(false)}
+        footer={
+          <>
+            <Button onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              variant="primary"
+              disabled={Object.keys(draft).length === 0 || save.busy}
+              onClick={() => void save.run()}
+            >
+              {save.busy ? "Saving" : "Save the record"}
+            </Button>
+          </>
+        }
+      >
+        <Field label="Legal name" required hint="Exactly as registered.">
+          <Input value={value("legal_name")} onChange={set("legal_name")} />
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Registration number">
+            <Input value={value("registration_number")} onChange={set("registration_number")} />
+          </Field>
+          <Field label="Jurisdiction">
+            <Input value={value("jurisdiction")} onChange={set("jurisdiction")} />
+          </Field>
+        </div>
+        <Field
+          label="Registered address"
+          hint="One line, as it should read in a preamble. Generation fills the counterparty address from this."
+        >
+          <Input value={value("registered_address")} onChange={set("registered_address")} />
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Domain">
+            <Input value={value("domain")} onChange={set("domain")} />
+          </Field>
+          <Field label="Relationship">
+            <Input value={value("relationship_class")} onChange={set("relationship_class")} />
+          </Field>
+        </div>
+        <Field label="Negotiation notes" hint="Read by anyone drafting against this party.">
+          <Textarea value={value("negotiation_notes")} onChange={set("negotiation_notes")} />
+        </Field>
+        {save.error ? (
+          <Refusal
+            title="That change was refused"
+            reason={save.error.message}
+            reasons={Object.values(save.error.fieldErrors ?? {})}
+          />
+        ) : null}
+      </Modal>
+    </>
+  );
+}
+
 function MergeCounterparty({
   row,
   others,
@@ -433,7 +525,8 @@ function PartyRow({
             {titleCase(row.risk_class)}
           </Pill>
         </div>
-        <div>
+        <div className="flex items-center gap-1.5">
+          <EditCounterparty row={row} onDone={onChanged} />
           <MergeCounterparty row={row} others={others} onDone={onChanged} />
         </div>
       </Row>
@@ -472,7 +565,7 @@ function Parties({ entity }: Readonly<{ entity: string }>) {
         }
       />
       <div className="table-scroll">
-        <div className="min-w-[56.25rem]">
+        <div className="min-w-[60rem]">
           <Row cols={PARTY_COLS} head>
             <div>Identifier</div>
             <div>Legal name</div>
@@ -480,7 +573,7 @@ function Parties({ entity }: Readonly<{ entity: string }>) {
             <div>Registration</div>
             <div>Relationship</div>
             <div>Risk</div>
-            <div>Duplicate</div>
+            <div>Actions</div>
           </Row>
           <DataState
             loading={counterparties.loading}

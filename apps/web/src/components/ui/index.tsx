@@ -389,8 +389,13 @@ export function More({ children, label = "More" }: Readonly<{ children: React.Re
             Children are laid out as menu rows whatever they are, so a
             component that renders its own trigger button can be dropped in
             without knowing it is inside a menu.
+
+            The hover rule is `[&_button:hover]`, not `[&_button]:hover`. The
+            second reads as "when this menu is hovered, every button in it",
+            which lit the whole menu up at once and told the reader nothing
+            about what they were about to press.
           */
-          className="absolute right-0 z-40 mt-1.5 flex w-max min-w-[14rem] flex-col gap-0.5 rounded-lg border bg-popover p-1.5 shadow-lg [&_a]:w-full [&_button]:h-9 [&_button]:w-full [&_button]:justify-start [&_button]:border-transparent [&_button]:bg-transparent [&_button]:font-normal [&_button]:hover:bg-muted"
+          className="absolute right-0 z-40 mt-1.5 flex w-max min-w-[14rem] flex-col gap-0.5 rounded-lg border bg-popover p-1.5 shadow-lg [&_a]:w-full [&_button]:h-9 [&_button]:w-full [&_button]:justify-start [&_button]:border-transparent [&_button]:bg-transparent [&_button]:font-normal [&_button:hover]:bg-muted"
         >
           {children}
         </div>
@@ -541,6 +546,113 @@ export function Timeline({ steps }: Readonly<{ steps: TimelineStep[] }>) {
         </li>
       ))}
     </ol>
+  );
+}
+
+export type Stage = {
+  id: string;
+  label: string;
+  /** What this stage is waiting for, or what satisfied it. */
+  detail?: string;
+  state: "done" | "current" | "pending" | "skipped";
+  /** Shown under the track when this is the stage in hand. */
+  action?: React.ReactNode;
+};
+
+/*
+  Where a thing is in its life, and what moves it on, in one place.
+
+  The vertical Timeline answers "what happened in this chain". This answers
+  "where are we and what now", which is the question somebody opening a matter
+  asks first and had to answer from a status pill and a header button that was
+  a different button every visit.
+
+  The action lives under the track rather than in the page header. A single
+  primary button that becomes Generate, then Route for approval, then Request a
+  signature is three buttons wearing one position: the reader has to read it
+  every time to find out what it is now, and pressing it out of habit does
+  something they did not intend. Here the position is stable and says which
+  stage it belongs to.
+*/
+export function Stepper({
+  stages,
+  note,
+}: Readonly<{ stages: Stage[]; note?: React.ReactNode }>) {
+  const current = stages.find((stage) => stage.state === "current");
+
+  return (
+    <div className="rounded-lg border bg-card">
+      <ol className="flex items-start gap-1 overflow-x-auto px-4 pb-1 pt-4 sm:px-5 sm:pt-5">
+        {stages.map((stage, index) => (
+          <li key={stage.id} className="flex min-w-0 flex-1 items-start gap-1">
+            <div
+              title={stage.detail}
+              className="flex min-w-[5.5rem] flex-1 flex-col items-center gap-1.5 px-1 text-center"
+            >
+              <span
+                className={cn(
+                  "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-2xs font-semibold",
+                  stage.state === "done" && "border-primary bg-primary text-primary-foreground",
+                  /*
+                    Amber, not the organisation's own hue. On EqualyzAI brand
+                    and primary are both green, so the stage in hand and the
+                    stages already finished were the same colour and the track
+                    said only how far along it was, not where to look.
+                  */
+                  stage.state === "current" && "border-warning bg-warning text-warning-foreground",
+                  stage.state === "skipped" && "border-dashed border-border text-muted-foreground",
+                  stage.state === "pending" && "border-border bg-muted text-muted-foreground",
+                )}
+              >
+                {stage.state === "done" ? "\u2713" : stage.state === "skipped" ? "\u2013" : index + 1}
+              </span>
+              <span
+                className={cn(
+                  "text-2xs leading-tight",
+                  stage.state === "current" &&
+                    "font-semibold text-warning-foreground dark:text-warning",
+                  stage.state !== "current" && stage.state !== "done" && "text-muted-foreground",
+                )}
+              >
+                {stage.label}
+              </span>
+            </div>
+            {index < stages.length - 1 ? (
+              <span
+                aria-hidden
+                className={cn(
+                  "mt-3.5 h-px min-w-2 flex-1",
+                  stage.state === "done" ? "bg-primary/45" : "bg-border",
+                )}
+              />
+            ) : null}
+          </li>
+        ))}
+      </ol>
+
+      {current || note ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t px-4 py-3.5 sm:px-5">
+          <div className="min-w-0 text-sm">
+            {current ? (
+              <>
+                <span className="font-medium">{current.label}</span>
+                {current.detail ? (
+                  <span className="text-muted-foreground"> {current.detail}</span>
+                ) : null}
+              </>
+            ) : (
+              <span className="text-muted-foreground">{note}</span>
+            )}
+            {current && note ? (
+              <div className="mt-0.5 text-xs text-muted-foreground">{note}</div>
+            ) : null}
+          </div>
+          {current?.action ? (
+            <div className="flex flex-wrap items-center gap-2">{current.action}</div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

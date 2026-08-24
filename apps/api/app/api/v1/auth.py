@@ -141,15 +141,14 @@ def _check_second_factor(
                 detail=f"{len(user.mfa_recovery_codes or [])} codes remain.",
             )
             return True
-        audit.record(
-            db,
+        audit.record_refusal(
             action="mfa_failed",
             object_type="app_user",
             object_id=str(user.id),
             actor_id=user.id,
             actor_label=user.name,
-            result="failure",
             ip_address=client_ip(request),
+            detail="The code did not match and was not a recovery code.",
         )
         raise ValidationFailed(
             "That code was not accepted.",
@@ -265,11 +264,11 @@ def step_up(
             "so it cannot re-authenticate this way."
         )
     if not verify_password(payload.password, user.password_hash):
-        # Recorded. A failed re-authentication in front of a privileged act is
-        # precisely the event an audit trail exists to hold, and until now the
-        # refusal returned before anything was written.
-        audit.record(
-            db,
+        # Written on its own connection, because the refusal below rolls this
+        # request's transaction back and would take the row with it. A failed
+        # re-authentication in front of a privileged act is precisely the event
+        # a trail exists to hold.
+        audit.record_refusal(
             action="step_up_failed",
             object_type="app_user",
             object_id=str(user.id),
@@ -277,7 +276,6 @@ def step_up(
             actor_label=user.name,
             session_id=principal.session_id,
             ip_address=client_ip(request),
-            result="failure",
             detail="The password did not match.",
         )
         raise Unauthenticated("That password was not accepted.")

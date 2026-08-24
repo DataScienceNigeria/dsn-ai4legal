@@ -9,6 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, File, Response, UploadFile
 from sqlalchemy import select, text
 
+from app.api.v1.counterparties import registered_address
 from app.core import audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Conflict, Forbidden, NotFound, Refused, ValidationFailed
@@ -17,7 +18,7 @@ from app.db.models.counterparty import Counterparty
 from app.db.models.document import Document, ReviewFinding, Suggestion
 from app.db.models.intake import Attachment, RequestType
 from app.db.models.library import ClauseVersion, Template, TemplateVersion
-from app.db.models.matter import Matter
+from app.db.models.matter import Matter, MatterTransition
 from app.db.models.organisation import Organisation
 from app.db.models.platform import QualitySample
 from app.domain.enums import (
@@ -41,6 +42,7 @@ from app.schemas.matters import (
 )
 from app.services import approvals as approval_service
 from app.services import autoissue, docx_import, storage
+from app.services import checks as check_service
 from app.services.generation import generate, render_docx
 from app.services.hashing import file_hash
 
@@ -69,25 +71,40 @@ def _clause_texts(db, references: list[str]) -> dict[str, dict]:
     return out
 
 
-def _first_address(addresses: list[dict] | None) -> str | None:
-    """The counterparty's address as one line.
+def _advance_on_generation(db, matter: Matter, principal) -> None:
+    """Move an accepted matter into drafting when its first draft appears.
 
-    A counterparty holds several addresses over time. The registered one is
-    what an agreement names, and where none is marked, the first recorded is
-    the best the record offers.
+    Only that one step, and only where the state machine allows it. Anything
+    later is a judgement about the work, and the platform does not make those:
+    a matter in review moves on when the findings are cleared, not when a
+    document happens to be regenerated.
     """
-    entries = addresses or []
-    if not entries:
-        return None
-    chosen = next((a for a in entries if a.get("type") == "registered"), entries[0])
-    if chosen.get("full"):
-        return str(chosen["full"])
-    parts = [
-        chosen.get(field)
-        for field in ("line1", "line2", "city", "state", "postcode", "country")
-    ]
-    joined = ", ".join(str(p).strip() for p in parts if p)
-    return joined or None
+    if matter.status != MatterState.ACCEPTED.value:
+        return
+
+    matter.status = MatterState.DRAFTING.value
+    matter.next_action = "Route the draft for approval"
+    db.add(
+        MatterTransition(
+            matter_id=matter.id,
+            from_state=MatterState.ACCEPTED.value,
+            to_state=MatterState.DRAFTING.value,
+            actor_id=uuid.UUID(principal.user_id),
+            occurred_at=datetime.now(UTC),
+            clock_running=True,
+        )
+    )
+    audit.record(
+        db,
+        action="matter_transitioned",
+        object_type="matter",
+        object_id=matter.number,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=matter.entity,
+        before_state={"status": MatterState.ACCEPTED.value},
+        after_state={"status": MatterState.DRAFTING.value, "by": "document generated"},
+    )
 
 
 COUNTERPARTY_DISCLAIMER = (
@@ -216,15 +233,16 @@ def add_counterparty_paper(
 
     clean, scan_detail = storage.scan_upload(data)
     if not clean:
-        audit.record(
-            db,
+        # On its own connection: the refusal below rolls this transaction
+        # back, and a quarantined upload that leaves no trace is the one
+        # upload anybody would want a record of.
+        audit.record_refusal(
             action="upload_quarantined",
             object_type="matter",
             object_id=matter.number,
             actor_id=principal.user_id,
             actor_label=principal.name,
             entity=matter.entity,
-            result="failure",
             detail=scan_detail,
         )
         raise ValidationFailed(
@@ -356,7 +374,7 @@ def generate_document(
         "our_signatory_title": organisation.signatory_title if organisation else None,
         "counterparty": counterparty.legal_name,
         "counterparty_jurisdiction": counterparty.jurisdiction,
-        "counterparty_address": _first_address(counterparty.addresses),
+        "counterparty_address": registered_address(counterparty.addresses),
         "counterparty_registration_number": counterparty.registration_number,
         "effective_date": date.today().isoformat(),
         "governing_law": organisation.default_jurisdiction if organisation else "Nigeria",
@@ -429,6 +447,13 @@ def generate_document(
     )
     db.add(document)
     db.flush()
+
+    # The matter moves itself. A matter sat at "accepted" while somebody
+    # assembled a document from an approved template, which is the definition
+    # of drafting, and left the person to remember to say so afterwards. A
+    # state nobody updates is a state nobody trusts, and the delivery dashboard
+    # reads these.
+    _advance_on_generation(db, matter, principal)
 
     if previous:
         latest = max(previous, key=lambda d: d.version)
@@ -655,6 +680,95 @@ def decide_finding(
         },
     )
     return finding
+
+
+@router.post("/documents/{document_id}/recheck", response_model=DocumentOut)
+def recheck_document(
+    document_id: uuid.UUID, db: Db, principal: CurrentUser
+) -> DocumentOut:
+    """Run the mechanical checks again over a document already assembled.
+
+    The checks are computed at generation and stored, so a document assembled
+    before a check was corrected keeps the finding the correction removed.
+    Regenerating does not clear it either: the same blocks produce the same
+    hash, and generation returns the document that already exists rather than
+    building a second identical one.
+
+    Safe to re-run because the checks are what was observed about the document,
+    not part of it. They are outside the content hash, so nothing that was
+    approved or signed against that hash changes, and an executed copy is
+    refused outright rather than touched at all.
+    """
+    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+
+    document = db.get(Document, document_id)
+    if document is None:
+        raise NotFound(DOCUMENT_NOT_FOUND)
+    if document.immutable:
+        raise Conflict(
+            "This is the executed copy. What was observed about it at execution is part "
+            "of the record and is not recomputed later."
+        )
+
+    matter = db.get(Matter, document.matter_id) if document.matter_id else None
+    counterparty = (
+        db.get(Counterparty, matter.counterparty_id)
+        if matter and matter.counterparty_id
+        else None
+    )
+    organisation = (
+        db.execute(
+            select(Organisation).where(Organisation.entity_code == document.entity)
+        ).scalar_one_or_none()
+        if document.entity
+        else None
+    )
+    expected = [
+        name
+        for name in (
+            organisation.legal_name if organisation else None,
+            counterparty.legal_name if counterparty else None,
+        )
+        if name
+    ]
+
+    before = [check.get("name") for check in document.consistency_checks or []]
+    checks = check_service.run_all(
+        [
+            check_service.Clause(
+                number=str(block.get("number", "")),
+                heading=block.get("heading", ""),
+                text=block.get("text", ""),
+            )
+            for block in document.blocks or []
+        ],
+        expected or None,
+    )
+
+    document.consistency_checks = [check.as_dict() for check in checks]
+    document.open_items = [
+        f"{check.name.replace('_', ' ')}: {item}"
+        for check in checks
+        if not check.passed
+        for item in check.items
+    ]
+
+    audit.record(
+        db,
+        action="document_rechecked",
+        object_type="document",
+        object_id=str(document.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=document.entity,
+        before_state={"checks": before},
+        after_state={
+            "failed": [check.name for check in checks if not check.passed],
+            "hash_unchanged": document.content_hash,
+        },
+    )
+    db.flush()
+    return _to_out(document)
 
 
 @router.post("/documents/{document_id}/redline")

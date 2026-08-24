@@ -55,16 +55,65 @@ export default function DocumentScreen() {
     );
   });
 
+  /*
+    The checks are computed at generation and stored, so a document assembled
+    before a check was corrected keeps a finding the correction removed.
+    Regenerating does not clear it: the same blocks produce the same hash and
+    generation returns the document that already exists. Safe because the
+    checks sit outside the content hash, so nothing approved against that hash
+    is touched.
+  */
+  const recheck = useAction(async () => {
+    await api(`/documents/${documentId}/recheck`, { method: "POST" });
+    reload();
+  });
+
   const redline = useAction(async () => {
     await api<{ message: string }>(`/documents/${documentId}/redline`, { method: "POST" });
     reload();
   });
 
+  /*
+    One list. `open_items` is built from the failed checks at assembly, so the
+    two were the same findings under two names, and anything in `open_items`
+    that no check produced (the counterparty paper note, for one) still belongs
+    beside them rather than in a panel of its own.
+
+    Above the early returns, and it has to be. React identifies a hook by the
+    order it was called in, so a hook placed after `if (loading) return` is
+    called on the render where the document has arrived and not on the one
+    before it, and every hook after it shifts by one. The first version of this
+    sat below them and broke the screen.
+  */
+  const findings = React.useMemo(() => {
+    if (!data) return [];
+
+    const fromChecks = data.consistency_checks
+      .filter((check) => !check.passed)
+      .map((check) => ({
+        title: titleCase(check.name),
+        detail: check.detail,
+        items: check.items,
+        count: check.items.length,
+      }));
+
+    const covered = fromChecks.flatMap((finding) =>
+      finding.items.map((item) => item.toLowerCase()),
+    );
+    const extras = data.open_items
+      .filter((item) => {
+        const text = item.toLowerCase();
+        return !covered.some((seen) => text.includes(seen));
+      })
+      .map((item) => ({ title: item, detail: "", items: [] as string[], count: 1 }));
+
+    return [...fromChecks, ...extras];
+  }, [data]);
+
   if (loading) return <Spinner />;
   if (error) return <Refusal title="That document was not found" reason={error.message} />;
 
   const document = data!;
-  const failedChecks = document.consistency_checks.filter((check) => !check.passed);
 
   return (
     <div className="space-y-6">
@@ -118,22 +167,6 @@ export default function DocumentScreen() {
           amendment, never as a replacement.
         </Notice>
       ) : null}
-
-      {failedChecks.length ? (
-        <Refusal
-          title="Deterministic checks did not all pass"
-          reasons={failedChecks.flatMap((check) =>
-            check.items.length
-              ? check.items.map((item) => `${titleCase(check.name)}: ${item}`)
-              : [`${titleCase(check.name)}: ${check.detail}`],
-          )}
-        />
-      ) : (
-        <Notice tone="good" title="Deterministic checks passed">
-          Defined terms, cross-references, numbering, placeholders and date logic were all
-          checked mechanically before this document was presented.
-        </Notice>
-      )}
 
       {showEditor ? (
         <Card>
@@ -214,21 +247,84 @@ export default function DocumentScreen() {
         </Card>
 
         <div className="space-y-4">
+          {/*
+            One panel, because they were one thing. `open_items` is built from
+            the failed checks at assembly, so the document screen listed the
+            same findings twice under two names and left the reader to work out
+            that "Numbering unique: 1" in one card was the same fact as
+            "numbering unique" in the other.
+
+            Advisory, and shown as advisory. This used to sit across the top of
+            the page in a refusal banner, in the same red the platform uses
+            when it has actually refused. Nothing here stops a document being
+            approved, signed or executed; only tier 1 auto-issue treats an open
+            item as disqualifying, because that is the one path with nobody
+            reading. A warning that looks like a refusal teaches people to
+            ignore refusals.
+          */}
           <Card>
-            <CardHeader title="Open items" subtitle="What the assembly could not resolve" />
+            <CardHeader
+              title="Before you approve"
+              subtitle="Assembled mechanically and read back. None of this blocks approval or signature."
+              actions={
+                <span className="flex items-center gap-2">
+                  {findings.length ? (
+                    <Pill tone="warn">{findings.length} to read</Pill>
+                  ) : (
+                    <Pill tone="good">Nothing outstanding</Pill>
+                  )}
+                  {document.immutable ? null : (
+                    <Button size="sm" disabled={recheck.busy} onClick={() => void recheck.run()}>
+                      {recheck.busy ? "Checking" : "Run again"}
+                    </Button>
+                  )}
+                </span>
+              }
+            />
             <CardBody>
-              {document.open_items.length ? (
-                <ul className="space-y-1.5 text-sm">
-                  {document.open_items.map((item) => (
-                    <li key={item} className="flex gap-2 leading-relaxed">
-                      <span aria-hidden className="text-warning">&#9888;</span>
-                      <span>{item}</span>
+              {recheck.error ? (
+                <Refusal
+                  title="The checks were not re-run"
+                  reason={recheck.error.message}
+                  reasons={recheck.error.reasons}
+                />
+              ) : null}
+              {findings.length ? (
+                <ul className="space-y-3 text-sm">
+                  {findings.map((finding) => (
+                    <li key={finding.title}>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="font-medium">{finding.title}</span>
+                        {finding.count > 1 ? (
+                          <span className="shrink-0 text-2xs text-muted-foreground">
+                            {finding.count} places
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="mt-0.5 leading-relaxed text-muted-foreground">
+                        {finding.detail}
+                      </div>
+                      {finding.items.length ? (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {finding.items.slice(0, 8).map((item) => (
+                            <Mono key={item} className="text-2xs">
+                              {item}
+                            </Mono>
+                          ))}
+                          {finding.items.length > 8 ? (
+                            <span className="text-2xs text-muted-foreground">
+                              and {finding.items.length - 8} more
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
               ) : (
-                <div className="text-sm text-muted-foreground">
-                  Nothing outstanding was reported.
+                <div className="text-sm leading-relaxed text-muted-foreground">
+                  Defined terms, cross-references, numbering, placeholders and date logic were
+                  all checked mechanically, and nothing was left unresolved at assembly.
                 </div>
               )}
             </CardBody>

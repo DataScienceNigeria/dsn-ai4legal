@@ -196,6 +196,13 @@ def generate(
             counter += 1
             scope = {**values, **row, "index": index}
 
+            # A bracket blank resolves from the facts, not from the declared
+            # variables. `scope` holds what the template declared, and an
+            # imported template declares nothing, so resolving blanks against
+            # it found an empty dict and reported every one of them missing,
+            # including the ones the matter plainly answered.
+            blanks = {**condition_facts, **row, "index": index}
+
             clause_reference = section.get("clause")
             if clause_reference:
                 record = clause_texts.get(clause_reference)
@@ -223,12 +230,28 @@ def generate(
             def substitute(text: str, scope: dict = scope) -> str:
                 return VARIABLE.sub(lambda m: str(scope.get(m.group(1), "")), text)
 
-            rendered, unfilled = placeholders.resolve(substitute(raw_text), scope)
-            heading, unfilled_heading = placeholders.resolve(
-                substitute(section.get("heading", "")), scope
-            )
-            unresolved.update(unfilled)
-            unresolved.update(unfilled_heading)
+            raw_heading = section.get("heading", "")
+
+            if placeholders.is_signature_block(raw_text, raw_heading):
+                # Left exactly as the template wrote it. The execution block
+                # belongs to signing, not to assembly: who signs, in what
+                # capacity and on which line is decided when the signature
+                # request is raised, and filling any of it here means putting
+                # a name against a line before anyone has agreed to stand
+                # behind it. Filling one party's line with the other party's
+                # signatory is what happened the first time this was tried.
+                rendered = raw_text
+                heading = raw_heading
+                provenance = "signature_block"
+            else:
+                rendered, unfilled = placeholders.resolve(
+                    substitute(raw_text), blanks, raw_heading
+                )
+                heading, unfilled_heading = placeholders.resolve(
+                    substitute(raw_heading), blanks, raw_heading
+                )
+                unresolved.update(unfilled)
+                unresolved.update(unfilled_heading)
             number = section.get("number") or str(counter)
             if repeat_over:
                 number = f"{number}.{index}"

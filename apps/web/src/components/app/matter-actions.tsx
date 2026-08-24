@@ -2,7 +2,6 @@
 
 import * as React from "react";
 
-import { Rename } from "@/components/app/rename";
 import { useRoles } from "@/components/app/session";
 import { StepUpGate } from "@/components/app/step-up";
 import {
@@ -403,6 +402,104 @@ function PaperDialog({
           title="That paper was not added"
           reason={failed.message}
           reasons={Object.values(failed.fieldErrors ?? {})}
+        />
+      ) : null}
+    </Modal>
+  );
+}
+
+/*
+  The step that was missing. A document could be generated and a signature
+  could be requested, and nothing in between offered to route it for approval,
+  which is the act every one of those approvals binds to. It was reachable only
+  by knowing the endpoint existed.
+*/
+function ApprovalDialog({
+  matterId,
+  documents,
+  open,
+  onClose,
+  onDone,
+}: Readonly<{
+  matterId: string;
+  documents: DocumentRecord[];
+  open: boolean;
+  onClose: () => void;
+  onDone: () => void;
+}>) {
+  const [documentId, setDocumentId] = React.useState("");
+
+  const route = useAction(async () => {
+    await api(`/matters/${matterId}/approvals`, {
+      method: "POST",
+      body: { document_id: documentId },
+    });
+    onDone();
+    onClose();
+  });
+
+  /*
+    Ours only. Counterparty paper is held for comparison and the API refuses
+    it, so offering it here would be offering a refusal.
+  */
+  const ours = documents.filter((document) => document.document_type !== "counterparty");
+  const chosen = ours.find((document) => document.id === documentId);
+
+  return (
+    <Modal
+      open={open}
+      title="Route for approval"
+      subtitle="The chain is resolved from configuration, not chosen: entity, agreement type, value band and risk tier decide it, and the chain applied is recorded on the matter."
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            disabled={!documentId || route.busy}
+            onClick={() => void route.run()}
+          >
+            {route.busy ? "Routing" : "Open the chain"}
+          </Button>
+        </>
+      }
+    >
+      {ours.length === 0 ? (
+        <Notice tone="warn" title="Nothing to route yet">
+          Generate a document from an approved template first. Approval binds to a document,
+          and there is not one on this matter.
+        </Notice>
+      ) : (
+        <Field
+          label="Document"
+          required
+          hint="Approval binds to this document's exact content hash."
+        >
+          <Select value={documentId} onChange={(event) => setDocumentId(event.target.value)}>
+            <option value="">Choose the document</option>
+            {ours.map((document) => (
+              <option key={document.id} value={document.id}>
+                {document.name}, v{document.version}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      )}
+
+      {chosen ? (
+        <Notice tone="info" title="What routing does">
+          Every approver decides against{" "}
+          <span className="font-mono text-xs">{chosen.content_hash.slice(0, 12)}</span>.
+          Regenerating or editing the document changes that hash and invalidates every approval
+          already given, so nobody can approve one version and issue another.
+        </Notice>
+      ) : null}
+
+      {route.error ? (
+        <Refusal
+          title="No approval chain was opened"
+          reason={route.error.message}
+          reasons={route.error.reasons}
         />
       ) : null}
     </Modal>
@@ -904,45 +1001,36 @@ export function LinkCounterparty({
   );
 }
 
-type NextStep = { id: "generate" | "paper" | "review" | "signature"; label: string };
-
-/*
-  What this matter is waiting for, from the state machine rather than from a
-  fixed order. A matter in review is waiting on the findings, but only once
-  their paper is actually here: before that it is waiting on the paper, which
-  is the step that used to have no button at all.
-*/
-function nextStep(
-  status: string,
-  documents: number,
-  paper: number,
-  canSign: boolean,
-): NextStep {
-  if (status === "in_review") {
-    return paper > 0
-      ? { id: "review", label: "Review their paper" }
-      : { id: "paper", label: "Add their paper" };
-  }
-  if (status === "awaiting_signature" && documents > 0 && canSign) {
-    return { id: "signature", label: "Request a signature" };
-  }
-  return { id: "generate", label: "Generate a document" };
-}
-
 export function MatterActions({
   matter,
   documents,
   attachments = [],
+  /*
+    The lifecycle track opens these too, so the dialogs live here and the id to
+    open is passed in. Two places offering the same act, one where you are
+    reading and one where the acts are listed, and one implementation of it.
+  */
+  requested = "",
+  onRequestHandled,
   onChanged,
 }: Readonly<{
   matter: Matter;
   documents: DocumentRecord[];
   attachments?: AttachmentBrief[];
+  requested?: string;
+  onRequestHandled?: () => void;
   onChanged: () => void;
 }>) {
   const { has, readOnly } = useRoles();
   const [dialog, setDialog] = React.useState<string | null>(null);
-  const close = React.useCallback(() => setDialog(null), []);
+  const close = React.useCallback(() => {
+    setDialog(null);
+    onRequestHandled?.();
+  }, [onRequestHandled]);
+
+  React.useEffect(() => {
+    if (requested) setDialog(requested);
+  }, [requested]);
 
   const restrict = useAction(async (reason: string) => {
     await api(`/matters/${matter.id}/restrict`, {
@@ -962,41 +1050,34 @@ export function MatterActions({
     row used to carry seven of equal weight, which is the same as carrying
     none: nothing among them said which one this matter was waiting for.
   */
-  const paper = documents.filter((document) => document.document_type === "counterparty");
-  const next = nextStep(matter.status, documents.length, paper.length, canSign);
+  const ours = documents.filter((document) => document.document_type !== "counterparty");
 
   return (
     <>
+      {/*
+        No mutating primary button. It became Generate, then Route for
+        approval, then Request a signature, which is three buttons wearing one
+        position: the reader has to read it each visit to find out what it is
+        now, and pressing it from memory does something they did not intend.
+        The act that moves the matter on lives on the lifecycle track, where it
+        is labelled with the stage it belongs to. This menu holds everything
+        else, in one order that does not change.
+      */}
       <Actions>
-        <Button variant="primary" onClick={() => setDialog(next.id)}>
-          {next.label}
-        </Button>
-        <More>
-          {next.id === "generate" ? null : (
-            <MenuItem onClick={() => setDialog("generate")}>Generate a document</MenuItem>
-          )}
+        <More label="Actions">
+          <MenuItem onClick={() => setDialog("generate")}>Generate a document</MenuItem>
           <MenuItem onClick={() => setDialog("draft")}>Propose a first draft</MenuItem>
-          {next.id === "paper" ? null : (
-            <MenuItem onClick={() => setDialog("paper")}>Add counterparty paper</MenuItem>
-          )}
-          {next.id === "review" ? null : (
-            <MenuItem onClick={() => setDialog("review")}>Review counterparty paper</MenuItem>
-          )}
+          <MenuItem onClick={() => setDialog("paper")}>Add counterparty paper</MenuItem>
+          <MenuItem onClick={() => setDialog("review")}>Review counterparty paper</MenuItem>
+          {ours.length ? (
+            <MenuItem onClick={() => setDialog("approval")}>Route for approval</MenuItem>
+          ) : null}
           {canSign && documents.length > 0 ? (
             <>
-              {next.id === "signature" ? null : (
-                <MenuItem onClick={() => setDialog("signature")}>Request a signature</MenuItem>
-              )}
+              <MenuItem onClick={() => setDialog("signature")}>Request a signature</MenuItem>
               <MenuItem onClick={() => setDialog("wetink")}>Record a wet ink execution</MenuItem>
             </>
           ) : null}
-          <Rename
-            path={`/matters/${matter.id}`}
-            field="title"
-            label="matter"
-            current={matter.title}
-            onDone={onChanged}
-          />
           <MenuItem onClick={() => setDialog("governance")}>Governance</MenuItem>
           <MenuItem
             tone={matter.restricted ? "default" : "destructive"}
@@ -1014,6 +1095,13 @@ export function MatterActions({
         onDone={onChanged}
       />
       <DraftDialog matterId={matter.id} open={dialog === "draft"} onClose={close} onDone={onChanged} />
+      <ApprovalDialog
+        matterId={matter.id}
+        documents={documents}
+        open={dialog === "approval"}
+        onClose={close}
+        onDone={onChanged}
+      />
       <PaperDialog
         matterId={matter.id}
         attachments={attachments}

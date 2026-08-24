@@ -12,14 +12,19 @@ from sqlalchemy import select
 from app.core import audit
 from app.core.deps import CurrentUser, Db, client_ip
 from app.core.errors import NotFound, ValidationFailed
+from app.db.models.contract import Approval
+from app.db.models.document import Document
 from app.db.models.intake import Attachment, RequestType
 from app.db.models.intake import Request as RequestRecord
 from app.db.models.matter import Matter
 from app.db.models.organisation import User
-from app.domain.enums import MatterState, Role
+from app.domain.enums import ApprovalDecision, MatterState, Role
 from app.schemas.common import Ack
 from app.schemas.intake import (
     AttachmentOut,
+    AwaitingConfirmation,
+    DraftBlock,
+    DraftForConfirmation,
     RequestCreate,
     RequestOut,
     RequestStatusOut,
@@ -28,6 +33,10 @@ from app.schemas.intake import (
 )
 from app.services import notifications, sequences, storage
 from app.services.hashing import file_hash
+
+DOCX_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
 
 REQUEST_NOT_FOUND = "That request was not found."
 
@@ -209,15 +218,16 @@ def add_attachment(
 
     clean, scan_detail = storage.scan_upload(data)
     if not clean:
-        audit.record(
-            db,
+        # On its own connection: the refusal below rolls this transaction
+        # back, and a quarantined upload that leaves no trace is the one
+        # upload anybody would want a record of.
+        audit.record_refusal(
             action="upload_quarantined",
             object_type="request",
             object_id=record.reference,
             actor_id=principal.user_id,
             actor_label=principal.name,
             entity=record.entity,
-            result="failure",
             detail=scan_detail,
         )
         raise ValidationFailed(
@@ -336,6 +346,170 @@ def request_status(
     return _status_for(db, record)
 
 
+def _draft_waiting_on(db, principal, record: RequestRecord) -> AwaitingConfirmation:
+    """The draft this caller is being asked to confirm, or nothing.
+
+    Two conditions, and both are needed. There has to be a step open on the
+    requester, and the caller has to be that requester. `get_request` lets
+    Legal read any request, which is right for a status screen and wrong here:
+    this endpoint says a draft is waiting on you, and it should be reachable
+    only by the person it is waiting on. Legal reads the same document from the
+    matter, where it belongs to them.
+    """
+    matter = db.execute(
+        select(Matter).where(Matter.request_id == record.id)
+    ).scalar_one_or_none()
+
+    waiting = _pending_confirmation(db, record, matter)
+    if waiting is None or str(record.requester_id) != principal.user_id:
+        raise NotFound("There is no draft waiting on you for this request.")
+    return waiting
+
+
+def _pending_confirmation(db, record: RequestRecord, matter) -> AwaitingConfirmation | None:
+    """The approval step waiting on this requester, if there is one.
+
+    Scoped by the approver on the row rather than by role, so a requester sees
+    the step that is theirs and nothing else about the chain. What the Head of
+    Legal is deciding is not their business, and the fact that a step exists
+    above theirs is not something the portal needs to say.
+    """
+    if matter is None:
+        return None
+
+    approval = db.execute(
+        select(Approval)
+        .where(
+            Approval.matter_id == matter.id,
+            Approval.approver_id == record.requester_id,
+            Approval.decision == ApprovalDecision.PENDING.value,
+            Approval.invalidated_by_event.is_(None),
+        )
+        .order_by(Approval.step_index)
+    ).scalars().first()
+    if approval is None or approval.document_id is None:
+        return None
+
+    document = db.get(Document, approval.document_id)
+    if document is None:
+        return None
+
+    return AwaitingConfirmation(
+        approval_id=approval.id,
+        document_id=document.id,
+        document_name=document.name,
+        step_name=approval.step_name,
+        due_at=approval.due_at,
+        changes_requested=approval.comments,
+    )
+
+
+@router.get("/{request_id}/draft")
+def draft_for_confirmation(
+    request_id: uuid.UUID, db: Db, principal: CurrentUser
+) -> DraftForConfirmation:
+    """The draft, for the person who asked for the work.
+
+    Reachable only while a step on it is assigned to them and undecided. Once
+    they have confirmed, the draft is Legal's again: a requester holding an
+    open window onto every document on their matter is a wider grant than the
+    one act they were asked to perform.
+    """
+    record = get_request(request_id, db, principal)
+    waiting = _draft_waiting_on(db, principal, record)
+
+    document = db.get(Document, waiting.document_id)
+    audit.record(
+        db,
+        action="draft_read_by_requester",
+        object_type="document",
+        object_id=str(document.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=record.entity,
+        after_state={"request": record.reference, "hash": document.content_hash},
+    )
+
+    return DraftForConfirmation(
+        reference=record.reference,
+        subject=record.subject,
+        document_name=document.name,
+        generated_at=document.generated_at,
+        blocks=[
+            DraftBlock(
+                number=str(block.get("number", "")),
+                heading=block.get("heading", ""),
+                text=block.get("text", ""),
+            )
+            for block in document.blocks or []
+        ],
+        approval_id=waiting.approval_id,
+        step_name=waiting.step_name,
+        changes_requested=waiting.changes_requested,
+    )
+
+
+@router.get("/{request_id}/draft/file")
+def draft_file(request_id: uuid.UUID, db: Db, principal: CurrentUser) -> Response:
+    """The draft as the file, so the requester reads it as the document it is.
+
+    Rendered from the stored blocks rather than served from storage, which is
+    the same path the workspace download takes: the blocks are what the hash
+    was computed over, so what they read is what everyone else is deciding
+    about. Reachable only while a step on it is theirs and undecided, and
+    served inline rather than as an attachment, because they are reading it in
+    the platform and not taking a copy of a confidential agreement away.
+    """
+    record = get_request(request_id, db, principal)
+    waiting = _draft_waiting_on(db, principal, record)
+
+    document = db.get(Document, waiting.document_id)
+
+    from app.services.generation import GeneratedBlock, GenerationResult, render_docx
+
+    data = render_docx(
+        GenerationResult(
+            blocks=[
+                GeneratedBlock(
+                    key=block.get("key", ""),
+                    number=str(block.get("number", "")),
+                    heading=block.get("heading", ""),
+                    text=block.get("text", ""),
+                    provenance=block.get("provenance", "template_text"),
+                    source_reference=block.get("source_reference"),
+                )
+                for block in document.blocks or []
+            ],
+            values=document.input_values,
+            checks=[],
+            content_hash=document.content_hash,
+            template_reference=document.template_version_ref or "",
+            clause_references=document.clause_versions,
+        ),
+        document.name,
+    )
+
+    audit.record(
+        db,
+        action="draft_read_by_requester",
+        object_type="document",
+        object_id=str(document.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=record.entity,
+        after_state={"request": record.reference, "hash": document.content_hash, "as": "docx"},
+    )
+
+    return Response(
+        content=data,
+        media_type=DOCX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": f'inline; filename="{document.name}.docx"',
+            "X-Content-Hash": document.content_hash,
+        },
+    )
+
+
 def _status_for(db, record: RequestRecord) -> RequestStatusOut:
     matter = db.execute(
         select(Matter).where(Matter.request_id == record.id)
@@ -373,6 +547,7 @@ def _status_for(db, record: RequestRecord) -> RequestStatusOut:
         )
 
     return RequestStatusOut(
+        id=record.id,
         reference=record.reference,
         subject=record.subject,
         status=current_status,
@@ -381,6 +556,7 @@ def _status_for(db, record: RequestRecord) -> RequestStatusOut:
         expected_date=matter.due_date if matter else record.required_date,
         last_update=matter.updated_at if matter else record.updated_at,
         matter_number=matter.number if matter else None,
+        awaiting_confirmation=_pending_confirmation(db, record, matter),
         timeline=timeline,
     )
 

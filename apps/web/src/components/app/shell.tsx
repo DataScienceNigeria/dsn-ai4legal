@@ -14,7 +14,7 @@ import { Button, Spinner } from "@/components/ui";
 import { logout } from "@/lib/api";
 import { useApi } from "@/lib/hooks";
 import type { Me, NavCounts, SearchHit, SearchResults } from "@/lib/types";
-import { cn, initials, titleCase } from "@/lib/utils";
+import { cn, entityTone, initials, titleCase } from "@/lib/utils";
 
 /*
   The roles on each item mirror the require_role call on the endpoint behind
@@ -178,16 +178,10 @@ const ENTITY_NAMES: Record<string, string> = {
   The organisation already tints the whole surface through the data-entity
   tokens in globals.css. That tint is deliberately faint, and faint colour is
   not a cue anyone should have to rely on, so the name carries a mark beside it
-  in the organisation's own hue.
-
-  These are fixed hues rather than --brand, because both organisations appear
-  together in the switcher and --brand is whichever one you are already in.
-  A menu where both rows are the same colour tells you nothing.
+  in the organisation's own hue. The hues are fixed per organisation and live
+  in one place, `entityTone`, because both organisations appear together here
+  and anywhere else that lists them.
 */
-const ENTITY_MARK: Record<string, string> = {
-  DSN: "bg-info",
-  EAI: "bg-primary",
-};
 
 const ROLE_LABELS: Record<string, string> = {
   requester: "Requester",
@@ -271,7 +265,7 @@ function EntityMark({ code, className }: Readonly<{ code: string; className?: st
       aria-hidden="true"
       className={cn(
         "h-1.5 w-1.5 shrink-0 rounded-full",
-        ENTITY_MARK[code] ?? "bg-muted-foreground",
+        entityTone(code).mark,
         className,
       )}
     />

@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app.core import audit
 from app.core.config import settings
 from app.core.deps import AnonDb, CurrentUser, Db
-from app.core.errors import Conflict, Forbidden, NotFound, Refused
+from app.core.errors import Conflict, Forbidden, NotFound, Refused, ValidationFailed
 from app.core.security import verify_webhook
 from app.db.models.contract import (
     Approval,
@@ -91,6 +91,16 @@ def open_approvals(
         raise NotFound("That matter or document was not found.")
     _refuse_counterparty_paper(document, "routed for approval", "route that instead")
 
+    if document.immutable or document.document_type == DocumentType.EXECUTED.value:
+        # Approval comes before execution, so an executed copy has nothing left
+        # to approve. Opening a chain on one would invite somebody to decide
+        # about an agreement that has already been signed, and record their
+        # decision as though it had governed anything.
+        raise Conflict(
+            f"{document.name} is the executed copy. Approval happens before execution, "
+            "so there is nothing here left to decide."
+        )
+
     existing = list(
         db.execute(
             select(Approval).where(
@@ -112,27 +122,35 @@ def open_approvals(
         if record:
             agreement_type = record.agreement_type
 
+    drafter = db.get(User, document.generated_by_id) if document.generated_by_id else None
     context = service.ChainContext(
         entity=matter.entity,
         agreement_type=agreement_type,
         risk_tier=matter.risk_tier,
         value_amount=float(matter.value_amount) if matter.value_amount else None,
         privacy_flag=matter.privacy_flag,
+        requester_id=matter.requester_id,
+        drafter_id=document.generated_by_id,
+        drafter_is_head=bool(drafter and Role.HEAD_OF_LEGAL.value in (drafter.roles or [])),
+        counterparty_paper=document.document_type == DocumentType.COUNTERPARTY.value,
     )
-    chain = service.resolve_chain(db, context)
+    name, steps, notes = service.derive_chain(context)
     created = service.open_chain(
         db,
         matter_id=matter.id,
         document_id=document.id,
         document_hash=document.content_hash,
-        chain=chain,
-        context=context,
+        name=name,
+        steps=steps,
+        notes=notes,
         resolve_approver=_resolve_approver(db, matter.entity),
     )
+    for approval in created:
+        db.add(approval)
     db.flush()
 
     matter.status = MatterState.IN_APPROVAL.value
-    matter.next_action = f"Approval chain: {chain.name}"
+    matter.next_action = f"Approval: {name}"
 
     for approval in service.current_step(created):
         approver = db.get(User, approval.approver_id) if approval.approver_id else None
@@ -141,12 +159,25 @@ def open_approvals(
                 db,
                 connector_code="notification_channel",
                 recipients=[approver.work_email],
-                subject=f"Approval needed on {matter.number}",
+                subject=(
+                    f"A draft is waiting on you, {matter.number}"
+                    if approval.approver_role == "requester"
+                    else f"Approval needed on {matter.number}"
+                ),
                 body=(
-                    f"{approval.step_name} on {matter.number}.\n"
-                    f"Document hash {document.content_hash[:16]}.\n"
-                    f"Novel clauses: {document.novel_clause_count}.\n"
-                    "Action requires authenticated single sign-on."
+                    # The requester is not reading a hash. They are being asked
+                    # whether the draft is the arrangement they asked for, and
+                    # a message about novel clause counts tells them nothing
+                    # about that.
+                    f"Legal has prepared a draft for {matter.number}. Open My requests "
+                    "in the portal to read it and confirm it is what you asked for."
+                    if approval.approver_role == "requester"
+                    else (
+                        f"{approval.step_name} on {matter.number}.\n"
+                        f"Document hash {document.content_hash[:16]}.\n"
+                        f"Novel clauses: {document.novel_clause_count}.\n"
+                        "Action requires authenticated single sign-on."
+                    )
                 ),
                 record_reference=matter.number,
                 matter_id=matter.id,
@@ -161,7 +192,11 @@ def open_approvals(
                     f"Bound to {document.content_hash[:12]}. "
                     f"{document.novel_clause_count} novel clauses."
                 ),
-                href=f"/workspace/matters/{matter.id}",
+                href=(
+                    "/portal/status"
+                    if approval.approver_role == "requester"
+                    else f"/workspace/matters/{matter.id}"
+                ),
                 reference=matter.number,
                 matter_id=matter.id,
             )
@@ -174,17 +209,33 @@ def open_approvals(
         actor_id=principal.user_id,
         actor_label=principal.name,
         entity=matter.entity,
-        after_state={"chain": chain.name, "hash": document.content_hash},
+        after_state={
+            "chain": name,
+            "steps": [step["name"] for step in steps],
+            "notes": notes,
+            "hash": document.content_hash,
+        },
     )
-    return _decorate(created)
+    return _decorate(created, db)
 
 
-def _decorate(approvals: list[Approval]) -> list[ApprovalOut]:
+def _decorate(approvals: list[Approval], db=None) -> list[ApprovalOut]:
     actionable = {a.id for a in service.current_step(approvals)}
+    names: dict[uuid.UUID, str] = {}
+    if db is not None:
+        wanted = {a.approver_id for a in approvals if a.approver_id}
+        if wanted:
+            names = {
+                user.id: user.name
+                for user in db.execute(select(User).where(User.id.in_(wanted))).scalars()
+            }
+
     out = []
     for approval in approvals:
         model = ApprovalOut.model_validate(approval)
         model.actionable = approval.id in actionable
+        model.approver_name = names.get(approval.approver_id) if approval.approver_id else None
+        model.notes = list((approval.chain_snapshot or {}).get("notes", []))
         out.append(model)
     return out
 
@@ -200,7 +251,7 @@ def list_approvals(
             .order_by(Approval.step_index)
         ).scalars()
     )
-    return _decorate(approvals)
+    return _decorate(approvals, db)
 
 
 @router.get("/matters/{matter_id}/signature-requests", response_model=list[SignatureOut])
@@ -244,12 +295,39 @@ def decide(
     if not (is_named or is_delegate or principal.is_admin):
         raise Forbidden("This approval step is assigned to someone else.")
 
+    # A requester confirming their own request is not exercising a legal
+    # authority, so it is not gated on one. The Head of Legal step is, because
+    # it is the sign-off that puts the organisation behind the wording.
+    if approval.approver_role == Role.HEAD_OF_LEGAL.value:
+        principal.require_step_up(f"Approving {approval.step_name}")
+
+    if payload.decision == ApprovalDecision.CHANGES_REQUESTED.value and not (
+        payload.comments or ""
+    ).strip():
+        raise ValidationFailed(
+            "Say what should change.",
+            {
+                "comments": (
+                    "The drafter reads this and works from it, so a change asked for "
+                    "without saying what is a message nobody can act on."
+                )
+            },
+        )
+
     service.record_decision(approval, payload.decision, payload.comments, caller)
 
-    if payload.decision == ApprovalDecision.REJECTED.value and matter:
+    if payload.decision == ApprovalDecision.CHANGES_REQUESTED.value and matter:
+        # Back to drafting, and the step stays open. They have not decided
+        # about this document; they have said this is not the document to
+        # decide about. Their approval resumes when a new draft supersedes
+        # this hash, which invalidates the chain and opens a fresh one.
+        matter.status = MatterState.DRAFTING.value
+        matter.next_action = f"Changes asked for at {approval.step_name}"
+    elif payload.decision == ApprovalDecision.REJECTED.value and matter:
         matter.status = MatterState.IN_REVIEW.value
         matter.next_action = f"Rejected at {approval.step_name}"
     elif matter and service.fully_approved(siblings, approval.document_hash):
+        matter.status = MatterState.AWAITING_SIGNATURE.value
         matter.next_action = "Ready for signature"
 
     if matter:
@@ -297,7 +375,7 @@ def decide(
             "delegate": is_delegate,
         },
     )
-    return _decorate([approval])[0]
+    return _decorate([approval], db)[0]
 
 
 @router.post("/signature/requests", response_model=SignatureOut, status_code=201)
