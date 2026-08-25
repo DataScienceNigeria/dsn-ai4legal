@@ -499,6 +499,88 @@ def evaluation_sweep() -> dict:
     }
 
 
+@celery_app.task(name="dsn_lai.rebuild_memory")
+def rebuild_memory() -> dict:
+    """Write memory from the records that should already be in it.
+
+    Indexing happens at the event that creates a record, which is the only way
+    an agreement executed this morning is answerable this afternoon. This is
+    the repair for everything that predates that, and the safety net for a
+    write that failed while an embedding host was unreachable.
+
+    Idempotent: each chunk is keyed on its source and rewritten, so running it
+    twice leaves one chunk per record rather than two.
+    """
+    from app.db.models.contract import Contract
+    from app.db.models.counterparty import Counterparty
+    from app.db.models.document import Document, ReviewFinding
+    from app.db.models.library import Clause, ClauseVersion
+    from app.db.models.matter import DecisionRecord, Matter
+    from app.domain.enums import VersionStatus
+    from app.services import memory
+
+    written = {"contracts": 0, "decisions": 0, "findings": 0, "clauses": 0}
+    with owner_session() as session:
+        for contract in session.execute(
+            select(Contract).where(Contract.authoritative.is_(True))
+        ).scalars():
+            matter = session.get(Matter, contract.matter_id)
+            memory.index_contract(
+                session,
+                contract,
+                matter=matter,
+                counterparty=session.get(Counterparty, contract.counterparty_id)
+                if contract.counterparty_id
+                else None,
+            )
+            written["contracts"] += 1
+            document = (
+                session.get(Document, contract.executed_document_id)
+                if contract.executed_document_id
+                else None
+            )
+            written["clauses"] += len(
+                memory.index_contract_clauses(
+                    session,
+                    contract,
+                    document,
+                    matter=matter,
+                    counterparty=session.get(Counterparty, contract.counterparty_id)
+                    if contract.counterparty_id
+                    else None,
+                )
+            )
+
+        for record in session.execute(select(DecisionRecord)).scalars():
+            matter = session.get(Matter, record.matter_id) if record.matter_id else None
+            memory.index_decision(session, record, matter=matter)
+            written["decisions"] += 1
+
+        for finding in session.execute(
+            select(ReviewFinding).where(ReviewFinding.decision.in_(["accepted", "edited"]))
+        ).scalars():
+            memory.index_finding(session, finding, matter=session.get(Matter, finding.matter_id))
+            written["findings"] += 1
+
+        for version in session.execute(
+            select(ClauseVersion).where(ClauseVersion.status == VersionStatus.APPROVED.value)
+        ).scalars():
+            clause = session.get(Clause, version.clause_id)
+            for entity in (clause.entity_applicability if clause else None) or ["EAI"]:
+                memory.index_clause_version(
+                    session,
+                    version,
+                    category=clause.category if clause else "Clause",
+                    entity=entity,
+                )
+                written["clauses"] += 1
+
+        session.flush()
+
+    logger.info("Rebuilt memory: %s", written)
+    return written
+
+
 @celery_app.task(name="dsn_lai.reindex_memory")
 def reindex_memory(batch: int = 200) -> dict:
     """Re-embed the retrieval corpus under the configured provider.

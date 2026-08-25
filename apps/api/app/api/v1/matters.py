@@ -53,7 +53,7 @@ from app.schemas.matters import (
     SlaOut,
     TierOverride,
 )
-from app.services import notifications, sequences
+from app.services import memory, notifications, sequences
 
 MATTER_NOT_FOUND = "That matter was not found."
 REQUEST_NOT_FOUND = "That request was not found."
@@ -87,7 +87,7 @@ def _propose_owner(db, record: RequestRecord, tier: RiskTier) -> tuple[User | No
         [Role.COUNSEL.value, Role.HEAD_OF_LEGAL.value]
         if needs_counsel
         else [
-            Role.LEGAL_OPS.value,
+            Role.COUNSEL.value,
             Role.COUNSEL.value,
         ]
     )
@@ -110,7 +110,7 @@ def _propose_owner(db, record: RequestRecord, tier: RiskTier) -> tuple[User | No
     if matched:
         reason += f", {record.request_type.practice_code} specialism"
     if needs_counsel:
-        reason += ", tier requires counsel"
+        reason += ", tier requires legal staff"
     return best, reason
 
 
@@ -122,7 +122,7 @@ def triage_queue(
     _: Any = None,
 ) -> list[dict]:
     """New requests, sorted by declared deadline then derived urgency."""
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     records = list(
         db.execute(
@@ -176,7 +176,7 @@ def rename_request(
     Only while it is still a request. Once accepted, the matter carries the
     name and is renamed there, so the two cannot drift apart.
     """
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     record = db.get(RequestRecord, request_id)
     if record is None:
         raise NotFound(REQUEST_NOT_FOUND)
@@ -213,7 +213,7 @@ def rename_request(
 
 @router.get("/triage/{request_id}")
 def triage_detail(request_id: uuid.UUID, db: Db, principal: CurrentUser) -> TriageProposal:
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     record = db.get(RequestRecord, request_id)
     if record is None:
         raise NotFound(REQUEST_NOT_FOUND)
@@ -344,7 +344,7 @@ def accept_request(
 
     A matter number is issued at acceptance, not at submission.
     """
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     record = db.get(RequestRecord, request_id)
     if record is None:
         raise NotFound(REQUEST_NOT_FOUND)
@@ -364,7 +364,7 @@ def accept_request(
             principal.is_head_of_legal, payload.tier_change_reason
         ):
             raise Forbidden(
-                "A tier may only be lowered by the Head of Legal, with a recorded reason."
+                "A tier may only be lowered by the legal lead, with a recorded reason."
             )
         if not payload.tier_change_reason:
             raise ValidationFailed(
@@ -477,7 +477,7 @@ def accept_request(
 def return_for_information(
     request_id: uuid.UUID, payload: ReturnRequest, db: Db, principal: CurrentUser
 ) -> Ack:
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     record = db.get(RequestRecord, request_id)
     if record is None:
         raise NotFound(REQUEST_NOT_FOUND)
@@ -521,7 +521,7 @@ def close_without_matter(
     outcome that produces no matter to carry an explanation, so if the reason
     is not written here it is not written anywhere.
     """
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     record = db.get(RequestRecord, request_id)
     if record is None:
         raise NotFound(REQUEST_NOT_FOUND)
@@ -690,7 +690,7 @@ def matter_request(matter_id: uuid.UUID, db: Db, principal: CurrentUser) -> Requ
 def update_matter(
     matter_id: uuid.UUID, payload: MatterUpdate, db: Db, principal: CurrentUser
 ) -> MatterOut:
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     matter = db.get(Matter, matter_id)
     if matter is None:
         raise NotFound(MATTER_NOT_FOUND)
@@ -750,7 +750,7 @@ def update_matter(
 def transition_matter(
     matter_id: uuid.UUID, payload: TransitionRequest, db: Db, principal: CurrentUser
 ) -> MatterOut:
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     matter = db.get(Matter, matter_id)
     if matter is None:
         raise NotFound(MATTER_NOT_FOUND)
@@ -856,6 +856,11 @@ def record_decision(
     db.add(record)
     db.flush()
 
+    # Written into memory here, because this is the record people come to
+    # memory for. "Have we ever accepted uncapped liability, and who approved
+    # it" is answerable only if the concession was indexed when it was made.
+    memory.index_decision(db, record, matter=matter)
+
     if rule["library_review"]:
         notifications.notify(
             db,
@@ -908,7 +913,7 @@ def link_counterparty(
     than a per-entity record, so there is no entity to check it against. What
     is separated is the matter, not the company it is with.
     """
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     matter = db.get(Matter, matter_id)
     if matter is None:
         raise NotFound(MATTER_NOT_FOUND)
@@ -1018,7 +1023,7 @@ def reassign(
 def set_restricted(
     matter_id: uuid.UUID, payload: RestrictRequest, db: Db, principal: CurrentUser
 ) -> Ack:
-    """A matter can be marked restricted by counsel or above."""
+    """A matter can be marked restricted by legal staff or above."""
     principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     principal.require_step_up("change the restriction on a matter")
 
@@ -1078,7 +1083,7 @@ def override_tier(
     proposed = RiskTier(payload.tier)
     lowering = proposed.value < matter.risk_tier
     if lowering and not tiering.may_lower_tier(principal.is_head_of_legal, payload.reason):
-        raise Forbidden("A tier may only be lowered by the Head of Legal, with a recorded reason.")
+        raise Forbidden("A tier may only be lowered by the legal lead, with a recorded reason.")
 
     before = matter.risk_tier
     matter.risk_tier = proposed.value

@@ -143,7 +143,7 @@ def decide_proposal(
 ) -> ObligationOut:
     """Legal confirms, edits or rejects a proposal, and confirmation creates a
     tracked task (LOP-M08-US-02)."""
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     obligation = db.get(Obligation, obligation_id)
     if obligation is None:
@@ -298,7 +298,7 @@ def calendar_feed(db: Db, principal: CurrentUser, entity: WorkingEntity) -> Resp
 @router.post("/obligations/run-reminders")
 def run_reminders(db: Db, principal: CurrentUser, entity: WorkingEntity) -> Ack:
     """Send reminders and escalate breaches. The scheduler calls this."""
-    principal.require_role(Role.LEGAL_OPS, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     sent = 0
     escalated = 0
@@ -363,7 +363,7 @@ def complete_compliance(
     principal: CurrentUser,
 ) -> ComplianceItem:
     """Completion requires filing evidence where configured."""
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     item = db.get(ComplianceItem, item_id)
     if item is None:
         raise NotFound(COMPLIANCE_NOT_FOUND)
@@ -417,7 +417,7 @@ def create_renewal_task(
     carries the four decisions that are actually available, so the owner records
     a choice rather than letting the window pass by default.
     """
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     contract = db.get(Contract, contract_id)
     if contract is None:
@@ -489,7 +489,7 @@ def record_renewal_decision(
     reason: str | None = None,
 ) -> ObligationOut:
     """Record renew, renegotiate, terminate or allow to lapse."""
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     obligation = db.get(Obligation, obligation_id)
     if obligation is None:
@@ -534,7 +534,7 @@ def version_requirement(
     leaves the old one in place, so historical compliance is assessed against
     the rule that applied at the time rather than the rule that applies now.
     """
-    principal.require_role(Role.HEAD_OF_LEGAL, Role.ADMIN, Role.LEGAL_OPS)
+    principal.require_role(Role.HEAD_OF_LEGAL, Role.ADMIN, Role.COUNSEL)
 
     current = db.get(ComplianceItem, item_id)
     if current is None:

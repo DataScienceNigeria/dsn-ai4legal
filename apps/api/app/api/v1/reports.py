@@ -85,7 +85,7 @@ def operational(
     db: Db, principal: CurrentUser, entity: WorkingEntity, cross_entity: bool = False
 ) -> OperationalReport:
     principal.require_role(
-        Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.MANAGEMENT, Role.ADMIN
+        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.MANAGEMENT, Role.ADMIN
     )
     entities = _reporting_entities(db, principal, entity, cross_entity, "operational")
 
@@ -353,7 +353,7 @@ def weekly_update(
 ) -> WeeklyUpdate:
     """The weekly progress update, generated rather than written.
 
-    The figures are computed here. The Head of Legal reads it before it is
+    The figures are computed here. The legal lead reads it before it is
     circulated.
     """
     principal.require_role(Role.HEAD_OF_LEGAL, Role.MANAGEMENT, Role.ADMIN)
@@ -541,7 +541,7 @@ def exposure(
         "obligations_at_risk": sorted(at_risk, key=lambda row: row["days_until_due"]),
         "note": (
             "Exposure is counted from accepted and cleared findings, so a "
-            "deviation that counsel rejected does not appear here."
+            "deviation that legal rejected does not appear here."
         ),
     }
 
@@ -643,7 +643,7 @@ def inbox_accuracy(
     a false negative for the category Legal chose instead, which is what makes
     the two columns add up to something a gate can be read against.
     """
-    principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL, Role.AUDITOR, Role.LEGAL_OPS)
+    principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL, Role.AUDITOR, Role.COUNSEL)
 
     since = datetime.now(UTC) - timedelta(days=days)
     messages = list(

@@ -181,7 +181,7 @@ export default function Archive() {
   const [renewing, setRenewing] = React.useState<Contract | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const { has } = useRoles();
-  const canAct = has("legal_ops", "counsel", "head_of_legal", "admin");
+  const canAct = has("counsel", "head_of_legal", "admin");
   const router = useRouter();
 
 

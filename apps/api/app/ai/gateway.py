@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.ai import guards
 from app.ai.envelope import AIEnvelope, Cost, EnvelopeBuilder, Route, Source, UngroundedOutput
 from app.ai.providers import PROVIDERS, ModelRequest, ProviderUnavailable, available_routes
+from app.ai.redaction import Masking
 from app.ai.retrieval import RetrievedChunk, render_context
 from app.ai.routing import RouteRefused, select_route
 from app.core.errors import CapabilityDisabled
@@ -228,6 +229,29 @@ def invoke(session: Session, call: CapabilityCall) -> AIEnvelope:
     else:
         builder.add_check("prompt_injection", passed=True)
 
+    # Masking, where the route says the provider is a third party.
+    #
+    # The flag has been on the route from the beginning and nothing read it,
+    # so confidential records went out whole. What leaves is the agreement and
+    # its figures, which is what an answer is made of; what does not leave is
+    # the contact details, government identifiers and account numbers inside
+    # it, which no answer needs. It is put back before the reader sees it,
+    # because the reader is entitled to the record it came from: what is being
+    # protected is the transit, not the person who asked.
+    masking = Masking()
+    if route.redaction_required:
+        user_content = masking.mask(user_content)
+        builder.add_check(
+            "personal_data_masked",
+            passed=True,
+            detail=(
+                f"{masking.total} personal identifiers were replaced before the request "
+                f"left for {route.provider}, and restored in the answer."
+                if masking.total
+                else "No personal identifier was found to mask."
+            ),
+        )
+
     request = ModelRequest(
         system=f"{PLATFORM_SYSTEM_PREFIX}\n\n{call.system}",
         user_content=user_content,
@@ -273,7 +297,7 @@ def invoke(session: Session, call: CapabilityCall) -> AIEnvelope:
         )
         return builder.refuse(response.refusal_reason or "The model declined the request.")
 
-    builder.output = response.parsed
+    builder.output = masking.unmask_payload(response.parsed)
     if call.subject is not None:
         builder.add_source(call.subject)
     for cited in _cited_references(response.parsed):
@@ -283,9 +307,11 @@ def invoke(session: Session, call: CapabilityCall) -> AIEnvelope:
         if match is not None:
             builder.add_source(match.to_source())
 
-    invented = _cited_references(response.parsed) - {
-        c.chunk.source_reference for c in call.context
-    }
+    invented = {
+        cited
+        for cited in _cited_references(response.parsed)
+        if _looks_like_reference(cited)
+    } - {c.chunk.source_reference for c in call.context}
     builder.add_check(
         "citations_resolve",
         passed=not invented,
@@ -363,13 +389,29 @@ def fit(value: str | None, limit: int) -> str | None:
     return cleaned[:limit]
 
 
+#: A reference the model cited. Spaces and full stops are allowed because a
+#: clause of an agreement is cited as "EAI-CON-2026-0040 cl. 6.2", and a
+#: pattern that stopped at the space matched only the agreement's own summary
+#: chunk. Every clause citation then resolved to nothing: the sources list on
+#: an answer built from eleven clauses showed one, and the reader could not
+#: follow a single claim back to the paragraph it came from.
+#:
+#: It still has to look like a reference. A digit or a hyphen is required, so
+#: an aside written in square brackets is prose and not a broken citation.
+CITATION = re.compile(r"\[([A-Za-z][A-Za-z0-9\-./ ]{2,63})\]")
+
+
+def _looks_like_reference(value: str) -> bool:
+    return any(character.isdigit() for character in value) or "-" in value
+
+
 def _cited_references(payload: Any) -> set[str]:
     """Collect every bracketed reference the model produced, at any depth."""
     found: set[str] = set()
 
     def walk(node: Any) -> None:
         if isinstance(node, str):
-            found.update(re.findall(r"\[([A-Z][A-Za-z0-9\-\.]{2,})\]", node))
+            found.update(match.strip() for match in CITATION.findall(node))
         elif isinstance(node, dict):
             for key, value in node.items():
                 if key in {"cites", "citations", "sources", "source_references"} and isinstance(

@@ -36,7 +36,7 @@ type NavItem = {
   counter?: keyof NavCounts;
 };
 
-const LEGAL = ["legal_ops", "counsel", "head_of_legal", "admin"];
+const LEGAL = ["counsel", "head_of_legal", "admin"];
 
 const NAV: { group: string; items: NavItem[] }[] = [
   {
@@ -187,9 +187,8 @@ const ENTITY_NAMES: Record<string, string> = {
 const ROLE_LABELS: Record<string, string> = {
   requester: "Requester",
   management: "Management",
-  legal_ops: "Legal operations",
-  counsel: "Counsel",
-  head_of_legal: "Head of Legal",
+  counsel: "Legal",
+  head_of_legal: "Legal lead",
   privacy: "Privacy, the DPO",
   admin: "Administrator",
   auditor: "Auditor",
@@ -242,8 +241,7 @@ function primaryRole(roles: string[]): string {
     "admin",
     "counsel",
     "privacy",
-    "legal_ops",
-    "auditor",
+      "auditor",
     "management",
     "requester",
   ];

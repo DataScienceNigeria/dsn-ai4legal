@@ -37,7 +37,7 @@ from app.schemas.matters import (
     VersionDiffLine,
     VersionProposal,
 )
-from app.services import docx_import, placeholders, storage
+from app.services import docx_import, memory, placeholders, storage
 from app.services.generation import GeneratedBlock, GenerationResult, render_docx
 
 router = APIRouter(tags=["library"])
@@ -73,7 +73,7 @@ def _current_template_version(template: Template) -> TemplateVersion | None:
 def list_clauses(db: Db, principal: CurrentUser, entity: WorkingEntity) -> list[ClauseOut]:
     """A requester never sees the clause library (PRD section 5.2)."""
     principal.require_role(
-        Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
+        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
     )
     clauses = list(db.execute(select(Clause).order_by(Clause.category)).scalars())
     out = []
@@ -91,7 +91,7 @@ def list_clauses(db: Db, principal: CurrentUser, entity: WorkingEntity) -> list[
 @router.get("/clauses/{category}")
 def get_clause(category: str, db: Db, principal: CurrentUser) -> ClauseOut:
     principal.require_role(
-        Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
+        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
     )
     clause = db.execute(
         select(Clause).where(Clause.category == category.upper())
@@ -226,7 +226,7 @@ def clause_diff(
     from_reference: str = Query(alias="from"),
     to_reference: str = Query(alias="to"),
 ) -> VersionDiff:
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     versions = {
         v.reference: v
         for v in db.execute(
@@ -288,11 +288,27 @@ def publish_version(reference: str, db: Db, principal: CurrentUser) -> Ack:
         previous = db.get(model, version.supersedes_id)
         if previous:
             previous.status = VersionStatus.SUPERSEDED.value
+            # The old position stays in memory and is marked. A question about
+            # a position we used to hold has a real answer, and the reference
+            # the model cites has to keep resolving; what it must not do is
+            # present it as current.
+            memory.supersede(db, "clause", previous.reference, reference)
 
     version.status = VersionStatus.APPROVED.value
     version.approved_by_id = uuid.UUID(principal.user_id)
     version.approval_date = today
     version.effective_date = version.effective_date or today
+
+    if clause_version is not None:
+        clause = db.get(Clause, clause_version.clause_id)
+        entities = (clause.entity_applicability if clause else None) or ["EAI"]
+        for entity in entities:
+            memory.index_clause_version(
+                db,
+                clause_version,
+                category=clause.category if clause else "Clause",
+                entity=entity,
+            )
 
     audit.record(
         db,
@@ -337,7 +353,7 @@ def reject_version(reference: str, db: Db, principal: CurrentUser) -> Ack:
 @router.get("/templates")
 def list_templates(db: Db, principal: CurrentUser, entity: WorkingEntity) -> list[TemplateOut]:
     principal.require_role(
-        Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
+        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
     )
     out = []
     for template in db.execute(select(Template).order_by(Template.name)).scalars():
@@ -368,7 +384,7 @@ def _template_version_out(version) -> TemplateVersionOut:
 
 def get_template(code: str, db: Db, principal: CurrentUser) -> TemplateOut:
     principal.require_role(
-        Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
+        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
     )
     template = db.execute(select(Template).where(Template.code == code)).scalar_one_or_none()
     if template is None:
@@ -537,7 +553,7 @@ def preview_template(
     clause version the template pins, so what is read is what would issue.
     """
     principal.require_role(
-        Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
+        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
     )
     template = db.execute(select(Template).where(Template.code == code)).scalar_one_or_none()
     if template is None:
@@ -729,7 +745,7 @@ def propose_template_version(
 def review_due(db: Db, principal: CurrentUser, within_days: int = 30) -> list[dict]:
     """Owners are notified 30 days before a review date, and overdue reviews
     appear on the dashboard (LOP-M03-US-05)."""
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     from datetime import timedelta
 
     horizon = date.today() + timedelta(days=within_days)
@@ -772,7 +788,7 @@ def review_due(db: Db, principal: CurrentUser, within_days: int = 30) -> list[di
 
 @router.get("/playbooks/{agreement_type}")
 def get_playbook(agreement_type: str, db: Db, principal: CurrentUser) -> dict:
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     playbook = db.execute(
         select(Playbook).where(Playbook.agreement_type == agreement_type)
     ).scalar_one_or_none()

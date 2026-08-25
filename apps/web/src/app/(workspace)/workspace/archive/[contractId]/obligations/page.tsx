@@ -41,7 +41,7 @@ export default function ContractObligations() {
   const params = useParams<{ contractId: string }>();
   const contractId = params.contractId;
   const { has } = useRoles();
-  const canAct = has("legal_ops", "counsel", "head_of_legal", "admin");
+  const canAct = has("counsel", "head_of_legal", "admin");
 
   const contract = useApi<Contract>(`/contracts/${contractId}`, [contractId]);
   const obligations = useApi<Obligation[]>(`/contracts/${contractId}/obligations`, [contractId]);

@@ -60,7 +60,7 @@ REQUESTER_STEP = {
 }
 
 HEAD_STEP = {
-    "name": "Head of Legal",
+    "name": "Legal lead",
     "mode": "sequential",
     "role": "head_of_legal",
     "due_hours": 24,
@@ -72,7 +72,7 @@ def derive_chain(context: ChainContext) -> tuple[str, list[dict], list[str]]:
 
     The notes are part of the record rather than an aside. A matter that never
     went to its requester should say so on its face instead of looking like one
-    where the step is outstanding, and a matter the Head of Legal drafted and
+    where the step is outstanding, and a matter the legal lead drafted and
     signed off themselves should say that too, since the step is there and only
     the note distinguishes it from a second pair of eyes.
     """
@@ -95,13 +95,13 @@ def derive_chain(context: ChainContext) -> tuple[str, list[dict], list[str]]:
 
     if context.drafter_is_head:
         notes.append(
-            "The Head of Legal drafted this, so their step is their own sign-off "
+            "The legal lead drafted this, so their step is their own sign-off "
             "rather than a second pair of eyes. Routing it to somebody who did not "
             "read it would look like review and be none."
         )
     steps.append(HEAD_STEP)
 
-    name = "Requester and Head of Legal" if len(steps) > 1 else "Head of Legal"
+    name = "Requester and legal lead" if len(steps) > 1 else "Legal lead"
     return name, steps, notes
 
 

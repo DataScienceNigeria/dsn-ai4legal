@@ -103,7 +103,7 @@ def create_counterparty(
     payload: CounterpartyCreate, db: Db, principal: CurrentUser
 ) -> CounterpartyCreateResult:
     """Creation warns on likely duplicates and offers merge instead."""
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     duplicates = find_duplicates(db, payload)
     if duplicates and not payload.confirm_despite_duplicates:
@@ -196,7 +196,7 @@ def update_counterparty(
     executed contract names, and a correction after execution is a different
     conversation from a correction before it.
     """
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     record = db.get(Counterparty, counterparty_id)
     if record is None:
@@ -249,7 +249,7 @@ def counterparty_history(
     counterparty_id: uuid.UUID, db: Db, principal: CurrentUser
 ) -> dict:
     """All matters, contracts, positions and concessions, in date order."""
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     record = db.get(Counterparty, counterparty_id)
     if record is None:
         raise NotFound(COUNTERPARTY_NOT_FOUND)
@@ -364,7 +364,7 @@ def merge(
 @router.get("/vendors")
 def list_vendors(db: Db, principal: CurrentUser) -> list[VendorOut]:
     principal.require_role(
-        Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
+        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
     )
     names = {
         row.id: row.legal_name for row in db.execute(select(Counterparty)).scalars()
@@ -381,7 +381,7 @@ def list_vendors(db: Db, principal: CurrentUser) -> list[VendorOut]:
 def renewal_risk(vendor_id: uuid.UUID, db: Db, principal: CurrentUser) -> dict:
     """A renewal task surfaces outstanding findings and expired assessments."""
     principal.require_role(
-        Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
+        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
     )
     vendor = db.get(Vendor, vendor_id)
     if vendor is None:

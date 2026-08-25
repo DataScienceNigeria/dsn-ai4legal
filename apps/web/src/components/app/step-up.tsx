@@ -11,7 +11,7 @@ import { ApiError, stepUp } from "@/lib/api";
   matter and changing configuration all demand a fresh authentication, and for
   the roles that carry a second factor they demand the factor too. The API
   refuses with step_up_required; before this there was nowhere in the interface
-  to answer that refusal, so a Head of Legal could write a draft and never put
+  to answer that refusal, so a legal lead could write a draft and never put
   it into force.
 
   It is one dialog, raised by whichever action was refused and retrying that

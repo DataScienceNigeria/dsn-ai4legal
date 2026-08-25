@@ -30,10 +30,10 @@ const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.doc
 
 const AUTHORITY_LABEL: Record<string, string> = {
   house: "Any authorised user",
-  fallback_1: "Counsel",
-  fallback_2: "Head of Legal",
-  fallback_3: "Head of Legal plus the accountable business owner",
-  outside: "Head of Legal plus the executive sponsor",
+  fallback_1: "Legal",
+  fallback_2: "Legal lead",
+  fallback_3: "Legal lead plus the accountable business owner",
+  outside: "Legal lead plus the executive sponsor",
 };
 
 /*
@@ -112,8 +112,8 @@ export default function Review() {
   const edited = draft.trim() !== suggestion.trim() && draft.trim().length > 0;
 
   /*
-    Authority to concede, PRD section 14.3. Legal operations may clear a minor
-    finding that already matches a pre-approved fallback and nothing else.
+    Authority to concede, PRD section 14.3. Legal staff hold house position and
+    fallback 1; the legal lead holds everything above.
 
     The approval chain would catch a concession made above someone's level, but
     it would catch it as a yes or no on a whole agreement. This is what makes a
@@ -128,9 +128,6 @@ export default function Review() {
         finding.required_authority !== "fallback_3" &&
         finding.required_authority !== "outside"
       );
-    }
-    if (has("legal_ops")) {
-      return finding.severity === "minor" && finding.matches_preapproved_fallback;
     }
     return false;
   }
@@ -187,7 +184,7 @@ export default function Review() {
 
   const decided = all.filter((finding) => finding.decision !== "pending").length;
   const latest = rounds.data?.[rounds.data.length - 1] ?? null;
-  const canEdit = has("legal_ops", "counsel", "head_of_legal", "admin");
+  const canEdit = has("counsel", "head_of_legal", "admin");
 
   return (
     <div className="space-y-6">
@@ -302,7 +299,7 @@ export default function Review() {
                   mode="editing"
                   exportable={false}
                   onAutosave={save}
-                  user={{ name: me?.name ?? "Counsel", email: me?.email ?? "" }}
+                  user={{ name: me?.name ?? "Legal", email: me?.email ?? "" }}
                   height="min(calc(100vh - 24rem), 68vh)"
                 />
               </CardBody>

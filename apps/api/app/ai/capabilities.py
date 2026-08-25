@@ -29,15 +29,13 @@ def _string_array() -> dict[str, Any]:
 ASK_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "paragraphs": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string"},
-                    "cites": _string_array(),
-                },
-            },
+        "answer": {
+            "type": "string",
+            "description": (
+                "The answer, written as Markdown. Headings, bold and lists where they "
+                "help a reader; ordinary connected prose where they do not. Cite inline "
+                "with the reference in square brackets."
+            ),
         },
         "suppressed_statements": {
             "type": "integer",
@@ -49,21 +47,53 @@ ASK_SCHEMA: dict[str, Any] = {
         "note": {"type": "string"},
         "unsupported_segments": _string_array(),
     },
+    "required": ["answer"],
 }
 
 ASK_SYSTEM = """\
 You answer questions about this organisation's legal position from its own
-records. Answer in short paragraphs. Each paragraph cites the records it rests
-on, using the reference in square brackets exactly as it appears in the
-retrieved material.
+records, and you write like a colleague answering across a desk.
 
-A statement you cannot attribute to a retrieved record does not go in the
-answer. Count it in suppressed_statements instead. Where the current house
-position and a superseded one both appear, give the current position first and
-label the superseded one.
+Be comprehensive. Say everything the retrieved records support that bears on
+the question, and organise it so a reader can find their way. A lawyer asking
+about an agreement wants what it says: its term, what each party has to do,
+what it costs, how it ends, what happens on breach, what was conceded and by
+whom. Answer that fully. Brevity is not a virtue here; only irrelevance is.
+
+Write in Markdown and write properly. Lead with the direct answer in a sentence
+or two, then set out the detail. Use headings where an answer has parts, a list
+where the content is a list, and connected prose everywhere else: one idea
+leading into the next, not a stack of disconnected sentences. Where the records
+are genuinely thin, a short answer is the honest one, and padding it is worse
+than its being short.
+
+Bold sparingly, for the figure or the name the reader came for. Bolding every
+date and value in a sentence makes a form of it, and a form is harder to read
+than the sentence was.
+
+Cite inline, in square brackets, using the reference exactly as it appears in
+the retrieved material, at the end of the clause or sentence it supports. Cite
+where the claim is made rather than collecting every reference at the end. Do
+not cite the same reference twice in one sentence, and do not restate a
+reference the reader can already see.
+
+What you may say is bounded by what you were given. A statement you cannot
+attribute to a retrieved record does not go in the answer; count it in
+suppressed_statements.
+
+Gaps go in the note and nowhere else. Say what is missing once, plainly, in the
+reader's terms, and without a citation: "the record does not say what the
+notice period is", not "no source was retrieved". Do not list the gap in the
+answer as well; a paragraph enumerating everything a record fails to mention is
+not an answer, and reading it twice is worse than reading it once. Where the
+gap is the answer, because the records hold nothing on the question, say that
+in the answer and leave the note empty.
+
+Where the current house position and a superseded one both appear, give the
+current position first and label the superseded one.
 
 You judge nothing about whether a position should change. You report what the
-records say."""
+records say. Never invent a reference, a figure or a date."""
 
 
 CLASSIFY_SCHEMA: dict[str, Any] = {
@@ -362,6 +392,27 @@ sets no date, mark it event driven rather than inventing a date. Nothing you
 propose becomes a task until Legal confirms it."""
 
 
+TITLE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "title": {
+            "type": "string",
+            "description": "Three to six words naming what the thread is about.",
+        }
+    },
+    "required": ["title"],
+}
+
+TITLE_SYSTEM = """\
+You name a saved thread from the question that opened it. Three to six words,
+naming the subject rather than repeating the sentence: "Uncapped liability
+precedent" not "Have we ever accepted uncapped liability".
+
+No trailing punctuation, no quotation marks, and no words like question, query
+or thread. Where the question names a counterparty or an agreement, keep that
+name: it is what someone scanning a list of threads is looking for."""
+
+
 SUMMARY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -379,7 +430,7 @@ You write a management update from the figures supplied to you. Every line
 states a number that appears in the supplied data. You draw no conclusion the
 figures do not support, and you make no forecast.
 
-The Head of Legal reads and approves this before it is circulated."""
+The legal lead reads and approves this before it is circulated."""
 
 
 REGISTRY: dict[str, dict[str, Any]] = {
@@ -418,6 +469,14 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "schema": OBLIGATION_SCHEMA,
         "schema_name": "obligations",
         "substantive": True,
+    },
+    "conversation_title": {
+        "system": TITLE_SYSTEM,
+        "schema": TITLE_SCHEMA,
+        "schema_name": "conversation_title",
+        # Not substantive: naming a thread states nothing about the record, so
+        # it needs no source and makes no claim anyone could rely on.
+        "substantive": False,
     },
     "management_summary": {
         "system": SUMMARY_SYSTEM,

@@ -3,6 +3,7 @@
 import * as React from "react";
 
 import { Icon } from "@/components/app/icons";
+import { AnswerBody as AnswerProse } from "@/components/app/answer";
 import { useSession } from "@/components/app/session";
 import {
   Button,
@@ -12,8 +13,6 @@ import {
   Input,
   Modal,
   Mono,
-  Notice,
-  Pill,
   Refusal,
   Spinner,
 } from "@/components/ui";
@@ -68,35 +67,44 @@ function AnswerBody({ answer }: Readonly<{ answer: Answer }>) {
   return (
     <Card>
       <CardBody className="space-y-3">
-        {answer.paragraphs.map((paragraph) => (
-          <p key={paragraph.text} className="text-sm leading-relaxed">
-            {paragraph.text}{" "}
-            {paragraph.cites.map((cite) => (
-              <Pill key={cite} tone="info" className="ml-1 align-middle">
-                {cite}
-              </Pill>
-            ))}
+        <AnswerProse
+          markdown={answer.answer}
+          references={answer.sources.map((source) => source.reference)}
+        />
+
+        {/*
+          What the records did not cover, in the reader's words. It sits under
+          the answer as a sentence rather than in a warning panel: it is part
+          of the answer, not an incident.
+        */}
+        {answer.note || answer.suppressed_statements > 0 ? (
+          <p className="max-w-reading text-xs leading-relaxed text-muted-foreground">
+            {answer.note}
+            {answer.suppressed_statements > 0 ? (
+              <>
+                {answer.note ? " " : ""}
+                {answer.suppressed_statements} statement
+                {answer.suppressed_statements === 1 ? " was" : "s were"} left out for want of a
+                record to support {answer.suppressed_statements === 1 ? "it" : "them"}.
+              </>
+            ) : null}
           </p>
-        ))}
-
-        {answer.suppressed_statements > 0 ? (
-          <Notice tone="warn" title="Some statements were suppressed">
-            {answer.suppressed_statements} statement
-            {answer.suppressed_statements === 1 ? " was" : "s were"} left out because no retrieved
-            record supported them.
-          </Notice>
         ) : null}
 
-        {answer.note ? (
-          <p className="text-xs leading-relaxed text-muted-foreground">{answer.note}</p>
-        ) : null}
-
+        {/*
+          The sources, folded away. They are the proof, and proof belongs
+          within reach rather than in the middle of the reading: the citations
+          in the text already say which record each claim rests on.
+        */}
         {answer.sources.length ? (
-          <div className="border-t pt-3">
-            <div className="mb-2 text-2xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              Sources
-            </div>
-            <div className="space-y-1.5">
+          <details className="group border-t pt-3">
+            <summary className="cursor-pointer list-none text-xs text-muted-foreground hover:text-foreground">
+              {answer.sources.length} source{answer.sources.length === 1 ? "" : "s"}
+              <span className="ml-1.5 inline-block transition-transform group-open:rotate-90">
+                &#9656;
+              </span>
+            </summary>
+            <div className="mt-2.5 space-y-1.5">
               {answer.sources.map((source) => (
                 <div key={source.reference} className="flex items-baseline gap-2 text-sm">
                   <Mono>{source.reference}</Mono>
@@ -106,14 +114,13 @@ function AnswerBody({ answer }: Readonly<{ answer: Answer }>) {
                   </span>
                 </div>
               ))}
+              {answer.interaction_id ? (
+                <div className="pt-1.5">
+                  <Mono>{answer.interaction_id}</Mono>
+                </div>
+              ) : null}
             </div>
-          </div>
-        ) : null}
-
-        {answer.interaction_id ? (
-          <div className="border-t pt-2">
-            <Mono>{answer.interaction_id}</Mono>
-          </div>
+          </details>
         ) : null}
       </CardBody>
     </Card>

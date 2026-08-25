@@ -199,7 +199,7 @@ export default function TriageDetail() {
   const tierChanged = effectiveTier !== data.tier;
   const proposedOwner = users.data?.find((user) => user.id === (owner ?? data.proposed_owner));
   const eligibleOwners = (users.data ?? []).filter((user) =>
-    user.roles.some((role) => ["counsel", "head_of_legal", "legal_ops"].includes(role)),
+    user.roles.some((role) => ["counsel", "head_of_legal"].includes(role)),
   );
 
   function openOutcome(next: "close" | "return") {
@@ -308,7 +308,7 @@ export default function TriageDetail() {
 
             <Field
               label="Change the tier"
-              hint="A tier may only be lowered by the Head of Legal, and every change needs a reason."
+              hint="A tier may only be lowered by the legal lead, and every change needs a reason."
             >
               <Select value={effectiveTier} onChange={(event) => setTier(event.target.value)}>
                 {TIERS.map((value) => (

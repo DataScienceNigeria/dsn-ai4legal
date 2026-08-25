@@ -332,7 +332,7 @@ def get_request(request_id: uuid.UUID, db: Db, principal: CurrentUser) -> Reques
         raise NotFound(REQUEST_NOT_FOUND)
     owns_it = str(record.requester_id) == principal.user_id
     if not owns_it and not principal.has_role(
-        Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN
+        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN
     ):
         raise NotFound(REQUEST_NOT_FOUND)
     return record

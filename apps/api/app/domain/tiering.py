@@ -2,7 +2,7 @@
 
 Tier is computed from configurable inputs and the highest triggered tier wins.
 The requester never selects the tier (PRD section 7.1, business rules). It may
-be lowered only by the Head of Legal, with a recorded reason.
+be lowered only by the legal lead, with a recorded reason.
 """
 
 from dataclasses import dataclass, field
@@ -155,5 +155,5 @@ def derive_tier(
     return outcome
 
 def may_lower_tier(role_is_head_of_legal: bool, reason: str | None) -> bool:
-    """A tier may only be lowered by the Head of Legal, with a recorded reason."""
+    """A tier may only be lowered by the legal lead, with a recorded reason."""
     return role_is_head_of_legal and bool((reason or "").strip())

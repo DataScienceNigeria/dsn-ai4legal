@@ -8,10 +8,11 @@ import { Button, Card, CardBody, Field, Input, Notice, PasswordInput } from "@/c
 import { ApiError, login } from "@/lib/api";
 
 const DEMO_ACCOUNTS = [
-  { email: "adaeze.okafor@dsn.example", role: "Head of Legal, sees both entities" },
-  { email: "ifeoma.chukwu@dsn.example", role: "Counsel" },
-  { email: "amaka.eze@dsn.example", role: "Legal operations" },
-  { email: "ngozi.adeyemi@dsn.example", role: "Requester, portal only" },
+  { email: "adaeze.okafor@dsn.example", role: "Legal lead, sees both entities" },
+  { email: "ifeoma.chukwu@dsn.example", role: "Legal" },
+  { email: "amaka.eze@dsn.example", role: "Legal" },
+  { email: "ngozi.adeyemi@dsn.example", role: "Department lead, the portal" },
+  { email: "fatima.bello@dsn.example", role: "Data protection officer" },
   { email: "emeka.obi@dsn.example", role: "AI and platform administrator" },
 ];
 

@@ -473,14 +473,12 @@ export type Communication = {
   extracted_values: ExtractedValue[];
 };
 
-export type AnswerParagraph = { text: string; cites: string[] };
-
 export type Source = { reference: string; kind: string; detail: string | null; quote: string | null };
 
 export type Answer = {
   interaction_id: string;
   question: string;
-  paragraphs: AnswerParagraph[];
+  answer: string;
   sources: Source[];
   note: string | null;
   refused: boolean;
@@ -571,7 +569,7 @@ export type Assessment = {
     notes?: string | null;
     completed_by?: string;
   }[];
-  captured: Record<string, string>;
+  captured: Record<string, unknown>;
   risks: { risk: string; likelihood: string; impact: string; control: string }[];
   controls: { control: string; status: string }[];
   testing_evidence: { test: string; result: string; date: string }[];
@@ -581,6 +579,12 @@ export type Assessment = {
   residual_risk_owner_id: string | null;
   approved_at: string | null;
   review_date: string | null;
+
+  raised_by_id: string | null;
+  submitted_at: string | null;
+  dpo_review: Record<string, DpoSectionReview>;
+  final_decision: string | null;
+  final_decision_reason: string | null;
 };
 
 export type OperationalReport = {
@@ -852,4 +856,45 @@ export type OrganisationRow = {
   signatory_name: string | null;
   signatory_title: string | null;
   incomplete: string[];
+};
+
+/*
+  The DPIA, as the platform serves it.
+
+  The form definition arrives from the API rather than being written here, so a
+  question added to the assessment appears in the portal without the interface
+  being redeployed and neither copy can drift from the other.
+*/
+export type DpiaQuestion = {
+  key: string;
+  label: string;
+  kind: "text" | "long_text" | "choice" | "multi_choice" | "boolean" | "date";
+  help_text: string | null;
+  options: string[];
+  required: boolean;
+  depends_on: string | null;
+};
+
+export type DpiaSection = {
+  key: string;
+  title: string;
+  intent: string;
+  assessed: boolean;
+  questions: DpiaQuestion[];
+};
+
+export type DpiaForm = {
+  sections: DpiaSection[];
+  decisions: { key: string; label: string }[];
+};
+
+export type DpoSectionReview = {
+  adequate: boolean;
+  reasons: string;
+  score: number;
+  recommendations: string | null;
+  responsibility: string | null;
+  due_date: string | null;
+  assessed_by: string;
+  assessed_at: string;
 };

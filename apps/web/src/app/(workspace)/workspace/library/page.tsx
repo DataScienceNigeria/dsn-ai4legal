@@ -30,10 +30,10 @@ import { formatDate, titleCase } from "@/lib/utils";
 
 const AUTHORITY_LABEL: Record<string, string> = {
   house: "Any authorised user on the matter",
-  fallback_1: "Counsel",
-  fallback_2: "Head of Legal",
-  fallback_3: "Head of Legal plus the accountable business owner",
-  outside: "Head of Legal plus the executive sponsor",
+  fallback_1: "Legal",
+  fallback_2: "Legal lead",
+  fallback_3: "Legal lead plus the accountable business owner",
+  outside: "Legal lead plus the executive sponsor",
 };
 
 function ClauseTab({
@@ -96,7 +96,7 @@ function ClauseTab({
                       />
                     ) : (
                       <span className="text-xs text-muted-foreground">
-                        A change is proposed by counsel and published by the clause owner
+                        A change is proposed by legal staff and published by the clause owner
                       </span>
                     )
                   }
@@ -269,7 +269,7 @@ export default function Library() {
 
       <p className="text-xs leading-relaxed text-muted-foreground">
         Publication requires the clause-owner role and a fresh authentication, and it supersedes
-        the previous version atomically. Counsel may propose a change but cannot publish one alone.
+        the previous version atomically. Legal staff may propose a change but cannot publish one alone.
       </p>
     </div>
   );

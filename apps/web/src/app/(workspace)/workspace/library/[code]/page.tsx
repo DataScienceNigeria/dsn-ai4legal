@@ -114,13 +114,13 @@ function TemplateHeader({
             variant={editing ? "dark" : "primary"}
             disabled={!mayEdit}
             onClick={onToggleMode}
-            title={mayEdit ? undefined : "Editing a template needs counsel or the Head of Legal."}
+            title={mayEdit ? undefined : "Editing a template needs legal staff or the legal lead."}
           >
             <Icon name={editing ? "templates" : "rename"} className="h-4 w-4" />
             {editLabel(editing, Boolean(draft))}
           </Button>
           {/* A draft is only worth writing if it can be put into force from
-              here. Publishing needs the Head of Legal and a fresh sign-in;
+              here. Publishing needs the legal lead and a fresh sign-in;
               the control renders nothing for anyone else. */}
           {draft ? (
             <VersionDecision reference={draft.reference} status={draft.status} onDone={onChanged} />
@@ -294,7 +294,7 @@ export default function TemplatePage() {
             mode={editing ? "editing" : "viewing"}
             exportable={false}
             onAutosave={editing ? save : undefined}
-            user={{ name: me?.name ?? "Counsel", email: me?.email ?? "" }}
+            user={{ name: me?.name ?? "Legal", email: me?.email ?? "" }}
             height="min(calc(100vh - 15rem), 80vh)"
           />
         </CardBody>

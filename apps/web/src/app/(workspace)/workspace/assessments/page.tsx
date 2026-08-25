@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import * as React from "react";
 
 import { AssessmentActions } from "@/components/app/assessment-actions";
@@ -62,7 +63,17 @@ export default function Assessments() {
                     current?.id === assessment.id && "bg-muted",
                   )}
                 >
-                  <div className="text-sm font-medium">{assessment.title}</div>
+                  {/*
+                    Through to the assessment itself. A list of titles is not a
+                    place to assess one, and the DPIA is where the answers and
+                    the judgement sit beside each other.
+                  */}
+                  <Link
+                    href={`/workspace/assessments/${assessment.id}`}
+                    className="block text-sm font-medium no-underline hover:underline"
+                  >
+                    {assessment.title}
+                  </Link>
                   <div className="mt-1 flex items-center gap-1.5">
                     <Mono>{assessment.reference}</Mono>
                     <Pill tone={assessment.stage === "closed" ? "good" : "warn"}>
@@ -175,7 +186,7 @@ export default function Assessments() {
                     {Object.entries(current.captured).map(([key, value]) => (
                       <div key={key}>
                         <dt className="text-xs text-muted-foreground">{titleCase(key)}</dt>
-                        <dd className="text-sm leading-relaxed">{value}</dd>
+                        <dd className="text-sm leading-relaxed">{String(value ?? "")}</dd>
                       </div>
                     ))}
                   </dl>

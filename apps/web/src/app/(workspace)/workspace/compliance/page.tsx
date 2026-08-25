@@ -138,7 +138,7 @@ function RequirementVersion({
           </DataState>
         </div>
 
-        {has("privacy", "head_of_legal", "legal_ops", "admin") ? (
+        {has("privacy", "head_of_legal", "counsel", "admin") ? (
           <div className="space-y-3 rounded-md border p-4">
             <div className="text-sm font-semibold">Publish a new version</div>
             <p className="text-sm text-muted-foreground">

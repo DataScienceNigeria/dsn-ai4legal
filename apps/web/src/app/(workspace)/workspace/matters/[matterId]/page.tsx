@@ -237,7 +237,7 @@ const ASKS: Record<string, { who: string; question: string }> = {
     question: "Is this the arrangement we asked for?",
   },
   head_of_legal: {
-    who: "Head of Legal",
+    who: "Legal lead",
     question: "Is this safe to sign?",
   },
 };

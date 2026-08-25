@@ -75,7 +75,13 @@ function CompleteStage({
   const fields = STAGE_FIELDS[stage] ?? [];
 
   React.useEffect(() => {
-    if (open) setCaptured({ ...assessment.captured });
+    if (open) {
+      setCaptured(
+        Object.fromEntries(
+          Object.entries(assessment.captured).map(([key, value]) => [key, String(value ?? "")]),
+        ),
+      );
+    }
   }, [open, assessment.captured]);
 
   const complete = useAction(async () => {

@@ -193,7 +193,7 @@ export default function DocumentScreen() {
                 source={`/documents/${document.id}/download`}
                 documentName={document.name}
                 mode={document.immutable ? "viewing" : mode}
-                user={{ name: me?.name ?? "Counsel", email: me?.email ?? "" }}
+                user={{ name: me?.name ?? "Legal", email: me?.email ?? "" }}
               />
             )}
           </CardBody>

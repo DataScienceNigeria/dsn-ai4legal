@@ -41,7 +41,7 @@ def assess(
     """Decide whether a document may issue without a human in the loop.
 
     Every condition here is a reason to stop. The function collects all of them
-    rather than returning on the first, because counsel deciding whether to
+    rather than returning on the first, because legal staff deciding whether to
     unblock an auto-issue needs the whole list, not the first item on it.
     """
     today = today or date.today()

@@ -40,7 +40,7 @@ from app.schemas.workspace import (
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
 
-LEGAL = (Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+LEGAL = (Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
 OPEN_MATTER_STATES = [
     MatterState.ACCEPTED.value,

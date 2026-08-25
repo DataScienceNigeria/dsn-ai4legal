@@ -21,6 +21,7 @@ from app.db.models.contract import (
     Contract,
     SignatureRequest,
 )
+from app.db.models.counterparty import Counterparty
 from app.db.models.document import Document
 from app.db.models.matter import Matter
 from app.db.models.organisation import User
@@ -34,7 +35,7 @@ from app.schemas.matters import (
     WetInkExecution,
 )
 from app.services import approvals as service
-from app.services import notifications, sequences, storage
+from app.services import memory, notifications, sequences, storage
 from app.services import signature as signature_service
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,7 @@ def open_approvals(
     principal: CurrentUser,
 ) -> list[ApprovalOut]:
     """Route a document for approval. Approval binds to its content hash."""
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     matter = db.get(Matter, matter_id)
     document = db.get(Document, payload.document_id)
@@ -242,14 +243,10 @@ def _decorate(approvals: list[Approval], db=None) -> list[ApprovalOut]:
 
 
 @router.get("/matters/{matter_id}/approvals")
-def list_approvals(
-    matter_id: uuid.UUID, db: Db, principal: CurrentUser
-) -> list[ApprovalOut]:
+def list_approvals(matter_id: uuid.UUID, db: Db, principal: CurrentUser) -> list[ApprovalOut]:
     approvals = list(
         db.execute(
-            select(Approval)
-            .where(Approval.matter_id == matter_id)
-            .order_by(Approval.step_index)
+            select(Approval).where(Approval.matter_id == matter_id).order_by(Approval.step_index)
         ).scalars()
     )
     return _decorate(approvals, db)
@@ -292,9 +289,7 @@ def list_signature_requests(
 
 
 @router.post("/signature/requests/{request_id}/placement-session")
-def placement_session(
-    request_id: uuid.UUID, db: Db, principal: CurrentUser
-) -> dict:
+def placement_session(request_id: uuid.UUID, db: Db, principal: CurrentUser) -> dict:
     """A session for the placement screen, so nobody signs in twice.
 
     Held to the same roles that may issue a request in the first place, and
@@ -309,9 +304,7 @@ def placement_session(
     if record is None:
         raise NotFound("That signature request was not found.")
     if record.status != "sent":
-        raise Conflict(
-            f"That request is {record.status}. There is nothing left to place on it."
-        )
+        raise Conflict(f"That request is {record.status}. There is nothing left to place on it.")
 
     opened = signature_service.selected().placement_session()
     if opened is None:
@@ -360,14 +353,15 @@ def decide(
         raise Forbidden("This approval step is assigned to someone else.")
 
     # A requester confirming their own request is not exercising a legal
-    # authority, so it is not gated on one. The Head of Legal step is, because
+    # authority, so it is not gated on one. The legal lead step is, because
     # it is the sign-off that puts the organisation behind the wording.
     if approval.approver_role == Role.HEAD_OF_LEGAL.value:
         principal.require_step_up(f"Approving {approval.step_name}")
 
-    if payload.decision == ApprovalDecision.CHANGES_REQUESTED.value and not (
-        payload.comments or ""
-    ).strip():
+    if (
+        payload.decision == ApprovalDecision.CHANGES_REQUESTED.value
+        and not (payload.comments or "").strip()
+    ):
         raise ValidationFailed(
             "Say what should change.",
             {
@@ -456,9 +450,7 @@ def request_signature(
     _refuse_counterparty_paper(document, "sent for signature", "send that instead")
 
     approvals = list(
-        db.execute(
-            select(Approval).where(Approval.matter_id == document.matter_id)
-        ).scalars()
+        db.execute(select(Approval).where(Approval.matter_id == document.matter_id)).scalars()
     )
     service.assert_signable(approvals, document.content_hash)
 
@@ -515,9 +507,7 @@ def request_signature(
 
 
 @router.post("/signature/requests/{request_id}/cancel")
-def cancel_signature(
-    request_id: uuid.UUID, reason: str, db: Db, principal: CurrentUser
-) -> Ack:
+def cancel_signature(request_id: uuid.UUID, reason: str, db: Db, principal: CurrentUser) -> Ack:
     principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     request = db.get(SignatureRequest, request_id)
     if request is None:
@@ -660,6 +650,7 @@ def _fetch_signed(certificate: dict) -> tuple[bytes | None, bytes | None]:
     signature is only visible on the PDF the service stamped: our own blocks
     are the unsigned text they were before anybody signed anything.
     """
+
     def pull(url: str | None) -> bytes | None:
         if not url:
             return None
@@ -732,6 +723,19 @@ def _archive(db, request: SignatureRequest, certificate: dict) -> Contract:
     db.add(contract)
     db.flush()
 
+    # Memory is written by the work that produces it. An agreement executed
+    # this morning has to be answerable this afternoon; indexing on a schedule
+    # would leave a window where the platform holds an answer it will not give.
+    memory.index_contract(
+        db,
+        contract,
+        matter=matter,
+        counterparty=db.get(Counterparty, matter.counterparty_id)
+        if matter.counterparty_id
+        else None,
+    )
+    memory.index_contract_clauses(db, contract, document, matter=matter)
+
     matter.status = MatterState.EXECUTED.value
     # What is actually true. It used to say "Confirm the proposed obligations"
     # while nothing had proposed any: extraction is a separate, substantive AI
@@ -752,9 +756,7 @@ def _archive(db, request: SignatureRequest, certificate: dict) -> Contract:
 
 
 @router.post("/matters/{matter_id}/execute-wet-ink")
-def wet_ink(
-    matter_id: uuid.UUID, payload: WetInkExecution, db: Db, principal: CurrentUser
-) -> Ack:
+def wet_ink(matter_id: uuid.UUID, payload: WetInkExecution, db: Db, principal: CurrentUser) -> Ack:
     """A manual fallback for execution outside the platform.
 
     Metadata completeness rules still apply.
@@ -777,26 +779,35 @@ def wet_ink(
     document.immutable = True
 
     reference, _ = sequences.new_contract_reference(db, matter.entity)
-    db.add(
-        Contract(
-            reference=reference,
-            matter_id=matter.id,
-            entity=matter.entity,
-            counterparty_id=matter.counterparty_id,
-            agreement_type="unknown",
-            effective_date=payload.signature_date,
-            value_amount=matter.value_amount,
-            value_currency=matter.value_currency,
-            signature_status="executed",
-            executed_document_id=document.id,
-            executed_at=datetime.now(UTC),
-            content_hash=document.content_hash,
-            executed_outside_platform=True,
-            execution_reason=payload.reason,
-            authoritative=True,
-            signature_certificate={"signatories": payload.signatories},
-        )
+    wet_ink = Contract(
+        reference=reference,
+        matter_id=matter.id,
+        entity=matter.entity,
+        counterparty_id=matter.counterparty_id,
+        agreement_type="unknown",
+        effective_date=payload.signature_date,
+        value_amount=matter.value_amount,
+        value_currency=matter.value_currency,
+        signature_status="executed",
+        executed_document_id=document.id,
+        executed_at=datetime.now(UTC),
+        content_hash=document.content_hash,
+        executed_outside_platform=True,
+        execution_reason=payload.reason,
+        authoritative=True,
+        signature_certificate={"signatories": payload.signatories},
     )
+    db.add(wet_ink)
+    db.flush()
+    memory.index_contract(
+        db,
+        wet_ink,
+        matter=matter,
+        counterparty=db.get(Counterparty, matter.counterparty_id)
+        if matter.counterparty_id
+        else None,
+    )
+    memory.index_contract_clauses(db, wet_ink, document, matter=matter)
     matter.status = MatterState.EXECUTED.value
 
     audit.record(

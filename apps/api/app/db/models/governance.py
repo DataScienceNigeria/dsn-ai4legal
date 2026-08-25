@@ -154,6 +154,29 @@ class Assessment(UUIDPrimaryKey, Timestamped, EntityScoped, Base):
     reassessment_triggered: Mapped[bool] = mapped_column(Boolean, default=False)
     classification: Mapped[str] = mapped_column(String(16), default=DataClass.INTERNAL.value)
 
+    raised_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("app_user.id", ondelete="SET NULL"), index=True
+    )
+    """The department lead who raised it. A DPIA is written by the people
+    building the thing, because they are the ones who know what it does with
+    personal data; legal reads it and judges it."""
+
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """When it left the requester and reached the data protection officer.
+    Before this it is a draft and belongs to whoever is writing it."""
+
+    dpo_review: Mapped[dict] = mapped_column(JSONB, default=dict)
+    """The officer's judgement, section by section: adequacy, reasons, a score
+    out of ten, and recommendations with an owner and a date. Kept apart from
+    the answers because they are two people's work and mixing them would let
+    one edit the other."""
+
+    final_decision: Mapped[str | None] = mapped_column(String(16))
+    """go_ahead, modify, or stop. Three outcomes and no fourth: stop has to be
+    available or the assessment is a formality."""
+
+    final_decision_reason: Mapped[str | None] = mapped_column(Text)
+
 class ComplianceItem(UUIDPrimaryKey, Timestamped, EntityScoped, Base):
     """Filing calendar with owners and evidence, M12."""
 

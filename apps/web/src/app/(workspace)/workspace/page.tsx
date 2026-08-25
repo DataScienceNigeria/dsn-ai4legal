@@ -197,7 +197,7 @@ export default function DeliveryDashboard() {
         <Card>
           <CardHeader
             title="Weekly update"
-            subtitle="Generated, not written. The Head of Legal approves before circulation."
+            subtitle="Generated, not written. The Legal lead approves before circulation."
             actions={<Link href="/workspace/capabilities" className="text-xs">AI usage</Link>}
           />
           <CardBody className="space-y-3 text-sm">

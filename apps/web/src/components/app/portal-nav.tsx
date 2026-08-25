@@ -17,7 +17,6 @@ import { cn } from "@/lib/utils";
   finished should not have to close the tab to leave.
 */
 const WORKSPACE_ROLES = new Set([
-  "legal_ops",
   "counsel",
   "head_of_legal",
   "admin",
@@ -26,9 +25,32 @@ const WORKSPACE_ROLES = new Set([
   "management",
 ]);
 
-const LINKS = [
-  { href: "/portal", label: "Raise a request" },
-  { href: "/portal/status", label: "My requests" },
+/*
+  What a department lead does here.
+
+  They are not legal staff, so nothing in this rail reaches the workspace. Each
+  entry is somewhere they can actually go, which is the whole test a navigation
+  has to pass: an item that leads to a refusal is worse than no item.
+*/
+const SIDE_LINKS = [
+  {
+    href: "/portal",
+    icon: "plus" as const,
+    label: "Raise a request",
+    detail: "Contracts, advice, anything legal",
+  },
+  {
+    href: "/portal/status",
+    icon: "matters" as const,
+    label: "My requests",
+    detail: "What you have asked for, and where it is",
+  },
+  {
+    href: "/portal/assessments",
+    icon: "assessments" as const,
+    label: "Data protection",
+    detail: "Assessments for what your team builds",
+  },
 ];
 
 export function PortalNav() {
@@ -40,21 +62,9 @@ export function PortalNav() {
 
   return (
     <nav className="flex items-center gap-1 sm:gap-2" aria-label="Portal">
-      {LINKS.map((link) => (
-        <Link
-          key={link.href}
-          href={link.href}
-          aria-current={pathname === link.href ? "page" : undefined}
-          className={cn(
-            "whitespace-nowrap rounded-md px-2 py-1.5 text-sm no-underline transition-colors sm:px-2.5",
-            pathname === link.href
-              ? "bg-heading/10 font-medium text-heading"
-              : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
-          )}
-        >
-          {link.label}
-        </Link>
-      ))}
+      {me?.name ? (
+        <span className="hidden text-sm text-muted-foreground sm:inline">{me.name}</span>
+      ) : null}
 
       {hasWorkspace ? (
         <Link
@@ -79,6 +89,55 @@ export function PortalNav() {
         <span className="hidden sm:inline">Sign out</span>
         <span className="sr-only sm:hidden">Sign out</span>
       </Button>
+    </nav>
+  );
+}
+
+
+/*
+  The rail. On a narrow screen it becomes a row above the content rather than
+  disappearing behind a control: three destinations fit across a phone, and a
+  menu that has to be opened to find out what is in it is a menu nobody opens.
+*/
+export function PortalSideNav() {
+  const pathname = usePathname();
+
+  return (
+    <nav
+      aria-label="Portal sections"
+      className="w-full shrink-0 lg:w-60"
+    >
+      <ul className="flex gap-1.5 overflow-x-auto pb-1 lg:sticky lg:top-6 lg:flex-col lg:gap-1 lg:overflow-visible lg:pb-0">
+        {SIDE_LINKS.map((link) => {
+          const active =
+            pathname === link.href ||
+            (link.href !== "/portal" && pathname.startsWith(`${link.href}/`));
+          return (
+            <li key={link.href} className="min-w-0">
+              <Link
+                href={link.href}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "flex items-start gap-2.5 whitespace-nowrap rounded-lg px-3 py-2.5 no-underline transition-colors lg:whitespace-normal",
+                  active
+                    ? "bg-heading/10 text-heading"
+                    : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
+                )}
+              >
+                <Icon name={link.icon} className="mt-0.5 h-4 w-4 shrink-0" />
+                <span className="min-w-0">
+                  <span className={cn("block text-sm", active && "font-medium")}>
+                    {link.label}
+                  </span>
+                  <span className="hidden text-xs leading-snug text-muted-foreground lg:block">
+                    {link.detail}
+                  </span>
+                </span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
     </nav>
   );
 }

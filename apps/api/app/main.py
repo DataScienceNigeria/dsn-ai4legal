@@ -17,7 +17,7 @@ app = FastAPI(
     title="Legal Operations Platform",
     version="1.0.0",
     description=(
-        "DSN and EqualyzAI legal operations. AI may recommend, an authorised human "
+        "DSN and EqualyzAI legal staff. AI may recommend, an authorised human "
         "must confirm. The API is the only write path."
     ),
     openapi_url="/api/v1/openapi.json",

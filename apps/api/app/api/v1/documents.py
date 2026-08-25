@@ -27,9 +27,7 @@ from app.domain.enums import (
     AuthorityLevel,
     DocumentType,
     MatterState,
-    RiskTier,
     Role,
-    Severity,
     VersionStatus,
 )
 from app.schemas.common import Ack
@@ -42,7 +40,7 @@ from app.schemas.matters import (
     RoundSummary,
 )
 from app.services import approvals as approval_service
-from app.services import autoissue, docx_comments, docx_import, storage
+from app.services import autoissue, docx_comments, docx_import, memory, storage
 from app.services import checks as check_service
 from app.services.generation import generate, render_docx
 from app.services.hashing import file_hash
@@ -222,7 +220,7 @@ def add_counterparty_paper(
     scan is quarantined and the refusal is recorded, because a document that
     arrived from outside is exactly where a hostile payload would be.
     """
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     matter = db.get(Matter, matter_id)
     if matter is None:
@@ -274,7 +272,7 @@ def adopt_attachment_as_paper(
     so the reviewer is looking at the bytes the requester actually sent. The
     attachment stays where it is: it is the record of what arrived.
     """
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     matter = db.get(Matter, matter_id)
     if matter is None:
@@ -321,7 +319,7 @@ def generate_document(
     Nothing generative happens here, which is what makes tier 1 auto-issue
     defensible.
     """
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     matter = db.get(Matter, payload.matter_id)
     if matter is None:
@@ -660,7 +658,7 @@ def save_document_source(
     round of findings was raised against, and rewriting it would leave those
     findings describing a document that no longer exists.
     """
-    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN, Role.LEGAL_OPS)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN, Role.COUNSEL)
 
     document = db.get(Document, document_id)
     if document is None:
@@ -764,7 +762,7 @@ def export_findings(matter_id: uuid.UUID, db: Db, principal: CurrentUser) -> Res
     format all of those tools already read, and to re-read the returned file to
     find out what was settled.
     """
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     matter = db.get(Matter, matter_id)
     if matter is None:
@@ -921,8 +919,7 @@ def decide_finding(
 ) -> ReviewFinding:
     """Suggestions are drafts until a named person accepts them.
 
-    Legal operations may clear a minor finding on a tier 2 matter when it
-    matches a pre-approved fallback. Anything else escalates to counsel.
+    What may be conceded is decided by the authority matrix and nothing else.
     """
     finding = db.get(ReviewFinding, finding_id)
     if finding is None:
@@ -932,29 +929,21 @@ def decide_finding(
     authority = AuthorityLevel(finding.required_authority)
     rule = AUTHORITY_MATRIX[authority]
 
-    ops_clearance = (
-        principal.has_role(Role.LEGAL_OPS)
-        and not principal.has_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
-    )
-    if ops_clearance:
-        eligible = (
-            matter is not None
-            and matter.risk_tier == RiskTier.TIER_2.value
-            and finding.severity == Severity.MINOR.value
-            and finding.matches_preapproved_fallback
-        )
-        if not eligible:
-            raise Forbidden(
-                "Legal operations may clear only minor findings on a tier 2 matter that "
-                "match a pre-approved fallback. This one escalates to counsel."
-            )
+    # The authority matrix, and only the authority matrix.
+    #
+    # There used to be a second rule here: legal staff, and nobody else,
+    # could clear a minor finding on a tier 2 matter that matched a
+    # pre-approved fallback. It was the matrix written again and worse, hard
+    # coded to one severity and one tier, and it existed only because the role
+    # below it existed. The department is staff and a lead; what may be
+    # conceded is decided by the weight of the concession, which is what the
+    # matrix is for.
+    if not principal.has_role(*rule["roles"]):
+        raise Forbidden(f"Conceding this point requires {rule['label']}.")
+
+    if finding.matches_preapproved_fallback:
         finding.clearance_rule = (
-            "Tier 2, minor severity, matches a pre-approved fallback, cleared by Legal "
-            "operations."
-        )
-    elif not principal.has_role(*rule["roles"]):
-        raise Forbidden(
-            f"Conceding this point requires {rule['label']}."
+            f"Matches a pre-approved fallback, cleared at {rule['label'].lower()} authority."
         )
 
     edited = (payload.edited_text or "").strip()
@@ -976,6 +965,11 @@ def decide_finding(
     finding.edited_text = edited or None
     finding.decided_by_id = uuid.UUID(principal.user_id)
     finding.decided_at = datetime.now(UTC)
+
+    # A concession, indexed at the moment it is made. Only accepted findings:
+    # a rejection is the house holding a position memory already knows from the
+    # playbook, and indexing every complaint would bury the concessions.
+    memory.index_finding(db, finding, matter=matter)
 
     if finding.interaction_id:
         from app.ai.gateway import record_human_decision
@@ -1022,7 +1016,7 @@ def recheck_document(
     approved or signed against that hash changes, and an executed copy is
     refused outright rather than touched at all.
     """
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     document = db.get(Document, document_id)
     if document is None:
@@ -1107,7 +1101,7 @@ def auto_issue(
     Every reason it might not be safe is checked first, and the issued document
     joins the monthly quality sample so automation stays under review.
     """
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     matter = db.get(Matter, matter_id)
     if matter is None:

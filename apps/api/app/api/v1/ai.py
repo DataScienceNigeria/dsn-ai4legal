@@ -44,7 +44,6 @@ from app.domain.enums import (
 from app.schemas.common import Ack
 from app.schemas.governance import (
     AnswerOut,
-    AnswerParagraph,
     AskRequest,
     CommunicationOut,
     ConfirmFromInbox,
@@ -112,7 +111,52 @@ def _house_style(db, counterparty=None):
     return style
 
 
-ASK_ROLES = (Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN)
+#: Who may ask. The legal team and management, which is who the screen is for.
+#:
+#: Management was missing, so the people who most often want to know what we
+#: normally accept could not ask. Row-level security still applies underneath:
+#: a restricted matter is absent from the candidate set for anyone not named on
+#: it, whatever their role, which is a rule about one kind of record rather
+#: than a barrier around the feature.
+def _prose(output: dict) -> str:
+    """The answer as the reader sees it.
+
+    Answers used to come back as a list of paragraphs, each with its citations
+    attached to the end of it. The shape produced the writing: a stack of
+    disconnected sentences, every one of them ending in a pill, reading like a
+    report rather than like somebody answering a question. Markdown lets the
+    answer be written the way it would be said.
+
+    Older turns are kept readable, because a thread stays in the record and a
+    conversation from last month should not become blank.
+    """
+    written = (output.get("answer") or "").strip()
+    if written:
+        return written
+    return "\n\n".join(
+        " ".join(
+            filter(
+                None,
+                [
+                    paragraph.get("text", "").strip(),
+                    " ".join(f"[{cite}]" for cite in paragraph.get("cites", [])),
+                ],
+            )
+        )
+        for paragraph in output.get("paragraphs", [])
+    ).strip()
+
+
+ASK_RECORDS = 40
+ASK_POOL = 80
+
+ASK_ROLES = (
+    Role.COUNSEL,
+    Role.HEAD_OF_LEGAL,
+    Role.PRIVACY,
+    Role.MANAGEMENT,
+    Role.ADMIN,
+)
 
 NOTHING_RETRIEVED = (
     "No record you are able to open supports an answer to that question. "
@@ -179,13 +223,24 @@ def _answer(
     if history and _is_follow_up(question):
         query = f"{history[-1][0]} {question}"
 
+    # How much the model gets to read.
+    #
+    # Eight was the cap, and it was the cap on the answer: a twelve-clause
+    # agreement plus the house positions it touches plus the decisions behind
+    # them does not fit in eight records, so an answer about a whole contract
+    # was assembled from a fraction of it and read as though the model were
+    # being terse. It was being accurate about what it had been handed.
+    #
+    # The ceiling now is what a model can hold and read carefully, not what is
+    # cheap. A question about one agreement should reach every clause of it.
     chunks = retrieval.retrieve(
         db,
         query,
         entity,
         source_types=source_types or None,
         matter_id=matter_id,
-        limit=8,
+        limit=ASK_RECORDS,
+        candidate_pool=ASK_POOL,
     )
 
     if not chunks:
@@ -226,10 +281,7 @@ def _answer(
     return AnswerOut(
         interaction_id=envelope.interaction_id,
         question=question,
-        paragraphs=[
-            AnswerParagraph(text=p.get("text", ""), cites=p.get("cites", []))
-            for p in envelope.output.get("paragraphs", [])
-        ],
+        answer=_prose(envelope.output),
         sources=[
             SourceOut(**source.model_dump(include={"reference", "kind", "detail", "quote"}))
             for source in envelope.sources
@@ -270,6 +322,38 @@ def _title_from(question: str) -> str:
         return cleaned.rstrip("?.,;: ") or UNTITLED
     cut = cleaned[:60].rsplit(" ", 1)[0]
     return f"{cut.rstrip('?.,;: ')}..."
+
+
+def _model_title(db, entity: str, principal, question: str) -> str:
+    """Let the model name the thread from the question that opened it.
+
+    A list of threads is read at a glance, and the first sentence somebody
+    typed is a poor label for one: "Tell me about the Zamfara Agritech
+    agreement" says the same thing as every other row that begins "Tell me
+    about". A name says what the thread is about.
+
+    It falls back to the question if the call fails. A thread that could not be
+    named is still a thread, and refusing to open it over a label would be
+    absurd.
+    """
+    try:
+        envelope = invoke(
+            db,
+            _call(
+                "conversation_title",
+                entity=entity,
+                data_class=DataClass.CONFIDENTIAL,
+                user_content=f"Name the thread that opens with this question.\n\n{question}",
+                user_id=uuid.UUID(principal.user_id),
+                input_summary="Conversation title",
+            ),
+        )
+        if envelope.refused:
+            return _title_from(question)
+        named = " ".join(str(envelope.output.get("title") or "").split())
+        return named.strip("\"'.,;: ")[:200] or _title_from(question)
+    except Exception:
+        return _title_from(question)
 
 
 def _load_conversation(db, conversation_id: uuid.UUID) -> Conversation:
@@ -349,7 +433,10 @@ def open_conversation(
         entity=entity,
         owner_id=uuid.UUID(principal.user_id),
         matter_id=payload.matter_id,
-        title=((payload.title or "").strip() or (_title_from(first) if first else UNTITLED)),
+        title=(
+            (payload.title or "").strip()
+            or (_model_title(db, entity, principal, first) if first else UNTITLED)
+        ),
     )
     db.add(conversation)
     db.flush()
@@ -389,7 +476,7 @@ def _append_turn(
     history = [
         (
             turn.question,
-            " ".join(p.get("text", "") for p in (turn.answer or {}).get("paragraphs", [])),
+            _prose(turn.answer or {}),
         )
         for turn in conversation.turns
     ]
@@ -449,7 +536,7 @@ def send_message(
         raise Refused("There is no question to answer.")
 
     if conversation.message_count == 0 and conversation.title == UNTITLED:
-        conversation.title = _title_from(question)
+        conversation.title = _model_title(db, entity, principal, question)
 
     turn = _append_turn(db, principal, entity, conversation, question, payload.source_types)
     db.refresh(turn)
@@ -510,7 +597,7 @@ def position_history(
     category: str, db: Db, principal: CurrentUser, entity: WorkingEntity
 ) -> PositionHistoryOut:
     """The current house position, its fallbacks and every recorded deviation."""
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     clause = db.execute(
         select(Clause).where(Clause.category == category.upper())
@@ -566,7 +653,7 @@ def inbox(
     view: str = Query(default="action", pattern="^(action|watch|handled)$"),
 ) -> list[CommunicationOut]:
     """The action queue and the implied-work watch view are separate."""
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     stmt = select(Communication).where(Communication.entity == entity)
     if view == "action":
@@ -590,7 +677,7 @@ def classify(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> Com
 
     Nothing is sent and no matter is created until Legal confirms.
     """
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     record = db.get(Communication, communication_id)
     if record is None:
@@ -645,7 +732,7 @@ def classify(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> Com
 @router.post("/extract/{communication_id}")
 def extract(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> list[dict]:
     """Pull the facts out, each with the sentence it came from."""
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     record = db.get(Communication, communication_id)
     if record is None:
@@ -736,7 +823,7 @@ def confirm_from_inbox(
     principal: CurrentUser,
 ) -> dict:
     """Create a matter from correspondence, once a person confirms it."""
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     record = db.get(Communication, communication_id)
     if record is None:
@@ -878,7 +965,7 @@ def first_draft(matter_id: uuid.UUID, brief: str, db: Db, principal: CurrentUser
                 f"Matter {matter.number}, {matter.title}.\n"
                 f"Counterparty: {counterparty.legal_name if counterparty else 'not recorded'}.\n"
                 f"Agreement type: {agreement_type or 'not recorded'}.\n\n"
-                f"Brief from counsel:\n{brief}"
+                f"Brief from legal:\n{brief}"
             ),
             context=chunks,
             matter_id=matter.id,
@@ -975,7 +1062,7 @@ def review_counterparty_paper(
     principal: CurrentUser,
 ) -> list[ReviewFinding]:
     """Compare counterparty paper to the playbook and rank the difference, M06."""
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     matter = db.get(Matter, matter_id)
     document = db.get(Document, document_id)
@@ -1215,7 +1302,7 @@ def extract_obligations(contract_id: uuid.UUID, db: Db, principal: CurrentUser) 
     at all, and nothing is not something anyone notices, so the clauses that
     yielded no duty are named rather than left as an absence.
     """
-    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     contract = db.get(Contract, contract_id)
     if contract is None:

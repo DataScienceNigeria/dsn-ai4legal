@@ -46,7 +46,7 @@ export function useRoles() {
       roles,
       has: (...wanted: string[]) => wanted.some((role) => roles.includes(role)),
       isHeadOfLegal: roles.includes("head_of_legal"),
-      isCounsel: roles.includes("counsel"),
+      isLegal: roles.includes("counsel"),
       isAdmin: roles.includes("admin"),
       isAuditor: roles.includes("auditor"),
       readOnly: roles.length > 0 && roles.every((role) => role === "auditor" || role === "management"),

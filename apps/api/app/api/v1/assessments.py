@@ -10,9 +10,10 @@ from sqlalchemy import select
 
 from app.core import audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
-from app.core.errors import Conflict, NotFound, ValidationFailed
+from app.core.errors import Conflict, NotFound, Refused, ValidationFailed
 from app.db.models.contract import Obligation
 from app.db.models.governance import Assessment
+from app.domain import dpia
 from app.domain.enums import (
     ASSESSMENT_STAGE_ORDER,
     AssessmentStage,
@@ -25,9 +26,16 @@ from app.schemas.governance import (
     AssessmentClose,
     AssessmentCreate,
     AssessmentOut,
+    DpiaAnswers,
+    DpiaDecision,
+    DpiaFormOut,
+    DpiaQuestionOut,
+    DpiaSectionOut,
+    DpiaStart,
+    DpoAssessment,
     StageComplete,
 )
-from app.services import sequences
+from app.services import notifications, sequences
 
 ASSESSMENT_NOT_FOUND = "That assessment was not found."
 
@@ -65,12 +73,309 @@ STAGE_OWNERS = {
 }
 
 
+# The DPIA, as the department lead fills it in.
+#
+# Requesters are the team leads of other departments: the person building a
+# product is the person who knows what it does with personal data. They answer;
+# the data protection officer assesses. Two jobs, two sets of endpoints, one
+# record.
+
+
+@router.get("/form/dpia", response_model=DpiaFormOut)
+def dpia_form(principal: CurrentUser) -> DpiaFormOut:
+    """The form definition, served rather than duplicated in the interface.
+
+    A form written twice disagrees with itself the first time either copy is
+    edited, and a data protection assessment that asks different questions in
+    two places is worse than one that asks the wrong questions consistently.
+    """
+    return DpiaFormOut(
+        sections=[
+            DpiaSectionOut(
+                key=section.key,
+                title=section.title,
+                intent=section.intent,
+                assessed=section.assessed,
+                questions=[
+                    DpiaQuestionOut(
+                        key=question.key,
+                        label=question.label,
+                        kind=question.kind,
+                        help_text=question.help_text,
+                        options=list(question.options),
+                        required=question.required,
+                        depends_on=question.depends_on,
+                    )
+                    for question in section.questions
+                ],
+            )
+            for section in dpia.SECTIONS
+        ],
+        decisions=[{"key": key, "label": label} for key, label in dpia.FINAL_DECISIONS.items()],
+    )
+
+
+@router.get("/mine", response_model=list[AssessmentOut])
+def my_assessments(db: Db, principal: CurrentUser, entity: WorkingEntity) -> list[Assessment]:
+    """The assessments this person raised.
+
+    A department lead sees their own and nobody else's. They are not legal, and
+    a list of every product in the organisation under assessment is not theirs
+    to read.
+    """
+    stmt = (
+        select(Assessment)
+        .where(
+            Assessment.entity == entity,
+            Assessment.raised_by_id == uuid.UUID(principal.user_id),
+        )
+        .order_by(Assessment.created_at.desc())
+    )
+    return list(db.execute(stmt).scalars())
+
+
+@router.post("/dpia", response_model=AssessmentOut, status_code=201)
+def start_dpia(
+    payload: DpiaStart, db: Db, principal: CurrentUser, entity: WorkingEntity
+) -> Assessment:
+    """Open a DPIA. Any department lead may, because they are the ones who know."""
+    assessment = Assessment(
+        reference=sequences.new_assessment_reference(db),
+        assessment_type=AssessmentType.DPIA.value,
+        title=payload.project_name,
+        entity=entity,
+        stage=AssessmentStage.INITIATED.value,
+        raised_by_id=uuid.UUID(principal.user_id),
+        captured={"project_name": payload.project_name},
+        stage_records=[],
+    )
+    db.add(assessment)
+    db.flush()
+
+    audit.record(
+        db,
+        action="dpia_started",
+        object_type="assessment",
+        object_id=assessment.reference,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=entity,
+        after_state={"project": payload.project_name},
+    )
+    return assessment
+
+
+def _own_or_privacy(assessment: Assessment, principal) -> None:
+    """The person who raised it, or the people whose job it is to read it."""
+    if str(assessment.raised_by_id) == principal.user_id:
+        return
+    principal.require_role(Role.PRIVACY, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+
+
+@router.patch("/{assessment_id}/answers", response_model=AssessmentOut)
+def save_answers(
+    assessment_id: uuid.UUID, payload: DpiaAnswers, db: Db, principal: CurrentUser
+) -> Assessment:
+    """Save what has been written so far.
+
+    Saved as it is typed rather than on submission. A DPIA is not filled in at
+    one sitting: it is fifty-nine questions across thirteen sections, several of
+    which need somebody else in the building to answer, and losing a morning's
+    work to a closed tab is how a form stops being filled in at all.
+    """
+    assessment = db.get(Assessment, assessment_id)
+    if assessment is None:
+        raise NotFound(ASSESSMENT_NOT_FOUND)
+    _own_or_privacy(assessment, principal)
+
+    if assessment.stage == AssessmentStage.CLOSED.value:
+        raise Conflict("This assessment is closed. Reopen it with a reassessment.")
+    if assessment.submitted_at and str(assessment.raised_by_id) == principal.user_id:
+        raise Conflict(
+            "This assessment has been submitted and is with the data protection officer. "
+            "Ask them to return it if it needs changing."
+        )
+
+    captured = dict(assessment.captured or {})
+    captured.update(payload.answers)
+    assessment.captured = captured
+
+    if captured.get("project_name"):
+        assessment.title = str(captured["project_name"])[:255]
+
+    db.flush()
+    return assessment
+
+
+@router.post("/{assessment_id}/submit", response_model=AssessmentOut)
+def submit_dpia(
+    assessment_id: uuid.UUID, db: Db, principal: CurrentUser
+) -> Assessment:
+    """Hand it to the data protection officer.
+
+    Refused while a required answer is missing, and the refusal names each one.
+    A DPIA arriving half-filled costs the DPO a round trip and the lead a week,
+    and the platform already knows exactly what is absent.
+    """
+    assessment = db.get(Assessment, assessment_id)
+    if assessment is None:
+        raise NotFound(ASSESSMENT_NOT_FOUND)
+    _own_or_privacy(assessment, principal)
+
+    state = dpia.completeness(assessment.captured or {})
+    if not state.complete:
+        raise Refused(
+            f"{len(state.missing)} answers are still needed before this can be submitted.",
+            state.missing[:12],
+        )
+
+    assessment.submitted_at = datetime.now(UTC)
+    assessment.stage = AssessmentStage.LEGAL.value
+
+    audit.record(
+        db,
+        action="dpia_submitted",
+        object_type="assessment",
+        object_id=assessment.reference,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=assessment.entity,
+        after_state={"answers": state.answered},
+    )
+
+    notifications.raise_for_role(
+        db,
+        role=Role.PRIVACY.value,
+        entity=assessment.entity,
+        kind="dpia_submitted",
+        title=f"DPIA for {assessment.title}",
+        body=f"{principal.name} submitted {assessment.reference} for assessment.",
+        href="/workspace/assessments",
+        reference=assessment.reference,
+    )
+    return assessment
+
+
+@router.post("/{assessment_id}/sections/{section}/assessment", response_model=AssessmentOut)
+def record_section_assessment(
+    assessment_id: uuid.UUID,
+    section: str,
+    payload: DpoAssessment,
+    db: Db,
+    principal: CurrentUser,
+) -> Assessment:
+    """The data protection officer's judgement on one section.
+
+    Adequacy, reasons and a score out of ten, then recommendations with an owner
+    and a date. The score is the DPO's, not a computation: it is what they think
+    the information is worth against what the section reasonably required.
+    """
+    principal.require_role(Role.PRIVACY, Role.HEAD_OF_LEGAL, Role.ADMIN)
+
+    assessment = db.get(Assessment, assessment_id)
+    if assessment is None:
+        raise NotFound(ASSESSMENT_NOT_FOUND)
+    if section not in dpia.SECTIONS_BY_KEY:
+        raise NotFound("That section is not part of the assessment.")
+    if not dpia.SECTIONS_BY_KEY[section].assessed:
+        raise Conflict(f"{dpia.SECTIONS_BY_KEY[section].title} is a record, not a judgement.")
+
+    reviews = dict(assessment.dpo_review or {})
+    reviews[section] = {
+        "adequate": payload.adequate,
+        "reasons": payload.reasons,
+        "score": payload.score,
+        "recommendations": payload.recommendations,
+        "responsibility": payload.responsibility,
+        "due_date": payload.due_date.isoformat() if payload.due_date else None,
+        "assessed_by": principal.name,
+        "assessed_at": datetime.now(UTC).isoformat(),
+    }
+    assessment.dpo_review = reviews
+    db.flush()
+
+    audit.record(
+        db,
+        action="dpia_section_assessed",
+        object_type="assessment",
+        object_id=assessment.reference,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=assessment.entity,
+        after_state={"section": section, "adequate": payload.adequate, "score": payload.score},
+    )
+    return assessment
+
+
+@router.post("/{assessment_id}/decision", response_model=AssessmentOut)
+def record_dpia_decision(
+    assessment_id: uuid.UUID, payload: DpiaDecision, db: Db, principal: CurrentUser
+) -> Assessment:
+    """Go ahead, modify, or stop.
+
+    Three outcomes and no fourth. "Stop" has to be one of them or the assessment
+    is a formality, and a formality is what a DPIA becomes when the only
+    available answer is a longer list of conditions.
+    """
+    principal.require_role(Role.PRIVACY, Role.HEAD_OF_LEGAL, Role.ADMIN)
+
+    assessment = db.get(Assessment, assessment_id)
+    if assessment is None:
+        raise NotFound(ASSESSMENT_NOT_FOUND)
+    if payload.decision not in dpia.FINAL_DECISIONS:
+        raise ValidationFailed(
+            "That is not one of the available decisions.",
+            {"decision": f"Choose one of {', '.join(dpia.FINAL_DECISIONS)}."},
+        )
+
+    unassessed = [
+        dpia.SECTIONS_BY_KEY[key].title
+        for key in dpia.ASSESSED_SECTIONS
+        if key not in (assessment.dpo_review or {})
+    ]
+    if unassessed:
+        raise Refused(
+            "Every section is assessed before the assessment concludes.",
+            [f"Not yet assessed: {title}" for title in unassessed],
+        )
+
+    assessment.final_decision = payload.decision
+    assessment.final_decision_reason = payload.reason
+    assessment.approved_at = datetime.now(UTC)
+    assessment.review_date = payload.review_date
+    assessment.stage = AssessmentStage.CLOSED.value
+
+    audit.record(
+        db,
+        action="dpia_decided",
+        object_type="assessment",
+        object_id=assessment.reference,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=assessment.entity,
+        after_state={"decision": payload.decision, "review_date": str(payload.review_date)},
+    )
+
+    if assessment.raised_by_id:
+        notifications.raise_in_app(
+            db,
+            recipient_id=assessment.raised_by_id,
+            entity=assessment.entity,
+            kind="dpia_decided",
+            title=f"{assessment.title}: {payload.decision.replace('_', ' ')}",
+            body=dpia.FINAL_DECISIONS[payload.decision],
+            href=f"/portal/assessments/{assessment.id}",
+            reference=assessment.reference,
+        )
+    return assessment
+
+
 @router.get("", response_model=list[AssessmentOut])
 def list_assessments(
     db: Db, principal: CurrentUser, entity: WorkingEntity, stage: str | None = None
 ) -> list[Assessment]:
     principal.require_role(
-        Role.PRIVACY, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.LEGAL_OPS, Role.ADMIN
+        Role.PRIVACY, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.COUNSEL, Role.ADMIN
     )
     stmt = select(Assessment).where(Assessment.entity == entity)
     if stage:

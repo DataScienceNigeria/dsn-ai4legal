@@ -1,7 +1,7 @@
 """House style, LOP-M05-US-03.
 
 House style is enforced, not suggested. Every rule here rewrites the text and
-records what it changed, so the draft counsel sees is already in house style and
+records what it changed, so the draft legal sees is already in house style and
 the style report says what the platform did to get it there. Nothing in this
 module calls a model: a style rule that depends on a generation is a rule that
 can change its mind between two runs of the same draft.
@@ -238,7 +238,7 @@ def _check_numbering(blocks: list[dict]) -> list[StyleViolation]:
     """Numbering is reported rather than rewritten.
 
     Renumbering a clause silently would break every cross-reference pointing at
-    it, so this rule stops at telling counsel which number is wrong.
+    it, so this rule stops at telling the reader which number is wrong.
     """
     violations: list[StyleViolation] = []
     expected = 1

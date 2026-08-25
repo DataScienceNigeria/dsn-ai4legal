@@ -283,7 +283,7 @@ function EditCounterparty({
     setOpen(false);
   });
 
-  if (!has("legal_ops", "counsel", "head_of_legal", "admin")) return null;
+  if (!has("counsel", "head_of_legal", "admin")) return null;
 
   const value = (name: keyof CounterpartyRow) =>
     draft[name] ?? ((row[name] as string | null) ?? "");
@@ -373,7 +373,7 @@ function MergeCounterparty({
     setOpen(false);
   });
 
-  if (!has("legal_ops", "counsel", "head_of_legal", "admin")) return null;
+  if (!has("counsel", "head_of_legal", "admin")) return null;
 
   return (
     <>

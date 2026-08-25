@@ -19,16 +19,31 @@ class Role(StrEnum):
 
     REQUESTER = "requester"
     MANAGEMENT = "management"
-    LEGAL_OPS = "legal_ops"
     COUNSEL = "counsel"
+    """Legal staff.
+
+    There were two: legal operations and counsel. The split modelled somebody
+    else's org chart, not this one, where the department is staff and a lead.
+    It bought one carve-out in the whole codebase, a rule about which findings
+    legal staff could clear, and that rule was the authority matrix
+    written a second time and worse. The matrix decides who may concede what;
+    the role says which side of the department you are on.
+
+    Kept as ``counsel`` rather than renamed, because the value is written on
+    every user, capability and audit row that already exists, and a rename
+    would rewrite history to say something it did not say at the time.
+    """
+
     HEAD_OF_LEGAL = "head_of_legal"
+    """The legal lead. Publication, capability state, restricted access,
+    signature and anything else that needs re-authentication is theirs."""
     PRIVACY = "privacy"
     ADMIN = "admin"
     AUDITOR = "auditor"
     COUNTERPARTY = "counterparty"
 
 LEGAL_ROLES: frozenset[Role] = frozenset(
-    {Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN}
+    {Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN}
 )
 
 class MatterState(StrEnum):
@@ -111,7 +126,7 @@ class AuthorityLevel(StrEnum):
 
 AUTHORITY_MATRIX: dict[AuthorityLevel, dict[str, object]] = {
     AuthorityLevel.HOUSE: {
-        "roles": [Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL],
+        "roles": [Role.COUNSEL, Role.HEAD_OF_LEGAL],
         "decision_record": False,
         "residual_risk": False,
         "library_review": False,
@@ -129,21 +144,21 @@ AUTHORITY_MATRIX: dict[AuthorityLevel, dict[str, object]] = {
         "decision_record": True,
         "residual_risk": False,
         "library_review": False,
-        "label": "Head of Legal",
+        "label": "Legal lead",
     },
     AuthorityLevel.FALLBACK_3: {
         "roles": [Role.HEAD_OF_LEGAL],
         "decision_record": True,
         "residual_risk": True,
         "library_review": False,
-        "label": "Head of Legal plus accountable business owner",
+        "label": "Legal lead plus accountable business owner",
     },
     AuthorityLevel.OUTSIDE: {
         "roles": [Role.HEAD_OF_LEGAL],
         "decision_record": True,
         "residual_risk": True,
         "library_review": True,
-        "label": "Head of Legal plus executive sponsor",
+        "label": "Legal lead plus executive sponsor",
     },
 }
 

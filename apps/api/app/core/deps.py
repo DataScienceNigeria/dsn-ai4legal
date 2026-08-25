@@ -147,7 +147,7 @@ def client_ip(request: Request) -> str | None:
 
 def require_legal(principal: Annotated[Principal, Depends(get_principal)]) -> Principal:
     principal.require_role(
-        Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
+        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
     )
     return principal
 

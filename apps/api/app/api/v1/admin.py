@@ -361,7 +361,7 @@ def list_interactions(
     """The AI trace. Prompt reference, sources, route, cost and the human
     decision that followed."""
     principal.require_role(
-        Role.ADMIN, Role.HEAD_OF_LEGAL, Role.AUDITOR, Role.COUNSEL, Role.LEGAL_OPS
+        Role.ADMIN, Role.HEAD_OF_LEGAL, Role.AUDITOR, Role.COUNSEL
     )
     from app.db.models.ai import AIInteraction
 
@@ -572,7 +572,7 @@ def current_organisation(
     us and a drafter needs to know whether it is right before generating.
     """
     principal.require_role(
-        Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN, Role.AUDITOR
+        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN, Role.AUDITOR
     )
     record = db.execute(
         select(Organisation).where(Organisation.entity_code == entity)
@@ -813,7 +813,7 @@ def reset_second_factor(
 
 @router.get("/users")
 def list_users(db: Db, principal: CurrentUser) -> list[dict]:
-    principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL, Role.LEGAL_OPS, Role.COUNSEL)
+    principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL, Role.COUNSEL)
     return [
         {
             "id": str(u.id),

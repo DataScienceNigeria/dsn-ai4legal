@@ -12,6 +12,7 @@ resolves to a legally meaningful unit.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from sqlalchemy import func, select, text
@@ -21,6 +22,33 @@ from app.ai.envelope import Source
 from app.db.models.platform import MemoryChunk
 
 RRF_K = 60
+
+#: How far a chunk's weight is allowed to move it.
+#:
+#: Weight says what kind of record outranks another where both answer the
+#: question: the house speaking in an approved clause beats an agreement that
+#: happens to mention the subject. Applied raw it did more than that. With
+#: reciprocal-rank scores this close together, a 1.4 multiplier let a clause
+#: ranked third in both halves beat the one record that named the counterparty
+#: in the question, so asking about an agreement by name returned six clauses
+#: and not the agreement.
+#:
+#: Damped, it breaks ties and cannot overturn a rank.
+WEIGHT_INFLUENCE = 0.25
+
+#: What each question word found in a chunk's own title is worth. Enough that
+#: naming a counterparty finds their agreement, small enough that a long title
+#: cannot win on incidental words alone.
+TITLE_MATCH = 0.35
+
+#: How many matched title words can count. Naming a counterparty or a subject
+#: takes one or two; beyond that a long title wins by having more words in it,
+#: which is a property of the title and not of the answer.
+TITLE_TERMS = 2
+
+
+def _nudge(weight: float) -> float:
+    return 1.0 + (weight - 1.0) * WEIGHT_INFLUENCE
 
 @dataclass
 class RetrievedChunk:
@@ -73,6 +101,21 @@ def _scope(stmt, entity: str, source_types: list[str] | None, matter_id=None):
     )
     return stmt
 
+#: Words that survive stemming but say nothing about which record is wanted.
+#: Postgres drops the usual stop words itself; these are the ones a question is
+#: built from rather than the ones English is.
+ASKING = frozenset({"tell", "show", "give", "find", "know", "want", "need", "please", "explain"})
+
+
+def _lexemes(query: str) -> list[str]:
+    """The searchable words of a question, sanitised for a tsquery."""
+    return [
+        word
+        for word in re.findall(r"[A-Za-z0-9]+", query)
+        if len(word) > 1 and word.lower() not in ASKING
+    ]
+
+
 def keyword_search(
     session: Session,
     query: str,
@@ -81,7 +124,24 @@ def keyword_search(
     source_types: list[str] | None = None,
     matter_id=None,
 ) -> list[tuple[MemoryChunk, float]]:
-    ts_query = func.websearch_to_tsquery("english", query)
+    """Rank the corpus by the words a question shares with it.
+
+    Terms are joined with OR, not AND. `websearch_to_tsquery` builds an AND of
+    everything it is given, so "Tell me about the Zamfara Agritech agreement"
+    became `tell & zamfara & agritech & agreement` and matched nothing, because
+    no contract contains the word "tell". Every question phrased as a sentence,
+    which is every question anyone types, lost the keyword half of hybrid
+    retrieval in silence.
+
+    OR restores it, and `ts_rank_cd` does the discriminating: a record carrying
+    more of the terms, closer together, ranks above one that carries a single
+    common word.
+    """
+    terms = _lexemes(query)
+    if not terms:
+        return []
+
+    ts_query = func.to_tsquery("english", " | ".join(terms))
     ts_vector = func.to_tsvector(
         "english", MemoryChunk.title + text("' '") + MemoryChunk.body
     )
@@ -141,9 +201,18 @@ def retrieve(
                 chunk=chunk, score=1.0 / (RRF_K + rank), vector_rank=rank
             )
 
+    # The light rerank. A record whose own title carries the words of the
+    # question is the record that was asked about, and reciprocal-rank scores
+    # sit too close together to say so on their own: "Zamfara Agritech" and
+    # "agreement" both hit, but every clause in the corpus contains the word
+    # agreement, so the one contract that names the counterparty ranked below
+    # three clauses that did not.
+    wanted = {word.lower() for word in _lexemes(query)}
     results = list(merged.values())
     for result in results:
-        result.score *= result.chunk.weight
+        named = wanted & {word.lower() for word in _lexemes(result.chunk.title)}
+        boost = 1 + TITLE_MATCH * min(len(named), TITLE_TERMS)
+        result.score *= _nudge(result.chunk.weight) * boost
         if result.chunk.superseded:
             result.score *= 0.4
 

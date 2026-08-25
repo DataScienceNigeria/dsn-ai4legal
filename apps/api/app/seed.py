@@ -102,7 +102,7 @@ PEOPLE = [
         6,
     ),
     ("Chidi Nwosu", "chidi.nwosu@dsn.example", [Role.COUNSEL], ["DSN"], ["emp"], 4),
-    ("Amaka Eze", "amaka.eze@dsn.example", [Role.LEGAL_OPS], ["DSN", "EAI"], ["com"], 3),
+    ("Amaka Eze", "amaka.eze@dsn.example", [Role.COUNSEL], ["DSN", "EAI"], ["com"], 3),
     ("Tunde Bakare", "tunde.bakare@dsn.example", [Role.REQUESTER], ["DSN"], [], 0),
     ("Ngozi Adeyemi", "ngozi.adeyemi@dsn.example", [Role.REQUESTER], ["EAI"], [], 0),
     ("Segun Lawal", "segun.lawal@dsn.example", [Role.REQUESTER, Role.MANAGEMENT], ["DSN"], [], 0),
@@ -1207,7 +1207,7 @@ def seed_matters(session, users, counterparties, types, templates, clauses) -> d
             updated_at=datetime.now(UTC) - timedelta(hours=3),
         )
         if state is MatterState.ESCALATED:
-            matter.blocker = "Awaiting Head of Legal on the liability position"
+            matter.blocker = "Awaiting the legal lead on the liability position"
         session.add(matter)
         session.flush()
 
@@ -1388,7 +1388,7 @@ FINDINGS = [
         "Aggregate liability capped at the greater of fees paid in the preceding twelve months or "
         "twenty-five million Naira, with indirect and consequential loss excluded on both sides.",
         "Replace clause 11.2 in full with the house wording. Fallback 1, a cap at one and a half "
-        "times annual fees, is available to counsel if they refuse the base cap.",
+        "times annual fees, is available to legal staff if they refuse the base cap.",
         "outside",
         False,
     ),
@@ -1437,7 +1437,7 @@ FINDINGS = [
         "All models, weights and outputs derived from our data are our exclusive property, with a "
         "limited licence back for service delivery only.",
         "Add house clause 8.4. This is the position recorded in decision 61, conceded once, in "
-        "2024, at Head of Legal level.",
+        "2024, at legal lead level.",
         "fallback_2",
         False,
     ),
@@ -1452,9 +1452,8 @@ FINDINGS = [
         "to the courts of Lagos State.",
         "Governed by the laws of the Federal Republic of Nigeria, exclusive jurisdiction of the "
         "courts of Lagos State, arbitration first under the Lagos Court of Arbitration rules.",
-        "Apply approved fallback 1 wording. It matches a pre-approved fallback, so Legal "
-        "operations"
-        "may clear this without counsel.",
+        "Apply approved fallback 1 wording. It matches a pre-approved fallback, so legal "
+        "staff may clear it without escalating.",
         "fallback_1",
         True,
     ),
@@ -1869,7 +1868,7 @@ CAPABILITIES = [
         DataClass.CONFIDENTIAL,
         "tier_3",
         "Legal confirms or corrects before any matter or action is created.",
-        "legal_ops",
+        "counsel",
         "Macro F1",
         "at least 0.90, recall at least 0.95 for action required",
         0.90,
@@ -1883,7 +1882,7 @@ CAPABILITIES = [
         DataClass.CONFIDENTIAL,
         "tier_3",
         "Extracted values are suggestions until confirmed field by field.",
-        "legal_ops",
+        "counsel",
         "Precision and recall",
         "precision at least 0.95, recall at least 0.90",
         0.95,
@@ -1924,7 +1923,7 @@ CAPABILITIES = [
         "M05",
         DataClass.CONFIDENTIAL,
         "tier_3",
-        "Counsel reviews all critical and material findings. Legal operations may clear minor "
+        "Counsel reviews all critical and material findings. Legal staff may clear minor "
         "findings matching pre-approved fallbacks.",
         "counsel",
         "Recall on critical deviations",
@@ -1940,11 +1939,25 @@ CAPABILITIES = [
         DataClass.CONFIDENTIAL,
         "tier_3",
         "Legal confirms before obligations become tracked tasks.",
-        "legal_ops",
+        "counsel",
         "Recall on dated obligations",
         "at least 0.93",
         0.93,
         "obligation_extraction",
+        False,
+    ),
+    (
+        "conversation_title",
+        "Conversation title",
+        "M10",
+        DataClass.CONFIDENTIAL,
+        "tier_4",
+        "Naming a saved thread. Anyone may rename it, and nothing depends on the name.",
+        "counsel",
+        "Not measured",
+        "no gate, the output makes no claim about the record",
+        None,
+        None,
         False,
     ),
     (
@@ -1953,7 +1966,7 @@ CAPABILITIES = [
         "M12",
         DataClass.INTERNAL,
         "tier_4",
-        "The Head of Legal signs off the summary before it is issued.",
+        "The legal lead signs off the summary before it is issued.",
         "head_of_legal",
         "Groundedness",
         "at least 0.95 attributable",
@@ -2013,7 +2026,7 @@ GOLDEN_SETS = [
         "inbox_classification",
         "inbox_classification",
         "Correspondence drawn from the shared legal mailbox, classified by "
-        "Legal Operations and reviewed by the Head of Legal.",
+        "legal staff and reviewed by the legal lead.",
         [
             (
                 "GC-INB-001",
@@ -2506,7 +2519,7 @@ def seed_platform_config(session, users) -> None:
                 steps=[
                     {
                         "name": "Legal review",
-                        "role": Role.LEGAL_OPS.value,
+                        "role": Role.COUNSEL.value,
                         "mode": "sequential",
                         "due_hours": 4,
                     },
@@ -2564,7 +2577,7 @@ def seed_platform_config(session, users) -> None:
                         "condition": "privacy_flag",
                     },
                     {
-                        "name": "Head of Legal",
+                        "name": "Legal lead",
                         "role": Role.HEAD_OF_LEGAL.value,
                         "mode": "sequential",
                         "due_hours": 48,
@@ -2588,7 +2601,7 @@ def seed_platform_config(session, users) -> None:
                         "due_hours": 48,
                     },
                     {
-                        "name": "Head of Legal",
+                        "name": "Legal lead",
                         "role": Role.HEAD_OF_LEGAL.value,
                         "mode": "sequential",
                         "due_hours": 48,
@@ -2606,7 +2619,7 @@ def seed_governance(session, users, counterparties, matters) -> None:
         name="Triage classifier",
         purpose="Classify messages in the shared legal mailbox and propose a next step.",
         owner_id=users["Emeka Obi"].id,
-        intended_users="Legal operations and counsel.",
+        intended_users="Legal staff and counsel.",
         datasets=["legal mailbox, de-identified"],
         models=["hosted classifier"],
         approval_status="in_assessment",
@@ -2646,9 +2659,9 @@ def seed_governance(session, users, counterparties, matters) -> None:
             ],
             captured={
                 "purpose": "Reduce time to identify legal work arriving by email.",
-                "intended_users": "Legal operations and counsel.",
+                "intended_users": "Legal staff and counsel.",
                 "affected_persons": "Staff and counterparty contacts who write to the mailbox.",
-                "business_owner": "Head of Legal",
+                "business_owner": "legal lead",
                 "data_categories": "Names, work contact details, message content.",
                 "data_sources": "One named mailbox, legal@dsn.example.",
                 "legal_basis": "Legitimate interest in operating the legal function.",

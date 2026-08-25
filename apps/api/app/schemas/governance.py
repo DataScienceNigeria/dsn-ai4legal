@@ -76,9 +76,6 @@ class AskRequest(BaseModel):
     source_types: list[str] = Field(default_factory=list)
 
 
-class AnswerParagraph(BaseModel):
-    text: str
-    cites: list[str] = Field(default_factory=list)
 
 
 class SourceOut(BaseModel):
@@ -91,7 +88,12 @@ class SourceOut(BaseModel):
 class AnswerOut(BaseModel):
     interaction_id: str
     question: str
-    paragraphs: list[AnswerParagraph] = Field(default_factory=list)
+    answer: str = ""
+    """The answer as Markdown, with citations inline in square brackets.
+
+    A list of paragraphs each carrying its own citations produced the writing
+    it described: disconnected sentences, every one ending in a reference pill.
+    An answer is prose, and reads as prose."""
     sources: list[SourceOut] = Field(default_factory=list)
     note: str | None = None
     refused: bool = False
@@ -266,6 +268,63 @@ class AssessmentOut(ApiModel):
     product_id: UUID | None
     vendor_id: UUID | None
     contract_id: UUID | None
+    raised_by_id: UUID | None = None
+    submitted_at: datetime | None = None
+    dpo_review: dict[str, Any] = Field(default_factory=dict)
+    final_decision: str | None = None
+    final_decision_reason: str | None = None
+
+
+class DpiaQuestionOut(ApiModel):
+    key: str
+    label: str
+    kind: str
+    help_text: str | None
+    options: list[str]
+    required: bool
+    depends_on: str | None
+
+
+class DpiaSectionOut(ApiModel):
+    key: str
+    title: str
+    intent: str
+    assessed: bool
+    questions: list[DpiaQuestionOut]
+
+
+class DpiaFormOut(ApiModel):
+    """The form, served rather than written twice.
+
+    The interface renders whatever comes back. A question added here appears in
+    the portal without a deployment of the interface, and neither copy can
+    drift from the other because there is only one."""
+
+    sections: list[DpiaSectionOut]
+    decisions: list[dict]
+
+
+class DpiaStart(BaseModel):
+    project_name: str
+
+
+class DpiaAnswers(BaseModel):
+    answers: dict[str, Any] = Field(default_factory=dict)
+
+
+class DpoAssessment(BaseModel):
+    adequate: bool
+    reasons: str
+    score: int = Field(ge=1, le=10)
+    recommendations: str | None = None
+    responsibility: str | None = None
+    due_date: date | None = None
+
+
+class DpiaDecision(BaseModel):
+    decision: str
+    reason: str
+    review_date: date | None = None
 
 
 class AssessmentCreate(BaseModel):

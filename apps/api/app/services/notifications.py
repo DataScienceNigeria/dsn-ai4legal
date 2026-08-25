@@ -119,6 +119,53 @@ def notify(
     )
 
 
+def raise_for_role(
+    session: Session,
+    *,
+    role: str,
+    entity: str,
+    kind: str,
+    title: str,
+    body: str | None = None,
+    href: str | None = None,
+    reference: str | None = None,
+) -> int:
+    """Put a message in the bell of everyone who holds a role in this entity.
+
+    For work that belongs to a job rather than to a person. A DPIA arriving for
+    assessment is the data protection officer's, whoever that is this month,
+    and addressing it to a name that was right when the code was written is how
+    a submission sits unread while somebody is on leave.
+    """
+    from app.db.models.organisation import User, UserEntity
+
+    recipients = session.execute(
+        select(User)
+        .join(UserEntity, UserEntity.user_id == User.id)
+        .where(
+            User.roles.any(role),
+            UserEntity.entity_code == entity,
+            User.active.is_(True),
+        )
+        .distinct()
+    ).scalars()
+
+    raised = 0
+    for person in recipients:
+        if raise_in_app(
+            session,
+            recipient_id=person.id,
+            entity=entity,
+            kind=kind,
+            title=title,
+            body=body,
+            href=href,
+            reference=reference,
+        ):
+            raised += 1
+    return raised
+
+
 def raise_in_app(
     session: Session,
     *,
