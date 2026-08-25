@@ -225,33 +225,11 @@ export default function DocumentScreen() {
                     className={cn(
                       "mt-1.5 whitespace-pre-wrap text-sm leading-relaxed",
                       block.novel && "rounded-md border border-secondary/30 bg-secondary/5 p-2.5",
-                      block.tracked_change &&
-                        "rounded-md border border-brand/30 bg-brand/5 p-2.5",
                     )}
                   >
                     {block.text}
                   </p>
 
-                  {/*
-                    What it replaced, struck through beneath it. A redline that
-                    shows only the new wording asks the reader to diff it
-                    against their own copy from memory, which is the thing a
-                    marked-up contract exists to avoid.
-                  */}
-                  {block.tracked_change ? (
-                    <div className="mt-2 space-y-1.5">
-                      {block.tracked_change.original ? (
-                        <p className="whitespace-pre-wrap rounded-md border border-destructive/25 bg-destructive/5 p-2.5 text-sm leading-relaxed text-muted-foreground line-through">
-                          {block.tracked_change.original}
-                        </p>
-                      ) : null}
-                      <p className="text-xs text-muted-foreground">
-                        {block.tracked_change.inserted ? "Added" : "Changed"} by{" "}
-                        {block.tracked_change.author}
-                        {block.tracked_change.reason ? `, ${block.tracked_change.reason}` : ""}
-                      </p>
-                    </div>
-                  ) : null}
                 </div>
               ))
             )}

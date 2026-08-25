@@ -3,31 +3,18 @@
 Obligations are proposed from the executed agreement, confirmed by a person,
 and only then become tracked tasks with reminders and escalation.
 
-Extraction can fail two ways, and they are not equally bad. A duty invented is
-read, recognised as wrong and rejected, because a person works through the
-proposals one at a time. A duty missed produces nothing at all: no proposal, no
-task, no reminder, and nobody staring at a blank space wondering what should
-have been in it. Eighteen months later the notice window closes on its own.
-
-That second failure is what coverage answers. Rather than block the capability
-behind a threshold, which hands Legal an empty list and is the same silent
-failure by another route, every clause of the executed agreement is accounted
-for: this one produced a duty, that one did not. The clauses that produced
-nothing are shown, so a miss is something to look at instead of an absence.
-
-Coverage is computed here from the stored blocks and the stored obligations,
-never asked of a model. A report on whether the model missed something, written
-by the model, reports nothing.
+Obligations are a record of what an agreement requires, not a queue for the
+legal team. Reminders and the calendar carry LEGAL_DEADLINES only: renewal,
+notice and termination windows, which are legal's own and which nobody else is
+watching.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
 from app.domain.enums import ObligationStatus
-from app.services.placeholders import is_signature_block
 
 RENEWAL_DECISION_OPTIONS = ["renew", "renegotiate", "terminate", "allow_to_lapse"]
 
@@ -119,100 +106,3 @@ def escalation_due(due: date, escalation_rule: dict, today: date | None = None) 
     if not triggered:
         return None
     return max(triggered, key=lambda level: int(level.get("after_days", 0))).get("notify")
-
-
-#: The clause label inside a citation, however it was written. "Clause 6",
-#: "6.", "Section 6.2" and "6.2" are one reference in four hands.
-CLAUSE_NUMBER = re.compile(r"\d+(?:\.\d+)*")
-
-#: Below this a block is a heading, a page number or a stray line, not a clause
-#: that could carry a duty.
-CLAUSE_MIN_LENGTH = 40
-
-
-def clause_key(label: str | None) -> str:
-    """The comparable form of a clause reference, or "" if it names no number."""
-    if not label:
-        return ""
-    found = CLAUSE_NUMBER.search(label)
-    return found.group(0).rstrip(".") if found else ""
-
-
-def is_clause(block: dict) -> bool:
-    """Whether this block is prose that could carry a duty.
-
-    Recitals, headings and the execution block are not. The signature block in
-    particular has to go: it is where the agreement is signed, not where it
-    says what anyone must do, and reporting it as unaccounted for on every
-    contract would train people to ignore the list.
-    """
-    text = (block.get("text") or "").strip()
-    if len(text) < CLAUSE_MIN_LENGTH:
-        return False
-    if is_signature_block(text, block.get("heading") or ""):
-        return False
-    return bool(clause_key(block.get("number")))
-
-
-@dataclass
-class UnaccountedClause:
-    number: str
-    heading: str
-    excerpt: str
-
-
-@dataclass
-class Coverage:
-    """What extraction accounted for, and what it passed over."""
-
-    clauses_read: int
-    clauses_with_duties: int
-    unaccounted: list[UnaccountedClause]
-    uncited: int
-    """Obligations whose citation matched no clause. A duty is still a duty,
-    but a citation that points nowhere cannot be checked against its source."""
-
-    @property
-    def complete(self) -> bool:
-        return not self.unaccounted and not self.uncited
-
-
-EXCERPT_LENGTH = 180
-
-
-def coverage(blocks: list[dict], cited: list[str | None]) -> Coverage:
-    """Account for every clause of an executed agreement against what was drawn from it."""
-    clauses = [block for block in blocks if is_clause(block)]
-    keys = {clause_key(block.get("number")): block for block in clauses}
-
-    matched: set[str] = set()
-    uncited = 0
-    for citation in cited:
-        key = clause_key(citation)
-        if key and key in keys:
-            matched.add(key)
-        else:
-            uncited += 1
-
-    unaccounted = [
-        UnaccountedClause(
-            number=str(block.get("number") or "").strip(),
-            heading=str(block.get("heading") or "").strip(),
-            excerpt=_excerpt(str(block.get("text") or "")),
-        )
-        for key, block in keys.items()
-        if key not in matched
-    ]
-    return Coverage(
-        clauses_read=len(clauses),
-        clauses_with_duties=len(matched),
-        unaccounted=unaccounted,
-        uncited=uncited,
-    )
-
-
-def _excerpt(text: str) -> str:
-    body = " ".join(text.split())
-    if len(body) <= EXCERPT_LENGTH:
-        return body
-    return body[:EXCERPT_LENGTH].rsplit(" ", 1)[0] + "..."

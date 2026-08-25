@@ -917,7 +917,7 @@ def list_rounds(matter_id: uuid.UUID, db: Db, principal: CurrentUser) -> list[Ro
 def decide_finding(
     finding_id: uuid.UUID, payload: FindingDecision, db: Db, principal: CurrentUser
 ) -> ReviewFinding:
-    """Suggestions are drafts until a named person accepts them.
+    """A suggestion is a draft until a named person accepts it.
 
     What may be conceded is decided by the authority matrix and nothing else.
     """

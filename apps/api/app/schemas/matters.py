@@ -391,36 +391,6 @@ class ObligationOut(ApiModel):
     """
 
 
-class UnaccountedClauseOut(ApiModel):
-    number: str
-    heading: str
-    excerpt: str
-
-
-class ObligationCoverageOut(ApiModel):
-    """Every clause of the executed agreement, accounted for or not.
-
-    The point is the second list. A duty extraction invented is caught by the
-    person confirming it; a duty extraction missed produces nothing to catch,
-    so the clauses it drew nothing from are named and looked at.
-    """
-
-    clauses_read: int
-    clauses_with_duties: int
-    uncited: int
-    complete: bool
-    unaccounted: list[UnaccountedClauseOut]
-
-
-class ExtractionOut(ApiModel):
-    obligations: list[ObligationOut]
-    coverage: ObligationCoverageOut
-    measured: bool
-    """Whether the capability has ever been run against its golden set. An
-    unmeasured capability still runs, and says so, rather than reporting a
-    failure nobody measured."""
-
-
 class ObligationDecision(BaseModel):
     decision: str
     edited_name: str | None = None

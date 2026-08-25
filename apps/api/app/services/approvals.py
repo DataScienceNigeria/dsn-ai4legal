@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import Conflict, Refused
-from app.db.models.contract import Approval, ApprovalChainDefinition
+from app.db.models.contract import Approval
 from app.domain.enums import ApprovalDecision
 
 
@@ -103,55 +103,6 @@ def derive_chain(context: ChainContext) -> tuple[str, list[dict], list[str]]:
 
     name = "Requester and legal lead" if len(steps) > 1 else "Legal lead"
     return name, steps, notes
-
-
-def resolve_chain(session: Session, context: ChainContext) -> ApprovalChainDefinition:
-    """Kept for a deployment that configures its own chains.
-
-    Nothing in the platform calls this now. The two-step chain is derived from
-    the matter, which is what a team of this size actually does, and a stored
-    definition matched on value bands was answering a question nobody asked.
-    """
-    candidates = session.execute(
-        select(ApprovalChainDefinition)
-        .where(ApprovalChainDefinition.active.is_(True))
-        .order_by(ApprovalChainDefinition.priority.asc())
-    ).scalars().all()
-
-    def matches(chain: ApprovalChainDefinition) -> bool:
-        if chain.entity and chain.entity != context.entity:
-            return False
-        if chain.agreement_type and chain.agreement_type != context.agreement_type:
-            return False
-        if chain.risk_tier and chain.risk_tier != context.risk_tier:
-            return False
-        value = context.value_amount or 0
-        if chain.min_value is not None and value < float(chain.min_value):
-            return False
-        if chain.max_value is not None and value > float(chain.max_value):
-            return False
-        return True
-
-    for chain in candidates:
-        if matches(chain):
-            return chain
-
-    raise Refused(
-        "No approval chain is configured for this matter.",
-        [
-            f"Entity {context.entity}, type {context.agreement_type}, "
-            f"tier {context.risk_tier}. Configure a chain before routing for approval."
-        ],
-    )
-
-
-def specificity(chain: ApprovalChainDefinition) -> int:
-    """How many dimensions a chain pins down. Used when ordering candidates."""
-    return sum(
-        1
-        for value in (chain.entity, chain.agreement_type, chain.risk_tier, chain.min_value)
-        if value is not None
-    )
 
 
 def open_chain(

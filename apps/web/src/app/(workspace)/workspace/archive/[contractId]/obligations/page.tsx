@@ -12,13 +12,14 @@ import {
   CardHeader,
   DataState,
   Mono,
+  Input,
   Notice,
   PageTitle,
   Pill,
   Refusal,
   Spinner,
 } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, query } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
 import type { Contract, Obligation } from "@/lib/types";
 import { formatDate, titleCase } from "@/lib/utils";
@@ -136,7 +137,23 @@ export default function ContractObligations() {
                     {obligation.source_clause ? (
                       <span>Clause {obligation.source_clause}</span>
                     ) : null}
+                    {obligation.decision_taken ? (
+                      <Pill tone="good">{titleCase(obligation.decision_taken)}</Pill>
+                    ) : null}
                   </div>
+
+                  {/*
+                    The renewal decision, where there is one to make.
+
+                    Opening a renewal task and then having nowhere to record
+                    what was decided is the loop this closes. The window either
+                    closes on a decision or it closes on its own, and the
+                    second is the failure the task exists to prevent.
+                  */}
+                  {canAct && (obligation.decision_options ?? []).length > 0 &&
+                  !obligation.decision_taken ? (
+                    <RenewalDecision obligation={obligation} onDone={obligations.reload} />
+                  ) : null}
                 </li>
               ))}
             </ol>
@@ -149,7 +166,79 @@ export default function ContractObligations() {
         parties disagree about what was owed, this is what both sides read, beside the clause each
         entry came from. Extracting again replaces the list; the executed copy it is drawn from
         cannot change.
+        {/*
+          The feed carries renewal, notice and termination windows only. Those
+          are legal's own deadlines and nobody else is watching them; a
+          consultant's milestone belongs in the project manager's calendar.
+        */}
+        <div className="mt-2.5">
+          <a
+            href={`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"}/api/v1/obligations/calendar.ics`}
+            className="text-xs"
+          >
+            Subscribe to the renewal and notice deadlines
+          </a>
+        </div>
       </Notice>
+    </div>
+  );
+}
+
+/*
+  Four answers, and no fifth. "Do nothing" is not among them because doing
+  nothing is what happens anyway; the task exists so that the window closes on
+  a decision somebody made rather than on the calendar.
+*/
+function RenewalDecision({
+  obligation,
+  onDone,
+}: Readonly<{ obligation: Obligation; onDone: () => void }>) {
+  const [choice, setChoice] = React.useState("");
+  const [reason, setReason] = React.useState("");
+
+  const decide = useAction(async () => {
+    await api(
+      `/obligations/${obligation.id}/renewal-decision${query({
+        decision: choice,
+        reason: reason || undefined,
+      })}`,
+      { method: "POST" },
+    );
+    onDone();
+  });
+
+  return (
+    <div className="mt-3 space-y-2 border-t pt-3">
+      {decide.error ? (
+        <Refusal title="That decision was not recorded" reason={decide.error.message} />
+      ) : null}
+
+      <div className="flex flex-wrap gap-1.5">
+        {(obligation.decision_options ?? []).map((option) => (
+          <Button
+            key={option}
+            size="sm"
+            variant={choice === option ? "primary" : "default"}
+            onClick={() => setChoice(option)}
+          >
+            {titleCase(option)}
+          </Button>
+        ))}
+      </div>
+
+      {choice ? (
+        <div className="flex flex-wrap items-end gap-2">
+          <Input
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Why, in a line"
+            className="min-w-[16rem] flex-1"
+          />
+          <Button variant="primary" disabled={decide.busy} onClick={() => void decide.run()}>
+            Record it
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

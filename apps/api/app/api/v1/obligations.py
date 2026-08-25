@@ -12,7 +12,6 @@ from app.core import audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Conflict, NotFound, ValidationFailed
 from app.db.models.contract import Contract, Obligation
-from app.db.models.document import Document
 from app.db.models.governance import ComplianceItem
 from app.db.models.organisation import User
 from app.domain.enums import ObligationStatus, Role
@@ -20,10 +19,8 @@ from app.schemas.common import Ack
 from app.schemas.governance import ComplianceCompletion, ComplianceItemOut, ComplianceVersion
 from app.schemas.matters import (
     ObligationCompletion,
-    ObligationCoverageOut,
     ObligationDecision,
     ObligationOut,
-    UnaccountedClauseOut,
 )
 from app.services import notifications, sequences
 from app.services import obligations as service
@@ -92,46 +89,6 @@ def contract_obligations(
         .order_by(Obligation.due_date.asc().nulls_last())
     )
     return [_decorate(o) for o in db.execute(stmt).scalars()]
-
-
-@router.get("/contracts/{contract_id}/obligation-coverage")
-def contract_coverage(
-    contract_id: uuid.UUID, db: Db, principal: CurrentUser
-) -> ObligationCoverageOut:
-    """What extraction drew a duty from, and what it did not.
-
-    Recomputed from the executed document and the obligations on record rather
-    than stored, so it stays true as proposals are confirmed or rejected, and
-    so it is still there after the page is closed.
-    """
-    contract = db.get(Contract, contract_id)
-    if contract is None:
-        raise NotFound("That contract was not found.")
-
-    document = (
-        db.get(Document, contract.executed_document_id) if contract.executed_document_id else None
-    )
-    if document is None:
-        raise NotFound("The executed copy for that contract was not found.")
-
-    cited = list(
-        db.execute(
-            select(Obligation.source_clause).where(Obligation.contract_id == contract.id)
-        ).scalars()
-    )
-    report = service.coverage(document.blocks, cited)
-    return ObligationCoverageOut(
-        clauses_read=report.clauses_read,
-        clauses_with_duties=report.clauses_with_duties,
-        uncited=report.uncited,
-        complete=report.complete,
-        unaccounted=[
-            UnaccountedClauseOut(
-                number=clause.number, heading=clause.heading, excerpt=clause.excerpt
-            )
-            for clause in report.unaccounted
-        ],
-    )
 
 
 @router.post("/obligations/{obligation_id}/decision")

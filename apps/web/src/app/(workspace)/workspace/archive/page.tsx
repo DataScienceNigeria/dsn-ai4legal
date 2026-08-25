@@ -27,7 +27,7 @@ import {
 } from "@/components/ui";
 import { api, query as queryString } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
-import type { Contract, Extraction, Obligation, ObligationCoverage } from "@/lib/types";
+import type { Contract, Obligation } from "@/lib/types";
 import { formatDate, titleCase } from "@/lib/utils";
 
 /*

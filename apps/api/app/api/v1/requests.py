@@ -19,7 +19,6 @@ from app.db.models.intake import Request as RequestRecord
 from app.db.models.matter import Matter
 from app.db.models.organisation import User
 from app.domain.enums import ApprovalDecision, MatterState, Role
-from app.schemas.common import Ack
 from app.schemas.intake import (
     AttachmentOut,
     AwaitingConfirmation,
@@ -558,15 +557,4 @@ def _status_for(db, record: RequestRecord) -> RequestStatusOut:
         matter_number=matter.number if matter else None,
         awaiting_confirmation=_pending_confirmation(db, record, matter),
         timeline=timeline,
-    )
-
-
-@router.get("/{request_id}/acknowledgment")
-def acknowledgment(request_id: uuid.UUID, db: Db, principal: CurrentUser) -> Ack:
-    record = get_request(request_id, db, principal)
-    return Ack(
-        message=(
-            f"Request {record.reference} was acknowledged at "
-            f"{record.acknowledged_at:%d %B %Y, %H:%M} UTC."
-        )
     )

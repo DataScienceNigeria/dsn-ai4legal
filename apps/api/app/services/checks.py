@@ -211,6 +211,3 @@ def run_all(clauses: list[Clause], expected_parties: list[str] | None = None) ->
     if expected_parties:
         results.append(check_party_names(clauses, expected_parties))
     return results
-
-def all_passed(results: list[CheckResult]) -> bool:
-    return all(r.passed for r in results)

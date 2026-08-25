@@ -178,19 +178,6 @@ def _pairs_case(predicted: set[str], want: set[str], noun: str) -> tuple[CaseRes
         precision,
         recall,
     )
-
-
-def _grounded_rate(output: dict) -> float:
-    """The share of paragraphs that carry at least one citation."""
-    paragraphs = output.get("paragraphs")
-    if not isinstance(paragraphs, list) or not paragraphs:
-        return 0.0
-    cited = sum(
-        1 for paragraph in paragraphs if isinstance(paragraph, dict) and paragraph.get("cites")
-    )
-    return cited / len(paragraphs)
-
-
 def _summary_grounded_rate(output: dict, expected: dict) -> float:
     """A summary line is grounded when every number in it appears in the data."""
     allowed = {_normalise(value) for value in expected.get("figures", [])}

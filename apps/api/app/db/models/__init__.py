@@ -3,7 +3,6 @@
 from app.db.models.ai import AIInteraction, Baseline, Capability, EvaluationRun
 from app.db.models.contract import (
     Approval,
-    ApprovalChainDefinition,
     Contract,
     Obligation,
     SignatureRequest,
@@ -43,7 +42,6 @@ from app.db.models.platform import (
 __all__ = [
     "AIInteraction",
     "Approval",
-    "ApprovalChainDefinition",
     "Assessment",
     "Attachment",
     "AuditEvent",

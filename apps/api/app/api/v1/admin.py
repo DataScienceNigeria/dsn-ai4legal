@@ -125,66 +125,6 @@ def set_capability_state(
     return _decorate(capability)
 
 
-@router.post("/capabilities/{code}/evaluate")
-def record_evaluation(
-    code: str,
-    score: float,
-    db: Db,
-    principal: CurrentUser,
-    score_label: str | None = None,
-    set_size: int = 0,
-) -> CapabilityOut:
-    """Record a golden-set run. A capability that falls below its threshold is
-    disabled until it passes again (PRD section 4.2)."""
-    principal.require_role(Role.ADMIN)
-
-    capability = db.execute(
-        select(Capability).where(Capability.code == code)
-    ).scalar_one_or_none()
-    if capability is None:
-        raise NotFound(CAPABILITY_NOT_FOUND)
-    if capability.gate_threshold is None:
-        raise ValidationFailed(
-            "This capability has no gate defined, so a result cannot be assessed.",
-            {"gate_threshold": "Define the gate before recording a result."},
-        )
-
-    passed = score >= capability.gate_threshold
-    db.add(
-        EvaluationRun(
-            capability_id=capability.id,
-            golden_set=capability.golden_set or "unspecified",
-            set_size=set_size,
-            score=score,
-            score_label=score_label,
-            threshold=capability.gate_threshold,
-            passed=passed,
-            run_at=datetime.now(UTC),
-        )
-    )
-    capability.last_score = score
-    capability.last_score_label = score_label
-    capability.last_evaluated_at = datetime.now(UTC)
-
-    if not passed and capability.state == CapabilityState.ENABLED.value:
-        capability.state = CapabilityState.DISABLED.value
-        capability.disabled_reason = (
-            f"Scored {score} against a gate of {capability.gate_threshold} on the "
-            f"{capability.golden_set} set. Disabled automatically."
-        )
-
-    audit.record(
-        db,
-        action="capability_evaluated",
-        object_type="capability",
-        object_id=capability.code,
-        actor_id=principal.user_id,
-        actor_label=principal.name,
-        after_state={"score": score, "passed": passed, "state": capability.state},
-    )
-    return _decorate(capability)
-
-
 def _capability(db, code: str) -> Capability:
     capability = db.execute(
         select(Capability).where(Capability.code == code)

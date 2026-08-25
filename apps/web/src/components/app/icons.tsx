@@ -15,7 +15,6 @@ export type IconName =
   | "matters"
   | "review"
   | "archive"
-  | "obligations"
   | "templates"
   | "memory"
   | "inbox"
@@ -77,12 +76,6 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <path d="M3 5h18v4H3Z" />
       <path d="M5 9v10h14V9" />
       <path d="M10 13h4" />
-    </>
-  ),
-  obligations: (
-    <>
-      <circle cx="12" cy="12" r="8.5" />
-      <path d="M12 7.5V12l3 2" />
     </>
   ),
   templates: (

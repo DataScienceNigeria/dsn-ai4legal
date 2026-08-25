@@ -15,7 +15,7 @@ from sqlalchemy import func, select, text
 from app.ai.retrieval import embed
 from app.core.security import hash_password
 from app.db.models.ai import Baseline, Capability
-from app.db.models.contract import ApprovalChainDefinition, Contract, Obligation
+from app.db.models.contract import Contract, Obligation
 from app.db.models.counterparty import Counterparty, Vendor
 from app.db.models.document import Document, ReviewFinding
 from app.db.models.evaluation import GoldenCase, GoldenSet
@@ -2510,106 +2510,6 @@ def seed_platform_config(session, users) -> None:
         ]
     )
 
-    session.add_all(
-        [
-            ApprovalChainDefinition(
-                name="Tier 1 standard",
-                risk_tier=RiskTier.TIER_1.value,
-                priority=10,
-                steps=[
-                    {
-                        "name": "Legal review",
-                        "role": Role.COUNSEL.value,
-                        "mode": "sequential",
-                        "due_hours": 4,
-                    },
-                    {
-                        "name": "Signatory",
-                        "role": Role.HEAD_OF_LEGAL.value,
-                        "mode": "sequential",
-                        "due_hours": 8,
-                    },
-                ],
-            ),
-            ApprovalChainDefinition(
-                name="Tier 2 with finance",
-                risk_tier=RiskTier.TIER_2.value,
-                priority=20,
-                steps=[
-                    {
-                        "name": "Legal review",
-                        "role": Role.COUNSEL.value,
-                        "mode": "sequential",
-                        "due_hours": 24,
-                    },
-                    {
-                        "name": "Finance",
-                        "role": Role.MANAGEMENT.value,
-                        "mode": "parallel",
-                        "due_hours": 24,
-                        "condition": "value_above",
-                        "value_threshold": 5_000_000,
-                    },
-                    {
-                        "name": "Signatory",
-                        "role": Role.HEAD_OF_LEGAL.value,
-                        "mode": "sequential",
-                        "due_hours": 24,
-                    },
-                ],
-            ),
-            ApprovalChainDefinition(
-                name="Tier 3 full review",
-                risk_tier=RiskTier.TIER_3.value,
-                priority=30,
-                steps=[
-                    {
-                        "name": "Counsel review",
-                        "role": Role.COUNSEL.value,
-                        "mode": "sequential",
-                        "due_hours": 48,
-                    },
-                    {
-                        "name": "Privacy review",
-                        "role": Role.PRIVACY.value,
-                        "mode": "parallel",
-                        "due_hours": 48,
-                        "condition": "privacy_flag",
-                    },
-                    {
-                        "name": "Legal lead",
-                        "role": Role.HEAD_OF_LEGAL.value,
-                        "mode": "sequential",
-                        "due_hours": 48,
-                    },
-                    {
-                        "name": "Executive sponsor",
-                        "role": Role.MANAGEMENT.value,
-                        "mode": "sequential",
-                        "due_hours": 72,
-                    },
-                ],
-            ),
-            ApprovalChainDefinition(
-                name="Default",
-                priority=999,
-                steps=[
-                    {
-                        "name": "Counsel review",
-                        "role": Role.COUNSEL.value,
-                        "mode": "sequential",
-                        "due_hours": 48,
-                    },
-                    {
-                        "name": "Legal lead",
-                        "role": Role.HEAD_OF_LEGAL.value,
-                        "mode": "sequential",
-                        "due_hours": 48,
-                    },
-                ],
-            ),
-        ]
-    )
     session.flush()
 
 

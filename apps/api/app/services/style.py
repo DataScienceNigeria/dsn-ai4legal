@@ -303,7 +303,3 @@ def enforce(blocks: list[dict], style: HouseStyle | None = None) -> tuple[list[d
 
     report.extend(_check_numbering(blocks))
     return corrected, [violation.as_dict() for violation in report]
-
-
-def rule_catalogue() -> list[dict]:
-    return [{"code": rule.code, "description": rule.description} for rule in RULES]

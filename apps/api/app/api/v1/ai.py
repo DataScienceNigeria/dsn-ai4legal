@@ -22,7 +22,6 @@ from app.ai.gateway import (
 from app.core import audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Conflict, NotFound, Refused
-from app.db.models.ai import Capability
 from app.db.models.contract import Contract, Obligation
 from app.db.models.conversation import Conversation, ConversationTurn
 from app.db.models.counterparty import Counterparty
@@ -59,15 +58,8 @@ from app.schemas.governance import (
     RenameConversation,
     SourceOut,
 )
-from app.schemas.matters import (
-    ExtractionOut,
-    FindingOut,
-    ObligationCoverageOut,
-    ObligationOut,
-    UnaccountedClauseOut,
-)
+from app.schemas.matters import FindingOut, ObligationOut
 from app.services import notifications, redline, sequences
-from app.services import obligations as obligation_service
 
 MESSAGE_NOT_FOUND = "That message was not found."
 
@@ -1266,41 +1258,14 @@ def review_counterparty_paper(
     return created
 
 
-def _extraction_out(db, contract, document, obligations: list[Obligation]) -> ExtractionOut:
-    """Assemble the proposals with the account of what they were drawn from."""
-    report = obligation_service.coverage(
-        document.blocks, [item.source_clause for item in obligations]
-    )
-    capability = db.execute(
-        select(Capability).where(Capability.code == "obligation_extraction")
-    ).scalar_one_or_none()
-
-    return ExtractionOut(
-        obligations=[ObligationOut.model_validate(item) for item in obligations],
-        coverage=ObligationCoverageOut(
-            clauses_read=report.clauses_read,
-            clauses_with_duties=report.clauses_with_duties,
-            uncited=report.uncited,
-            complete=report.complete,
-            unaccounted=[
-                UnaccountedClauseOut(
-                    number=clause.number, heading=clause.heading, excerpt=clause.excerpt
-                )
-                for clause in report.unaccounted
-            ],
-        ),
-        measured=bool(capability and capability.last_evaluated_at),
-    )
-
-
 @router.post("/extract-obligations/{contract_id}", status_code=201)
-def extract_obligations(contract_id: uuid.UUID, db: Db, principal: CurrentUser) -> ExtractionOut:
-    """Propose obligations from the executed agreement, for confirmation.
+def extract_obligations(
+    contract_id: uuid.UUID, db: Db, principal: CurrentUser
+) -> list[ObligationOut]:
+    """Read the executed agreement and record what it requires.
 
-    The proposals come back with an account of every clause they were drawn
-    from, and every clause they were not. A duty this misses produces nothing
-    at all, and nothing is not something anyone notices, so the clauses that
-    yielded no duty are named rather than left as an absence.
+    One act, repeatable. Running it again replaces the list, keeping anything
+    a person opened by hand and anything already completed.
     """
     principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
@@ -1418,7 +1383,7 @@ def extract_obligations(contract_id: uuid.UUID, db: Db, principal: CurrentUser) 
         created.append(obligation)
 
     db.flush()
-    return _extraction_out(db, contract, document, created)
+    return [ObligationOut.model_validate(item) for item in created]
 
 
 @router.post("/interactions/{interaction_id}/decision")

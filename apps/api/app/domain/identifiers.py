@@ -42,10 +42,6 @@ def contract_id(entity: Entity | str, year: int, sequence: int) -> str:
 
 def request_reference(year: int, sequence: int) -> str:
     return f"REQ-{year}-{sequence:05d}"
-
-def template_version_id(agreement_type: str, major: int, minor: int) -> str:
-    return f"TPL-{agreement_type.upper()}-v{major}.{minor}"
-
 def clause_version_id(category: str, major: int, minor: int) -> str:
     return f"CLS-{category.upper()}-v{major}.{minor}"
 

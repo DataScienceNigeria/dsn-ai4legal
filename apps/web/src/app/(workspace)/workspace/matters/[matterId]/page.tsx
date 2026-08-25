@@ -44,7 +44,6 @@ import type {
   Approval,
   Contract,
   DocumentRecord,
-  Extraction,
   Obligation,
   Matter,
   RequestDetail,

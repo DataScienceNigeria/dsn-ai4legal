@@ -76,21 +76,6 @@ class Contract(UUIDPrimaryKey, Timestamped, EntityScoped, Base):
     matter: Mapped["Matter"] = relationship("Matter", viewonly=True)
     counterparty: Mapped["Counterparty | None"] = relationship("Counterparty", viewonly=True)
 
-class ApprovalChainDefinition(UUIDPrimaryKey, Timestamped, Base):
-    """Configurable by entity, agreement type, value band and risk tier."""
-
-    __tablename__ = "approval_chain_definition"
-
-    name: Mapped[str] = mapped_column(String(128), nullable=False)
-    entity: Mapped[str | None] = mapped_column(String(3))
-    agreement_type: Mapped[str | None] = mapped_column(String(64))
-    risk_tier: Mapped[str | None] = mapped_column(String(16))
-    min_value: Mapped[float | None] = mapped_column(Numeric(18, 2))
-    max_value: Mapped[float | None] = mapped_column(Numeric(18, 2))
-    steps: Mapped[list[dict]] = mapped_column(JSONB, default=list)
-    active: Mapped[bool] = mapped_column(Boolean, default=True)
-    priority: Mapped[int] = mapped_column(Integer, default=100)
-
 class Approval(UUIDPrimaryKey, Timestamped, Base):
     """Approval binds to a document content hash (PRD LOP-M07-US-03)."""
 
