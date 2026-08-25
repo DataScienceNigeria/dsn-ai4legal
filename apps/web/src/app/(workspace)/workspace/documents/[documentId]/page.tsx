@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import * as React from "react";
 
@@ -68,10 +69,6 @@ export default function DocumentScreen() {
     reload();
   });
 
-  const redline = useAction(async () => {
-    await api<{ message: string }>(`/documents/${documentId}/redline`, { method: "POST" });
-    reload();
-  });
 
   /*
     One list. `open_items` is built from the failed checks at assembly, so the
@@ -145,11 +142,6 @@ export default function DocumentScreen() {
             <Button disabled={verify.busy} onClick={() => void verify.run(document.content_hash)}>
               Verify the hash
             </Button>
-            {has("counsel", "head_of_legal", "admin") && !document.immutable ? (
-              <Button disabled={redline.busy} onClick={() => void redline.run()}>
-                Produce a redline
-              </Button>
-            ) : null}
           </>
         }
       />
@@ -157,9 +149,6 @@ export default function DocumentScreen() {
       {verified ? <Notice tone="info" title="Hash check">{verified}</Notice> : null}
       {save.error ? <Refusal title="That download was refused" reason={save.error.message} /> : null}
       {verify.error ? <Refusal title="The hash could not be read" reason={verify.error.message} /> : null}
-      {redline.error ? (
-        <Refusal title="No redline was produced" reason={redline.error.message} reasons={redline.error.reasons} />
-      ) : null}
 
       {document.immutable ? (
         <Notice tone="good" title="This is the authoritative executed copy">
@@ -236,10 +225,33 @@ export default function DocumentScreen() {
                     className={cn(
                       "mt-1.5 whitespace-pre-wrap text-sm leading-relaxed",
                       block.novel && "rounded-md border border-secondary/30 bg-secondary/5 p-2.5",
+                      block.tracked_change &&
+                        "rounded-md border border-brand/30 bg-brand/5 p-2.5",
                     )}
                   >
                     {block.text}
                   </p>
+
+                  {/*
+                    What it replaced, struck through beneath it. A redline that
+                    shows only the new wording asks the reader to diff it
+                    against their own copy from memory, which is the thing a
+                    marked-up contract exists to avoid.
+                  */}
+                  {block.tracked_change ? (
+                    <div className="mt-2 space-y-1.5">
+                      {block.tracked_change.original ? (
+                        <p className="whitespace-pre-wrap rounded-md border border-destructive/25 bg-destructive/5 p-2.5 text-sm leading-relaxed text-muted-foreground line-through">
+                          {block.tracked_change.original}
+                        </p>
+                      ) : null}
+                      <p className="text-xs text-muted-foreground">
+                        {block.tracked_change.inserted ? "Added" : "Changed"} by{" "}
+                        {block.tracked_change.author}
+                        {block.tracked_change.reason ? `, ${block.tracked_change.reason}` : ""}
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
               ))
             )}

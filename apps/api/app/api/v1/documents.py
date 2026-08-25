@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, File, Response, UploadFile
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from app.api.v1.counterparties import registered_address
 from app.core import audit
@@ -15,7 +15,7 @@ from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Conflict, Forbidden, NotFound, Refused, ValidationFailed
 from app.db.models.contract import Approval, SignatureRequest
 from app.db.models.counterparty import Counterparty
-from app.db.models.document import Document, ReviewFinding, Suggestion
+from app.db.models.document import Document, ReviewFinding
 from app.db.models.intake import Attachment, RequestType
 from app.db.models.library import ClauseVersion, Template, TemplateVersion
 from app.db.models.matter import Matter, MatterTransition
@@ -39,9 +39,10 @@ from app.schemas.matters import (
     FindingDecision,
     FindingOut,
     GenerateRequest,
+    RoundSummary,
 )
 from app.services import approvals as approval_service
-from app.services import autoissue, docx_import, storage
+from app.services import autoissue, docx_comments, docx_import, storage
 from app.services import checks as check_service
 from app.services.generation import generate, render_docx
 from app.services.hashing import file_hash
@@ -493,7 +494,9 @@ def generate_document(
 
 
 def _to_out(document: Document) -> DocumentOut:
-    return DocumentOut.model_validate(document)
+    model = DocumentOut.model_validate(document)
+    model.signed_copy_held = bool(document.storage_key)
+    return model
 
 
 @router.get("/documents/{document_id}")
@@ -502,6 +505,48 @@ def get_document(document_id: uuid.UUID, db: Db, principal: CurrentUser) -> Docu
     if document is None:
         raise NotFound(DOCUMENT_NOT_FOUND)
     return _to_out(document)
+
+
+@router.get("/documents/{document_id}/signed")
+def signed_copy(document_id: uuid.UUID, db: Db, principal: CurrentUser) -> Response:
+    """The executed copy as it was signed, with the signatures on it.
+
+    Not the same thing as the download. That renders from the stored blocks,
+    which are the wording, and the wording is what it was before anybody
+    signed: the signatures exist only on the file the signing service stamped.
+    This serves the file itself, out of the immutable store.
+    """
+    document = db.get(Document, document_id)
+    if document is None:
+        raise NotFound(DOCUMENT_NOT_FOUND)
+    if not document.storage_key:
+        raise NotFound(
+            "No signed copy is held for this document. It may not have been executed "
+            "through the signing service."
+        )
+
+    try:
+        data = storage.store.get(document.storage_key)
+    except Exception as exc:
+        raise NotFound("The signed copy could not be read from the archive.") from exc
+
+    audit.record(
+        db,
+        action="signed_copy_read",
+        object_type="document",
+        object_id=str(document.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=document.entity,
+    )
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{document.name}, signed.pdf"',
+            "X-Content-Hash": document.content_hash,
+        },
+    )
 
 
 @router.get("/documents/{document_id}/hash")
@@ -524,27 +569,45 @@ def download(document_id: uuid.UUID, db: Db, principal: CurrentUser) -> Response
     if document is None:
         raise NotFound(DOCUMENT_NOT_FOUND)
 
-    from app.services.generation import GeneratedBlock, GenerationResult
+    # Their file, where we hold it.
+    #
+    # Rebuilding a counterparty draft from the blocks we split it into returns
+    # a document that says the same words in none of the same ways: their
+    # numbering, their defined terms, their formatting, all replaced by ours.
+    # It is also what the reviewer edits and what goes back to them, so it has
+    # to be the file they sent, not our reading of it.
+    data: bytes | None = None
+    if document.storage_key:
+        try:
+            data = storage.store.get(document.storage_key)
+        except Exception:
+            # The record outlives the object store in development, and a
+            # missing file is a reason to fall back to the blocks rather than
+            # to refuse the reader their document.
+            data = None
 
-    result = GenerationResult(
-        blocks=[
-            GeneratedBlock(
-                key=b["key"],
-                number=b["number"],
-                heading=b["heading"],
-                text=b["text"],
-                provenance=b["provenance"],
-                source_reference=b.get("source_reference"),
-            )
-            for b in document.blocks
-        ],
-        values=document.input_values,
-        checks=[],
-        content_hash=document.content_hash,
-        template_reference=document.template_version_ref or "",
-        clause_references=document.clause_versions,
-    )
-    data = render_docx(result, document.name)
+    if data is None:
+        from app.services.generation import GeneratedBlock, GenerationResult
+
+        result = GenerationResult(
+            blocks=[
+                GeneratedBlock(
+                    key=b["key"],
+                    number=b["number"],
+                    heading=b["heading"],
+                    text=b["text"],
+                    provenance=b["provenance"],
+                    source_reference=b.get("source_reference"),
+                )
+                for b in document.blocks
+            ],
+            values=document.input_values,
+            checks=[],
+            content_hash=document.content_hash,
+            template_reference=document.template_version_ref or "",
+            clause_references=document.clause_versions,
+        )
+        data = render_docx(result, document.name)
 
     audit.record(
         db,
@@ -579,17 +642,277 @@ def list_documents(
     return [_to_out(d) for d in documents]
 
 
-@router.get("/matters/{matter_id}/findings", response_model=list[FindingOut])
-def list_findings(
-    matter_id: uuid.UUID, db: Db, principal: CurrentUser
-) -> list[ReviewFinding]:
-    return list(
+@router.put("/documents/{document_id}/source", response_model=DocumentOut)
+def save_document_source(
+    document_id: uuid.UUID,
+    db: Db,
+    principal: CurrentUser,
+    file: Annotated[UploadFile, File()],
+) -> DocumentOut:
+    """Save an edit to their paper, as a new version of it.
+
+    Every change to a counterparty draft is made here, by a person. The review
+    suggests and says which clause it is about; the wording that goes in is
+    typed by whoever is accountable for it, which is the only arrangement where
+    the document and the record of who changed it cannot drift apart.
+
+    A new version rather than an edit in place. The previous one is what a
+    round of findings was raised against, and rewriting it would leave those
+    findings describing a document that no longer exists.
+    """
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN, Role.LEGAL_OPS)
+
+    document = db.get(Document, document_id)
+    if document is None:
+        raise NotFound(DOCUMENT_NOT_FOUND)
+    if document.immutable:
+        raise Conflict(
+            "This is the executed copy and cannot be edited. To change what was signed, "
+            "record an amendment against the contract."
+        )
+    if document.document_type != DocumentType.COUNTERPARTY.value:
+        raise Conflict(
+            "Only counterparty paper is edited here. A document generated from an approved "
+            "template is changed by changing the template or the facts it was built from."
+        )
+
+    matter = db.get(Matter, document.matter_id) if document.matter_id else None
+    if matter is None:
+        raise NotFound("That matter was not found.")
+
+    data = file.file.read()
+    digest = storage.validate_upload(document.name, DOCX_MEDIA_TYPE, data)
+    if digest == document.content_hash:
+        return _to_out(document)
+
+    superseding = db.execute(
+        select(Document).where(Document.supersedes_id == document.id)
+    ).scalars().first()
+    if superseding is not None:
+        raise Conflict(
+            f"{document.name} has already been superseded by version {superseding.version}. "
+            "Edit that one, or your changes would fork the draft."
+        )
+
+    try:
+        blocks = docx_import.read_blocks(data)
+    except docx_import.NotADocx as exc:
+        raise ValidationFailed("That file could not be read.", {"file": str(exc)}) from exc
+
+    key = f"matters/{matter.number}/counterparty/{digest[:12]}-{document.name}"
+    storage.store.put(key, data, DOCX_MEDIA_TYPE)
+
+    edited = Document(
+        matter_id=matter.id,
+        entity=matter.entity,
+        name=document.name,
+        document_type=DocumentType.COUNTERPARTY.value,
+        version=document.version + 1,
+        template_version_ref=None,
+        clause_versions=[],
+        input_values={},
+        blocks=blocks,
+        content_hash=digest,
+        storage_key=key,
+        classification=document.classification,
+        generated_by_id=uuid.UUID(principal.user_id),
+        generated_at=datetime.now(UTC),
+        novel_clause_count=0,
+        open_items=list(document.open_items),
+        consistency_checks=[],
+        supersedes_id=document.id,
+    )
+    db.add(edited)
+    db.flush()
+
+    audit.record(
+        db,
+        action="counterparty_paper_edited",
+        object_type="document",
+        object_id=str(edited.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=matter.entity,
+        after_state={
+            "matter": matter.number,
+            "from": str(document.id),
+            "version": edited.version,
+            "hash": digest,
+        },
+    )
+    return _to_out(edited)
+
+
+def _comment_body(finding: ReviewFinding) -> str:
+    """One finding as it reads in the margin of their document."""
+    proposed = finding.edited_text or finding.suggested_redline or "not recorded"
+    return (
+        f"{finding.severity.upper()}. {finding.title}\n\n"
+        f"Our position: {finding.house_position or 'not recorded'}\n\n"
+        f"Proposed: {proposed}"
+    )
+
+
+@router.get("/matters/{matter_id}/findings/export")
+def export_findings(matter_id: uuid.UUID, db: Db, principal: CurrentUser) -> Response:
+    """Their paper back, with this round's findings as comments in the margin.
+
+    Half of every negotiation happens where this platform cannot see. Their
+    counsel works in Word, ours in a shared document, and the version that
+    comes back was argued over in a meeting nobody minuted. The answer is not
+    to insist the work happens here: it is to send the findings out in the
+    format all of those tools already read, and to re-read the returned file to
+    find out what was settled.
+    """
+    principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+
+    matter = db.get(Matter, matter_id)
+    if matter is None:
+        raise NotFound("That matter was not found.")
+
+    latest = db.execute(
+        select(func.max(ReviewFinding.round)).where(ReviewFinding.matter_id == matter_id)
+    ).scalar()
+    findings = list(
         db.execute(
             select(ReviewFinding)
-            .where(ReviewFinding.matter_id == matter_id)
+            .where(ReviewFinding.matter_id == matter_id, ReviewFinding.round == latest)
             .order_by(ReviewFinding.sequence)
         ).scalars()
     )
+    if not findings:
+        raise Conflict("This matter has no findings to export.")
+
+    document = db.get(Document, findings[0].document_id) if findings[0].document_id else None
+    if document is None or not document.storage_key:
+        raise Conflict(
+            "The paper these findings were raised against is not held here, so there is "
+            "nothing to write them onto."
+        )
+
+    try:
+        source = storage.store.get(document.storage_key)
+    except Exception as exc:
+        raise Conflict("Their paper could not be read from the archive.") from exc
+
+    initials = "".join(word[0] for word in principal.name.split()[:2]).upper() or "LG"
+    annotated = docx_comments.annotate(
+        source,
+        [
+            docx_comments.Note(
+                anchor=finding.their_text or "",
+                author=principal.name,
+                initials=initials,
+                body=_comment_body(finding),
+            )
+            for finding in findings
+            # An absent clause has no text in their draft to comment against.
+            # It is named in the covering note instead of being anchored to a
+            # paragraph that has nothing to do with it.
+            if not finding.clause_absent and finding.their_text
+        ],
+    )
+
+    audit.record(
+        db,
+        action="findings_exported",
+        object_type="matter",
+        object_id=matter.number,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=matter.entity,
+        after_state={
+            "round": latest,
+            "document": document.name,
+            "placed": len(annotated.placed),
+            "unplaced": len(annotated.unplaced),
+        },
+    )
+
+    name = f"{matter.number}-round-{latest}-{document.name}"
+    return Response(
+        content=annotated.data,
+        media_type=DOCX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}"',
+            "X-Findings-Placed": str(len(annotated.placed)),
+            "X-Findings-Unplaced": str(len(annotated.unplaced)),
+        },
+    )
+
+
+@router.get("/matters/{matter_id}/findings", response_model=list[FindingOut])
+def list_findings(
+    matter_id: uuid.UUID,
+    db: Db,
+    principal: CurrentUser,
+    round: int | None = None,
+) -> list[ReviewFinding]:
+    """Findings on this matter, the latest round unless one is named.
+
+    A matter under negotiation carries every round it has been through. Showing
+    all of them at once reads as a growing pile of complaints rather than as an
+    argument that is being settled, so the default is the round in hand.
+    """
+    stmt = select(ReviewFinding).where(ReviewFinding.matter_id == matter_id)
+    if round is None:
+        latest = db.execute(
+            select(func.max(ReviewFinding.round)).where(ReviewFinding.matter_id == matter_id)
+        ).scalar()
+        if latest:
+            stmt = stmt.where(ReviewFinding.round == latest)
+    else:
+        stmt = stmt.where(ReviewFinding.round == round)
+
+    return list(db.execute(stmt.order_by(ReviewFinding.sequence)).scalars())
+
+
+@router.get("/matters/{matter_id}/review-rounds", response_model=list[RoundSummary])
+def list_rounds(matter_id: uuid.UUID, db: Db, principal: CurrentUser) -> list[RoundSummary]:
+    """Every pass over their paper, and what each one changed.
+
+    Settled counts the points the previous round raised that this one's paper
+    no longer carries. Newly raised counts the points that appear here for the
+    first time, which on a second or third round is what the counterparty
+    altered while the argument was about something else.
+    """
+    findings = list(
+        db.execute(
+            select(ReviewFinding)
+            .where(ReviewFinding.matter_id == matter_id)
+            .order_by(ReviewFinding.round, ReviewFinding.sequence)
+        ).scalars()
+    )
+    if not findings:
+        return []
+
+    names: dict[uuid.UUID, str] = {}
+    summaries: list[RoundSummary] = []
+    for number in sorted({finding.round for finding in findings}):
+        in_round = [finding for finding in findings if finding.round == number]
+        document_id = next((f.document_id for f in in_round if f.document_id), None)
+        if document_id and document_id not in names:
+            document = db.get(Document, document_id)
+            names[document_id] = document.name if document else ""
+
+        summaries.append(
+            RoundSummary(
+                round=number,
+                document_id=document_id,
+                document_name=names.get(document_id) if document_id else None,
+                total=len(in_round),
+                settled=sum(
+                    1
+                    for finding in findings
+                    if finding.round == number - 1 and finding.settled_in_round == number
+                ),
+                still_open=sum(1 for finding in in_round if finding.carried_from_id),
+                newly_raised=sum(
+                    1 for finding in in_round if not finding.carried_from_id and number > 1
+                ),
+            )
+        )
+    return summaries
 
 
 @router.post("/findings/{finding_id}/decision", response_model=FindingOut)
@@ -769,69 +1092,6 @@ def recheck_document(
     )
     db.flush()
     return _to_out(document)
-
-
-@router.post("/documents/{document_id}/redline")
-def produce_redline(document_id: uuid.UUID, db: Db, principal: CurrentUser) -> Ack:
-    """Write accepted suggestions back as tracked changes."""
-    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
-    document = db.get(Document, document_id)
-    if document is None:
-        raise NotFound(DOCUMENT_NOT_FOUND)
-
-    accepted = list(
-        db.execute(
-            select(Suggestion).where(
-                Suggestion.document_id == document.id, Suggestion.decision == "accepted"
-            )
-        ).scalars()
-    )
-    if not accepted:
-        raise Conflict("No suggestions on this document have been accepted.")
-
-    blocks = {b["key"]: dict(b) for b in document.blocks}
-    tracked = []
-    for suggestion in accepted:
-        block = blocks.get(suggestion.block_key)
-        if block is None:
-            continue
-        block["text"] = suggestion.proposed_text
-        block["tracked_change"] = {
-            "author": principal.name,
-            "original": suggestion.original_text,
-            "reason": suggestion.rationale,
-            "novel": suggestion.novel,
-        }
-        tracked.append(suggestion.block_key)
-
-    redline = Document(
-        matter_id=document.matter_id,
-        entity=document.entity,
-        name=f"{document.name}, redline",
-        document_type=DocumentType.REDLINE.value,
-        version=document.version + 1,
-        template_version_ref=document.template_version_ref,
-        clause_versions=document.clause_versions,
-        input_values=document.input_values,
-        blocks=list(blocks.values()),
-        content_hash="",
-        classification=document.classification,
-        generated_by_id=uuid.UUID(principal.user_id),
-        generated_at=datetime.now(UTC),
-        novel_clause_count=sum(1 for s in accepted if s.novel),
-        supersedes_id=document.id,
-    )
-    from app.services.hashing import content_hash
-
-    redline.content_hash = content_hash(redline.blocks, redline.template_version_ref)
-    db.add(redline)
-
-    return Ack(
-        message=(
-            f"Redline produced with {len(tracked)} tracked changes, attributed to "
-            f"{principal.name}. Approvals against the previous hash are invalidated."
-        )
-    )
 
 
 @router.post("/matters/{matter_id}/auto-issue", status_code=201)

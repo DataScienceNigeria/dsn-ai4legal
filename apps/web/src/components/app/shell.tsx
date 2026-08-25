@@ -73,20 +73,21 @@ const NAV: { group: string; items: NavItem[] }[] = [
         roles: LEGAL,
         counter: "review",
       },
+      /*
+        Obligations used to sit here as its own destination with a count.
+
+        Legal does not work obligations. A consultant's milestones are the
+        project manager's, and the platform badging legal with a number of them
+        was telling the wrong people to do something. They are a record of what
+        an agreement requires, read when someone disagrees about it, so they
+        are reached from the agreement and nowhere else.
+      */
       {
         href: "/workspace/archive",
         icon: "archive",
         label: "Archive",
         module: "M08",
         roles: [...LEGAL, "auditor"],
-      },
-      {
-        href: "/workspace/obligations",
-        icon: "obligations",
-        label: "Obligations",
-        module: "M08",
-        roles: LEGAL,
-        counter: "obligations",
       },
     ],
   },

@@ -7,10 +7,11 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.ai import retrieval
 from app.ai.capabilities import REGISTRY
+from app.ai.envelope import Source
 from app.ai.gateway import (
     CapabilityCall,
     fit,
@@ -21,6 +22,7 @@ from app.ai.gateway import (
 from app.core import audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Conflict, NotFound, Refused
+from app.db.models.ai import Capability
 from app.db.models.contract import Contract, Obligation
 from app.db.models.conversation import Conversation, ConversationTurn
 from app.db.models.counterparty import Counterparty
@@ -58,8 +60,15 @@ from app.schemas.governance import (
     RenameConversation,
     SourceOut,
 )
-from app.schemas.matters import FindingOut, ObligationOut
-from app.services import notifications, sequences
+from app.schemas.matters import (
+    ExtractionOut,
+    FindingOut,
+    ObligationCoverageOut,
+    ObligationOut,
+    UnaccountedClauseOut,
+)
+from app.services import notifications, redline, sequences
+from app.services import obligations as obligation_service
 
 MESSAGE_NOT_FOUND = "That message was not found."
 
@@ -340,9 +349,7 @@ def open_conversation(
         entity=entity,
         owner_id=uuid.UUID(principal.user_id),
         matter_id=payload.matter_id,
-        title=(
-            (payload.title or "").strip() or (_title_from(first) if first else UNTITLED)
-        ),
+        title=((payload.title or "").strip() or (_title_from(first) if first else UNTITLED)),
     )
     db.add(conversation)
     db.flush()
@@ -1056,8 +1063,55 @@ def review_counterparty_paper(
         3: "fallback_3",
     }
 
+    # Which pass this is, and what the last one said.
+    #
+    # Negotiation is rounds. Their paper comes back changed, from the editor
+    # here or from a fortnight in somebody else's document, and the useful
+    # question is not "what is wrong with it" but what they fixed, what is
+    # still open, and what they changed that nobody asked about. Reading the
+    # returned paper answers all three; a person ticking off a checklist
+    # answers none of them honestly.
+    previous_round = (
+        db.execute(
+            select(func.max(ReviewFinding.round)).where(ReviewFinding.matter_id == matter.id)
+        ).scalar()
+        or 0
+    )
+    previous = list(
+        db.execute(
+            select(ReviewFinding)
+            .where(
+                ReviewFinding.matter_id == matter.id,
+                ReviewFinding.round == previous_round,
+            )
+            .order_by(ReviewFinding.sequence)
+        ).scalars()
+    )
+    this_round = previous_round + 1
+
+    raised = list(envelope.output.get("findings", []))
+    matched, settled = redline.carry_over(
+        [
+            {
+                "title": earlier.title,
+                "their_reference": earlier.their_reference,
+                "clause_category": earlier.clause_category,
+                "house_position": earlier.house_position,
+            }
+            for earlier in previous
+        ],
+        raised,
+    )
+
+    # Settled by the paper, not by anyone saying so. A point their draft no
+    # longer carries is conceded, whoever conceded it and wherever.
+    for index in settled:
+        earlier = previous[index]
+        if earlier.settled_in_round is None:
+            earlier.settled_in_round = this_round
+
     created: list[ReviewFinding] = []
-    for index, item in enumerate(envelope.output.get("findings", []), start=1):
+    for index, item in enumerate(raised, start=1):
         severity = Severity(item.get("severity", "material"))
         rank = int(item.get("fallback_rank") or 0)
         fallback_authority = "outside" if severity is Severity.CRITICAL else "fallback_1"
@@ -1079,6 +1133,24 @@ def review_counterparty_paper(
             required_authority=authority,
             matches_preapproved_fallback=bool(item.get("matches_preapproved_fallback")),
             interaction_id=envelope.interaction_id,
+            round=this_round,
+            carried_from_id=(
+                previous[matched[index - 1]].id if (index - 1) in matched else None
+            ),
+            # Which clause of their paper this is about, resolved now from the
+            # reference and the text the review quoted. Deterministic on
+            # purpose: pointing a reviewer at the wrong clause wastes the one
+            # thing the screen exists to give them, and asking a model to point
+            # at the paragraph buys a confident answer with nothing behind it.
+            block_key=(
+                None
+                if item.get("clause_absent")
+                else redline.locate(
+                    document.blocks,
+                    item.get("their_reference"),
+                    item.get("their_text"),
+                )
+            ),
         )
         db.add(finding)
         created.append(finding)
@@ -1107,11 +1179,42 @@ def review_counterparty_paper(
     return created
 
 
+def _extraction_out(db, contract, document, obligations: list[Obligation]) -> ExtractionOut:
+    """Assemble the proposals with the account of what they were drawn from."""
+    report = obligation_service.coverage(
+        document.blocks, [item.source_clause for item in obligations]
+    )
+    capability = db.execute(
+        select(Capability).where(Capability.code == "obligation_extraction")
+    ).scalar_one_or_none()
+
+    return ExtractionOut(
+        obligations=[ObligationOut.model_validate(item) for item in obligations],
+        coverage=ObligationCoverageOut(
+            clauses_read=report.clauses_read,
+            clauses_with_duties=report.clauses_with_duties,
+            uncited=report.uncited,
+            complete=report.complete,
+            unaccounted=[
+                UnaccountedClauseOut(
+                    number=clause.number, heading=clause.heading, excerpt=clause.excerpt
+                )
+                for clause in report.unaccounted
+            ],
+        ),
+        measured=bool(capability and capability.last_evaluated_at),
+    )
+
+
 @router.post("/extract-obligations/{contract_id}", status_code=201)
-def extract_obligations(
-    contract_id: uuid.UUID, db: Db, principal: CurrentUser
-) -> list[ObligationOut]:
-    """Propose obligations from the executed agreement, for confirmation."""
+def extract_obligations(contract_id: uuid.UUID, db: Db, principal: CurrentUser) -> ExtractionOut:
+    """Propose obligations from the executed agreement, for confirmation.
+
+    The proposals come back with an account of every clause they were drawn
+    from, and every clause they were not. A duty this misses produces nothing
+    at all, and nothing is not something anyone notices, so the clauses that
+    yielded no duty are named rather than left as an absence.
+    """
     principal.require_role(Role.LEGAL_OPS, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     contract = db.get(Contract, contract_id)
@@ -1149,6 +1252,17 @@ def extract_obligations(
             user_content=f"Executed agreement {contract.reference}. Propose its obligations.",
             untrusted=[("executed agreement", text)],
             context=chunks,
+            # The agreement is what this reads and what every proposal quotes,
+            # so the agreement is the source. Without this the call was refused
+            # for having no grounding while holding the executed contract.
+            subject=Source(
+                reference=contract.reference,
+                kind="executed_contract",
+                detail=f"Executed {contract.executed_at:%d %b %Y}"
+                if contract.executed_at
+                else "Executed copy",
+                quote=document.content_hash,
+            ),
             matter_id=contract.matter_id,
             user_id=uuid.UUID(principal.user_id),
             input_summary=contract.reference,
@@ -1158,6 +1272,25 @@ def extract_obligations(
         raise Refused("No obligations were proposed.", [envelope.refusal_reason or ""])
 
     from datetime import date as date_type
+
+    # Extraction is one act, repeatable, and running it again replaces the list.
+    #
+    # Only what extraction itself produced, which is what carries an
+    # interaction_id. A renewal task somebody opened by hand is theirs and
+    # survives. Anything already completed survives too: a record that someone
+    # showed evidence against is not the model's to withdraw.
+    superseded = list(
+        db.execute(
+            select(Obligation).where(
+                Obligation.contract_id == contract.id,
+                Obligation.interaction_id.isnot(None),
+                Obligation.status != ObligationStatus.COMPLETED.value,
+            )
+        ).scalars()
+    )
+    for stale in superseded:
+        db.delete(stale)
+    db.flush()
 
     sequence = int(contract.reference.split("-")[-1])
     created: list[Obligation] = []
@@ -1176,14 +1309,19 @@ def extract_obligations(
             contract_id=contract.id,
             matter_id=contract.matter_id,
             entity=contract.entity,
-            name=fit(item.get("name"), 255) or "Obligation",
+            name=fit(without_citations(item.get("name")), 255) or "Obligation",
             description=without_citations(item.get("description")),
             obligation_type=fit(item.get("obligation_type"), 32) or "deliverable",
-            source_clause=fit(item.get("source_clause"), 64),
-            source_quote=item.get("source_quote"),
+            source_clause=fit(without_citations(item.get("source_clause")), 64),
+            source_quote=without_citations(item.get("source_quote")),
             due_date=due,
             recurrence=fit(item.get("recurrence"), 24) or "none",
-            status=ObligationStatus.PROPOSED.value,
+            # Recorded, not proposed. These are a reading of what the
+            # agreement says, kept so both sides can look at the same list
+            # when they disagree. There is no task waiting on a confirmation,
+            # so a state meaning "not yet a task" described nothing and left
+            # every entry stuck in it once obligations stopped being tasks.
+            status=ObligationStatus.OPEN.value,
             interaction_id=envelope.interaction_id,
             decision_options=["renew", "renegotiate", "terminate", "allow_to_lapse"]
             if item.get("obligation_type") == "renewal"
@@ -1193,7 +1331,7 @@ def extract_obligations(
         created.append(obligation)
 
     db.flush()
-    return [ObligationOut.model_validate(o) for o in created]
+    return _extraction_out(db, contract, document, created)
 
 
 @router.post("/interactions/{interaction_id}/decision")

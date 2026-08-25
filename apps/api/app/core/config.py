@@ -73,10 +73,17 @@ class Settings(BaseSettings):
     # E-signature. internal is the built-in simulation, which stays the
     # fallback whenever no provider is configured.
     dsnlai_signature_provider: str = "internal"
-    docuseal_base_url: str = "https://api.docuseal.com"
-    docuseal_api_key: str = ""
-    docuseal_template_id: str = ""
-    docuseal_webhook_secret: str = ""
+    #: Self-hosted OpenSign. DocuSeal was here first and could not do the job
+    #: in its free edition: every route that accepts a document answers 404
+    #: with a link to its pricing page, and its image carries no converter.
+    opensign_base_url: str = "http://localhost:8080/app"
+    opensign_app_id: str = "opensign"
+    opensign_email: str = ""
+    opensign_password: str = ""
+    opensign_webhook_secret: str = ""
+    #: Where a person opens the signing service, as opposed to where the
+    #: platform calls it. A browser resolves this one.
+    opensign_client_url: str = "http://localhost:3200"
 
     # Notification delivery. Anything not configured falls back to the log,
     # which is what the outbox did before any transport existed.

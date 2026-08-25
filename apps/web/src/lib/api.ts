@@ -276,12 +276,24 @@ export async function download(path: string, filename: string): Promise<void> {
 export async function view(path: string): Promise<void> {
   const blob = await api<Blob>(path, { raw: true });
   const url = URL.createObjectURL(blob);
-  const opened = globalThis.open(url, "_blank", "noopener");
-  if (!opened) {
-    URL.revokeObjectURL(url);
-    throw new Error(
-      "The browser blocked the new tab. Allow pop-ups for this site, or use Save instead.",
-    );
-  }
+
+  /*
+    An anchor rather than window.open, and not for style. Passing "noopener"
+    to window.open makes it return null in several browsers even when the tab
+    opened perfectly well, because the opener is deliberately given no handle
+    on it. Treating that null as failure reported an error over a document
+    that was already on screen, which teaches people to ignore the error.
+
+    A click on an anchor carries the user gesture that opened it, so pop-up
+    blockers allow it, and there is no return value to misread.
+  */
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  document.body.append(link);
+  link.click();
+  link.remove();
+
   globalThis.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import * as React from "react";
 
 import { useRoles } from "@/components/app/session";
@@ -16,6 +17,7 @@ import {
   Notice,
   Refusal,
   Select,
+  Spinner,
   Textarea,
 } from "@/components/ui";
 import { api, query, upload } from "@/lib/api";
@@ -24,6 +26,7 @@ import type {
   AttachmentBrief,
   CounterpartyRow,
   DocumentRecord,
+  Finding,
   Matter,
   Template,
   TemplatePlaceholder,
@@ -180,6 +183,7 @@ function GenerateDialog({
   return (
     <Modal
       open={open}
+      dismissible={!generate.busy}
       title="Generate a document"
       subtitle="Assembly is deterministic. The same template, the same facts and the same clause versions always produce the same bytes and the same hash."
       onClose={onClose}
@@ -196,6 +200,8 @@ function GenerateDialog({
         </>
       }
     >
+      {generate.busy ? <Spinner label="Assembling the document" /> : null}
+
       <Field label="Template" required hint="Only approved versions can generate.">
         <Select value={code} onChange={(event) => setCode(event.target.value)}>
           <option value="">Choose a template</option>
@@ -269,6 +275,7 @@ function DraftDialog({
   return (
     <Modal
       open={open}
+      dismissible={!draft.busy}
       title="Ask for a first draft"
       subtitle="The model drafts from approved clauses and the brief below. Anything it invents is marked novel and cannot be issued without a human decision."
       onClose={onClose}
@@ -285,6 +292,8 @@ function DraftDialog({
         </>
       }
     >
+      {draft.busy ? <Spinner label="Drafting from the approved clause library" /> : null}
+
       <Field
         label="Brief"
         required
@@ -506,6 +515,18 @@ function ApprovalDialog({
   );
 }
 
+/*
+  Running the comparison, as one deliberate act with three states.
+
+  It used to be a picker that closed the moment the request returned, and a
+  reader who clicked the page behind it lost the dialog with no way to tell
+  whether anything was still happening. Worse, the findings landed on a screen
+  nobody had been sent to, so the work looked like it had simply vanished.
+
+  So: choose the paper, watch it run, and be told where the findings went. The
+  dialog cannot be clicked away, because losing it mid-run is exactly the thing
+  that left the reader guessing.
+*/
 function ReviewDialog({
   matterId,
   documents,
@@ -520,30 +541,101 @@ function ReviewDialog({
   onDone: () => void;
 }>) {
   const [documentId, setDocumentId] = React.useState("");
+  const [raised, setRaised] = React.useState<Finding[] | null>(null);
   const paper = documents.filter((document) => document.document_type === "counterparty");
+  const chosen = paper.find((document) => document.id === documentId);
 
   const review = useAction(async () => {
-    await api(`/ai/review/${matterId}${query({ document_id: documentId })}`, { method: "POST" });
+    const findings = await api<Finding[]>(
+      `/ai/review/${matterId}${query({ document_id: documentId })}`,
+      { method: "POST" },
+    );
+    setRaised(findings);
     onDone();
-    onClose();
   });
+
+  function finish() {
+    setRaised(null);
+    setDocumentId("");
+    onClose();
+  }
+
+  const critical = (raised ?? []).filter((finding) => finding.severity === "critical").length;
+
+  if (raised) {
+    return (
+      <Modal
+        open={open}
+        dismissible={false}
+        title={
+          raised.length
+            ? `${raised.length} ${raised.length === 1 ? "finding" : "findings"} raised`
+            : "Nothing differs from the playbook"
+        }
+        subtitle={
+          raised.length
+            ? "Each carries the authority needed to concede it. Nothing is conceded until a named person accepts it."
+            : "Their paper matches the house position on every point the playbook covers."
+        }
+        onClose={finish}
+        footer={
+          <>
+            <Button onClick={finish}>Stay on the matter</Button>
+            {raised.length ? (
+              <Link href="/workspace/review" className="no-underline" onClick={finish}>
+                <Button variant="primary">Go to Review</Button>
+              </Link>
+            ) : null}
+          </>
+        }
+      >
+        <Notice tone={critical ? "bad" : raised.length ? "warn" : "good"} title="What happens next">
+          {raised.length ? (
+            <>
+              {critical ? `${critical} critical. ` : ""}They are on the{" "}
+              <strong>Review</strong> screen, under {chosen?.name ?? "this paper"}, with their
+              text beside our house position and a suggested response to send back.
+            </>
+          ) : (
+            "There is nothing to work through. The matter can go on to approval."
+          )}
+        </Notice>
+      </Modal>
+    );
+  }
 
   return (
     <Modal
       open={open}
+      dismissible={!review.busy}
       title="Review counterparty paper"
       subtitle="Each finding is measured against the house position and its pre-approved fallbacks, and carries the authority needed to concede it."
       onClose={onClose}
       footer={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={!documentId || review.busy} onClick={() => void review.run()}>
-            Run the review
-          </Button>
-        </>
+        review.busy ? (
+          <span className="text-xs text-muted-foreground">
+            This takes a moment. Leaving now would lose it.
+          </span>
+        ) : (
+          <>
+            <Button onClick={onClose}>Cancel</Button>
+            <Button variant="primary" disabled={!documentId} onClick={() => void review.run()}>
+              Run the review
+            </Button>
+          </>
+        )
       }
     >
-      {paper.length === 0 ? (
+      {review.busy ? (
+        <div className="space-y-3">
+          <Spinner label={`Reading ${chosen?.name ?? "their paper"} against the playbook`} />
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            Every clause is compared to the house position, and clauses the playbook requires but
+            their draft leaves out are reported too. Nothing is conceded here: each difference
+            becomes a finding for a named person to decide.
+          </p>
+        </div>
+      ) : paper.length === 0 ? (
         <Notice tone="warn" title="No counterparty paper is on this matter">
           The comparison runs over their draft. Add it first, from the request it came with
           or by uploading it, and the review has something to measure.

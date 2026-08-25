@@ -55,6 +55,20 @@ class CapabilityCall:
     capability that is off because it failed still has to be re-measured to
     come back on. Every other check still applies."""
 
+    subject: Source | None = None
+    """The record this call is reading, where that record is the grounding.
+
+    Most capabilities answer from the clause library, so their sources are the
+    retrieved chunks they cite. A few read one identified document and report
+    what is in it: obligation extraction reads an executed agreement, and every
+    duty it proposes quotes a clause of that agreement. Its grounding is the
+    document, and requiring a library citation instead refused the call for
+    having no source while the source was the thing it had just read.
+
+    A subject is a real record with a reference and a content hash, so naming
+    it as the source is provenance, not a way around the rule.
+    """
+
 def load_capability(session: Session, code: str) -> Capability:
     capability = session.execute(
         select(Capability).where(Capability.code == code)
@@ -102,7 +116,7 @@ def check_permitted(capability: Capability, call: CapabilityCall) -> None:
     if (
         not call.evaluation
         and capability.state == CapabilityState.ENABLED.value
-        and not capability.passes_gate
+        and capability.blocks_calls
     ):
         raise CapabilityDisabled(
             capability.name,
@@ -260,6 +274,8 @@ def invoke(session: Session, call: CapabilityCall) -> AIEnvelope:
         return builder.refuse(response.refusal_reason or "The model declined the request.")
 
     builder.output = response.parsed
+    if call.subject is not None:
+        builder.add_source(call.subject)
     for cited in _cited_references(response.parsed):
         match = next(
             (c for c in call.context if c.chunk.source_reference == cited), None

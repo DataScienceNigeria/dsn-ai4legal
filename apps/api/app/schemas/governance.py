@@ -336,7 +336,9 @@ class CapabilityOut(ApiModel):
     last_score_label: str | None
     last_evaluated_at: datetime | None
     golden_set: str | None
+    gate_enforced: bool = True
     passes_gate: bool = False
+    gate_status: str = "not_measured"
 
 
 class GoldenCaseCreate(BaseModel):

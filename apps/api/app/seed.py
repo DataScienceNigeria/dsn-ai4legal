@@ -1853,6 +1853,14 @@ def seed_inbox(session, users, matters) -> None:
     session.flush()
 
 
+"""The capability register.
+
+No score is seeded. A score is a measurement, and a measurement that nobody
+took is not one: the register used to ship with figures typed by hand, which
+is how obligation extraction came to tell a user it had failed an evaluation
+that never ran. Every capability starts unmeasured, and the first real number
+comes from running its golden set.
+"""
 CAPABILITIES = [
     (
         "inbox_classification",
@@ -1865,11 +1873,8 @@ CAPABILITIES = [
         "Macro F1",
         "at least 0.90, recall at least 0.95 for action required",
         0.90,
-        0.93,
-        "0.93",
         "inbox_classification",
-        CapabilityState.ENABLED,
-        None,
+        True,
     ),
     (
         "fact_extraction",
@@ -1882,11 +1887,8 @@ CAPABILITIES = [
         "Precision and recall",
         "precision at least 0.95, recall at least 0.90",
         0.95,
-        0.96,
-        "0.96 precision, 0.91 recall",
         "extraction",
-        CapabilityState.ENABLED,
-        None,
+        True,
     ),
     (
         "clause_retrieval_answer",
@@ -1899,33 +1901,27 @@ CAPABILITIES = [
         "Recall at 5",
         "at least 0.92",
         0.92,
-        0.94,
-        "0.94",
         "clause_retrieval",
-        CapabilityState.ENABLED,
-        None,
+        True,
     ),
     (
         "ai_first_draft",
-        "AI first draft, bespoke agreement",
-        "M05",
+        "AI first draft",
+        "M04",
         DataClass.CONFIDENTIAL,
         "tier_3",
-        "Counsel reviews every clause. Novel text is flagged and separately confirmed.",
+        "Counsel reviews every clause before the draft leaves the platform.",
         "counsel",
         "Unsupported statement rate",
         "under 0.02 of clauses",
         0.98,
-        0.985,
-        "0.985",
         "drafting",
-        CapabilityState.ENABLED,
-        None,
+        True,
     ),
     (
         "deviation_detection",
-        "Deviation detection and severity ranking",
-        "M06",
+        "Playbook deviation detection",
+        "M05",
         DataClass.CONFIDENTIAL,
         "tier_3",
         "Counsel reviews all critical and material findings. Legal operations may clear minor "
@@ -1934,11 +1930,8 @@ CAPABILITIES = [
         "Recall on critical deviations",
         "at least 0.95, false positives under 0.20",
         0.95,
-        0.95,
-        "0.95",
         "deviation_detection",
-        CapabilityState.ENABLED,
-        None,
+        True,
     ),
     (
         "obligation_extraction",
@@ -1951,29 +1944,22 @@ CAPABILITIES = [
         "Recall on dated obligations",
         "at least 0.93",
         0.93,
-        0.89,
-        "0.89",
-        "extraction",
-        CapabilityState.DISABLED,
-        "Scored 0.89 against a gate of 0.93 on the 12 August golden set. Proposals are hidden "
-        "until it passes again.",
+        "obligation_extraction",
+        False,
     ),
     (
         "management_summary",
-        "Management summary generation",
-        "M14",
+        "Management summary",
+        "M12",
         DataClass.INTERNAL,
         "tier_4",
-        "The Head of Legal reviews before circulation.",
+        "The Head of Legal signs off the summary before it is issued.",
         "head_of_legal",
         "Groundedness",
         "at least 0.95 attributable",
         0.95,
-        0.97,
-        "0.97",
         "summary",
-        CapabilityState.ENABLED,
-        None,
+        True,
     ),
 ]
 
@@ -1991,11 +1977,8 @@ def seed_capabilities(session, users) -> None:
         metric,
         gate_text,
         threshold,
-        score,
-        label,
         golden_set,
-        state,
-        reason,
+        enforced,
     ) in CAPABILITIES:
         session.add(
             Capability(
@@ -2008,15 +1991,16 @@ def seed_capabilities(session, users) -> None:
                 tier_ceiling=tier,
                 human_requirement=requirement,
                 confirming_role=role,
-                state=state.value,
-                disabled_reason=reason,
+                state=CapabilityState.ENABLED.value,
+                disabled_reason=None,
                 metric_name=metric,
                 gate_expression=gate_text,
                 gate_threshold=threshold,
-                last_score=score,
-                last_score_label=label,
-                last_evaluated_at=NOW - timedelta(days=9),
+                last_score=None,
+                last_score_label=None,
+                last_evaluated_at=None,
                 golden_set=golden_set,
+                gate_enforced=enforced,
                 prompt_reference=f"prompts/{code}@v1",
                 tools_allowed=[],
             )

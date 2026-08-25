@@ -11,8 +11,27 @@ import { useApi } from "@/lib/hooks";
 import type { Matter } from "@/lib/types";
 import { titleCase } from "@/lib/utils";
 
+/*
+  Execution ends the matter. This list holds work in hand and nothing else.
+
+  It used to hold both at once, so a matter nobody could act on sat at the top
+  of the working list indefinitely and the count of open matters counted things
+  that were finished. A concluded matter is reached from its agreement in the
+  archive, by its number, which is where a reader who wants the history of how
+  an agreement was reached is already standing.
+*/
+const CONCLUDED = new Set([
+  "executed",
+  "active",
+  "amended",
+  "expired",
+  "terminated",
+  "archived",
+  "closed_without_matter",
+]);
+
 const FILTERS = [
-  { id: "all", label: "All open" },
+  { id: "all", label: "Open" },
   { id: "mine", label: "Mine" },
   { id: "breach", label: "Past target" },
   { id: "waiting", label: "Waiting on someone" },
@@ -45,10 +64,11 @@ export default function Matters() {
     let all = data ?? [];
     if (owner) all = all.filter((m) => m.responsible_lawyer_id === owner);
     if (tier) all = all.filter((m) => m.risk_tier === tier);
-    if (filter === "mine") return all.filter((m) => m.responsible_lawyer_id === me?.id);
-    if (filter === "breach") return all.filter((m) => m.sla?.breached);
-    if (filter === "waiting") return all.filter((m) => m.blocker || m.sla?.running === false);
-    return all;
+    const open = all.filter((m) => !CONCLUDED.has(m.status));
+    if (filter === "mine") return open.filter((m) => m.responsible_lawyer_id === me?.id);
+    if (filter === "breach") return open.filter((m) => m.sla?.breached);
+    if (filter === "waiting") return open.filter((m) => m.blocker || m.sla?.running === false);
+    return open;
   }, [data, filter, owner, tier, me?.id]);
 
   /*
@@ -59,11 +79,12 @@ export default function Matters() {
     let scoped = data ?? [];
     if (owner) scoped = scoped.filter((m) => m.responsible_lawyer_id === owner);
     if (tier) scoped = scoped.filter((m) => m.risk_tier === tier);
+    const open = scoped.filter((m) => !CONCLUDED.has(m.status));
     const sizes: Record<string, number> = {
-      all: scoped.length,
-      mine: scoped.filter((m) => m.responsible_lawyer_id === me?.id).length,
-      breach: scoped.filter((m) => m.sla?.breached).length,
-      waiting: scoped.filter((m) => m.blocker || m.sla?.running === false).length,
+      all: open.length,
+      mine: open.filter((m) => m.responsible_lawyer_id === me?.id).length,
+      breach: open.filter((m) => m.sla?.breached).length,
+      waiting: open.filter((m) => m.blocker || m.sla?.running === false).length,
     };
     return FILTERS.map((option) => ({ ...option, count: sizes[option.id] ?? 0 }));
   }, [data, owner, tier, me?.id]);
@@ -85,7 +106,7 @@ export default function Matters() {
       <Chips options={chips} active={filter} onChange={setFilter} label="Narrow the matters" />
 
       <Card>
-        <CardHeader title={`${rows.length} matters`} subtitle={`Entity ${entity}`} />
+        <CardHeader title={`${rows.length} open matters`} subtitle={`Entity ${entity}`} />
         <div className="table-scroll">
           <div className="min-w-[63.75rem]">
             <Row cols="10.625rem minmax(0,1fr) minmax(0,0.9fr) 4.375rem 8.75rem minmax(0,1fr) 6.875rem" head>

@@ -12,14 +12,22 @@ from app.core import audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Conflict, NotFound, ValidationFailed
 from app.db.models.contract import Contract, Obligation
+from app.db.models.document import Document
 from app.db.models.governance import ComplianceItem
 from app.db.models.organisation import User
 from app.domain.enums import ObligationStatus, Role
 from app.schemas.common import Ack
 from app.schemas.governance import ComplianceCompletion, ComplianceItemOut, ComplianceVersion
-from app.schemas.matters import ObligationCompletion, ObligationDecision, ObligationOut
+from app.schemas.matters import (
+    ObligationCompletion,
+    ObligationCoverageOut,
+    ObligationDecision,
+    ObligationOut,
+    UnaccountedClauseOut,
+)
 from app.services import notifications, sequences
 from app.services import obligations as service
+from app.services.obligations import LEGAL_DEADLINES
 
 OBLIGATION_NOT_FOUND = "That obligation was not found."
 COMPLIANCE_NOT_FOUND = "That compliance item was not found."
@@ -32,9 +40,19 @@ def _decorate(obligation: Obligation) -> ObligationOut:
     if obligation.due_date:
         model.days_until_due = (obligation.due_date - date.today()).days
         model.overdue = (
-            obligation.due_date < date.today()
-            and obligation.status == ObligationStatus.OPEN.value
+            obligation.due_date < date.today() and obligation.status == ObligationStatus.OPEN.value
         )
+
+    # A duty on its own says nothing about whose contract it is. The agreement
+    # travels with it, so the list reads as duties under agreements rather than
+    # as a pile of references.
+    contract = obligation.contract
+    if contract is not None:
+        model.contract_reference = contract.reference
+        model.counterparty_name = (
+            contract.counterparty.legal_name if contract.counterparty else None
+        )
+        model.matter_number = contract.matter.number if contract.matter else None
     return model
 
 
@@ -45,12 +63,15 @@ def list_obligations(
     entity: WorkingEntity,
     status: str | None = None,
     owner_id: uuid.UUID | None = None,
+    matter_id: uuid.UUID | None = None,
     due_within_days: int | None = None,
     limit: int = Query(default=200, le=500),
 ) -> list[ObligationOut]:
     stmt = select(Obligation).where(Obligation.entity == entity)
     if status:
         stmt = stmt.where(Obligation.status == status)
+    if matter_id:
+        stmt = stmt.where(Obligation.matter_id == matter_id)
     if owner_id:
         stmt = stmt.where(Obligation.owner_id == owner_id)
     if due_within_days is not None:
@@ -71,6 +92,46 @@ def contract_obligations(
         .order_by(Obligation.due_date.asc().nulls_last())
     )
     return [_decorate(o) for o in db.execute(stmt).scalars()]
+
+
+@router.get("/contracts/{contract_id}/obligation-coverage")
+def contract_coverage(
+    contract_id: uuid.UUID, db: Db, principal: CurrentUser
+) -> ObligationCoverageOut:
+    """What extraction drew a duty from, and what it did not.
+
+    Recomputed from the executed document and the obligations on record rather
+    than stored, so it stays true as proposals are confirmed or rejected, and
+    so it is still there after the page is closed.
+    """
+    contract = db.get(Contract, contract_id)
+    if contract is None:
+        raise NotFound("That contract was not found.")
+
+    document = (
+        db.get(Document, contract.executed_document_id) if contract.executed_document_id else None
+    )
+    if document is None:
+        raise NotFound("The executed copy for that contract was not found.")
+
+    cited = list(
+        db.execute(
+            select(Obligation.source_clause).where(Obligation.contract_id == contract.id)
+        ).scalars()
+    )
+    report = service.coverage(document.blocks, cited)
+    return ObligationCoverageOut(
+        clauses_read=report.clauses_read,
+        clauses_with_duties=report.clauses_with_duties,
+        uncited=report.uncited,
+        complete=report.complete,
+        unaccounted=[
+            UnaccountedClauseOut(
+                number=clause.number, heading=clause.heading, excerpt=clause.excerpt
+            )
+            for clause in report.unaccounted
+        ],
+    )
 
 
 @router.post("/obligations/{obligation_id}/decision")
@@ -188,21 +249,26 @@ def complete(
 
 
 @router.get("/obligations/calendar.ics")
-def calendar_feed(
-    db: Db, principal: CurrentUser, entity: WorkingEntity
-) -> Response:
-    """A subscribable feed into Microsoft and Google calendars."""
+def calendar_feed(db: Db, principal: CurrentUser, entity: WorkingEntity) -> Response:
+    """A subscribable feed into Microsoft and Google calendars.
+
+    Carries the deadlines that are legal's own: renewal windows, notice periods
+    and termination windows. What an agreement requires of the business belongs
+    to whoever is doing that work, and putting a consultant's milestones in the
+    legal team's calendar filled it with other people's dates.
+    """
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
         "PRODID:-//Legal Operations Platform//EN",
-        f"X-WR-CALNAME:Legal obligations, {entity}",
+        f"X-WR-CALNAME:Legal deadlines, {entity}",
     ]
     obligations = db.execute(
         select(Obligation).where(
             Obligation.entity == entity,
             Obligation.status == ObligationStatus.OPEN.value,
             Obligation.due_date.is_not(None),
+            Obligation.obligation_type.in_(LEGAL_DEADLINES),
         )
     ).scalars()
 
@@ -474,9 +540,7 @@ def version_requirement(
     if current is None:
         raise NotFound(COMPLIANCE_NOT_FOUND)
     if current.status == "superseded":
-        raise Conflict(
-            "That version is already superseded. Version the current one instead."
-        )
+        raise Conflict("That version is already superseded. Version the current one instead.")
 
     replacement = ComplianceItem(
         entity=current.entity,
@@ -522,9 +586,7 @@ def version_requirement(
 
 
 @router.get("/compliance/{item_id}/history", response_model=list[ComplianceItemOut])
-def requirement_history(
-    item_id: uuid.UUID, db: Db, principal: CurrentUser
-) -> list[ComplianceItem]:
+def requirement_history(item_id: uuid.UUID, db: Db, principal: CurrentUser) -> list[ComplianceItem]:
     """Every version of this requirement, newest first."""
     item = db.get(ComplianceItem, item_id)
     if item is None:

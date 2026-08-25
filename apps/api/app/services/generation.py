@@ -34,6 +34,14 @@ class GeneratedBlock:
     text: str
     provenance: str
     source_reference: str | None = None
+    tracked_change: dict | None = None
+    """A change a person wrote into this block, and the text it replaced.
+
+    Carried through to the .docx as a Word revision, so the file that leaves
+    the platform is the marked-up draft. A redline that downloads clean is not
+    a redline: it asks the counterparty to diff it against their own copy from
+    memory, which is the thing marking up a contract exists to avoid.
+    """
 
     @property
     def novel(self) -> bool:
@@ -315,11 +323,17 @@ def render_docx(result: GenerationResult, title: str) -> bytes:
     is what LOP-M04-US-03 requires.
     """
     paragraphs = [f'<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr>{_run(title)}</w:p>']
+    revision = 0
     for block in result.blocks:
         heading = f"{block.number} {block.heading}".strip()
         paragraphs.append(
             f'<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr>{_run(heading)}</w:p>'
         )
+        change = block.tracked_change
+        if change:
+            revision += 1
+            paragraphs.append(_revision(block.text, change, revision))
+            continue
         for line in block.text.split("\n"):
             paragraphs.append(f"<w:p>{_run(line)}</w:p>")
 
@@ -356,8 +370,40 @@ def render_docx(result: GenerationResult, title: str) -> bytes:
             archive.writestr(info, members[name])
     return buffer.getvalue()
 
+def _escape(value: str) -> str:
+    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _run(value: str) -> str:
-    escaped = (
-        value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return f'<w:r><w:t xml:space="preserve">{_escape(value)}</w:t></w:r>'
+
+
+#: A fixed revision date, for the same reason the archive carries a fixed
+#: timestamp: identical inputs have to produce identical bytes, and a clock
+#: reading in the file would break that on every regeneration.
+REVISION_DATE = "1980-01-01T00:00:00Z"
+
+
+def _revision(text: str, change: dict, number: int) -> str:
+    """One paragraph carrying a Word revision, so Word shows it as a change.
+
+    Deleted text goes in ``w:delText`` inside ``w:del``, inserted text in a
+    plain run inside ``w:ins``. Word will not treat ``w:t`` inside ``w:del`` as
+    a deletion, and a file that gets that wrong opens as clean prose.
+    """
+    author = _escape(str(change.get("author") or "Legal"))
+    original = change.get("original")
+    parts: list[str] = []
+
+    if original:
+        parts.append(
+            f'<w:del w:id="{number * 2}" w:author="{author}" w:date="{REVISION_DATE}">'
+            f'<w:r><w:delText xml:space="preserve">{_escape(original)}</w:delText></w:r>'
+            "</w:del>"
+        )
+    parts.append(
+        f'<w:ins w:id="{number * 2 + 1}" w:author="{author}" w:date="{REVISION_DATE}">'
+        f'<w:r><w:t xml:space="preserve">{_escape(text)}</w:t></w:r>'
+        "</w:ins>"
     )
-    return f'<w:r><w:t xml:space="preserve">{escaped}</w:t></w:r>'
+    return f"<w:p>{''.join(parts)}</w:p>"

@@ -7,6 +7,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
+import httpx
 from fastapi import APIRouter, Header, Request
 from sqlalchemy import select
 
@@ -33,7 +34,7 @@ from app.schemas.matters import (
     WetInkExecution,
 )
 from app.services import approvals as service
-from app.services import notifications, sequences
+from app.services import notifications, sequences, storage
 from app.services import signature as signature_service
 
 logger = logging.getLogger(__name__)
@@ -254,18 +255,81 @@ def list_approvals(
     return _decorate(approvals, db)
 
 
+def _placement_url(request: SignatureRequest) -> str | None:
+    """Where a person places the fields on the page for this request.
+
+    Only while it is out. Once it is completed, declined or cancelled there is
+    nothing left to place, and a live link to a finished document invites
+    somebody to change one.
+    """
+    if request.provider != "opensign" or request.status != "sent":
+        return None
+    if not request.external_reference:
+        return None
+    document = request.external_reference.removeprefix("OS-")
+    return f"{settings.opensign_client_url.rstrip('/')}/placeHolderSign/{document}"
+
+
+def _signature_out(request: SignatureRequest) -> SignatureOut:
+    model = SignatureOut.model_validate(request)
+    model.placement_url = _placement_url(request)
+    return model
+
+
 @router.get("/matters/{matter_id}/signature-requests", response_model=list[SignatureOut])
 def list_signature_requests(
     matter_id: uuid.UUID, db: Db, principal: CurrentUser
-) -> list[SignatureRequest]:
+) -> list[SignatureOut]:
     """Open and closed signature requests on a matter, newest first."""
-    return list(
-        db.execute(
+    return [
+        _signature_out(request)
+        for request in db.execute(
             select(SignatureRequest)
             .where(SignatureRequest.matter_id == matter_id)
             .order_by(SignatureRequest.created_at.desc())
         ).scalars()
+    ]
+
+
+@router.post("/signature/requests/{request_id}/placement-session")
+def placement_session(
+    request_id: uuid.UUID, db: Db, principal: CurrentUser
+) -> dict:
+    """A session for the placement screen, so nobody signs in twice.
+
+    Held to the same roles that may issue a request in the first place, and
+    only while the request is still out. The session it hands back is the
+    platform's own account on the signing service, which is what every
+    document there already belongs to, so this grants nothing that issuing the
+    request did not.
+    """
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+
+    record = db.get(SignatureRequest, request_id)
+    if record is None:
+        raise NotFound("That signature request was not found.")
+    if record.status != "sent":
+        raise Conflict(
+            f"That request is {record.status}. There is nothing left to place on it."
+        )
+
+    opened = signature_service.selected().placement_session()
+    if opened is None:
+        raise Conflict("The signing service would not open a session.")
+
+    audit.record(
+        db,
+        action="placement_session_opened",
+        object_type="signature_request",
+        object_id=str(record.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        after_state={"reference": record.external_reference},
     )
+    return {
+        **opened,
+        "document": (record.external_reference or "").removeprefix("OS-"),
+    }
 
 
 @router.post("/approvals/{approval_id}/decision")
@@ -381,7 +445,7 @@ def decide(
 @router.post("/signature/requests", response_model=SignatureOut, status_code=201)
 def request_signature(
     payload: SignatureRequestCreate, db: Db, principal: CurrentUser
-) -> SignatureRequest:
+) -> SignatureOut:
     """A signature request cannot be issued for an unapproved hash."""
     principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     principal.require_step_up("issue a signature request")
@@ -446,7 +510,8 @@ def request_signature(
             "detail": issued.detail,
         },
     )
-    return request
+    db.flush()
+    return _signature_out(request)
 
 
 @router.post("/signature/requests/{request_id}/cancel")
@@ -493,15 +558,23 @@ async def signature_webhook(
     whichever provider it claims to be from.
     """
     body = await http_request.body()
-    docuseal_signature = http_request.headers.get("x-docuseal-signature", "")
+    # OpenSign signs its callbacks with whatever secret its webhook is
+    # configured with, sent in this header. Both shapes are accepted, each
+    # against its own key, and an unsigned callback is refused whichever
+    # provider it claims to be from.
+    opensign_signature = http_request.headers.get(
+        "x-opensign-signature"
+    ) or http_request.headers.get("x-webhook-signature", "")
 
     if x_signature and verify_webhook(body, x_signature):
         payload = json.loads(body)
         reference = payload.get("external_reference")
-    elif docuseal_signature and settings.docuseal_webhook_secret and verify_webhook(
-        body, docuseal_signature, settings.docuseal_webhook_secret
+    elif (
+        opensign_signature
+        and settings.opensign_webhook_secret
+        and verify_webhook(body, opensign_signature, settings.opensign_webhook_secret)
     ):
-        payload = _from_docuseal(json.loads(body))
+        payload = _from_opensign(json.loads(body))
         reference = payload.get("external_reference")
     else:
         raise Forbidden("The webhook signature did not verify.")
@@ -556,27 +629,77 @@ def _render_for_signature(document: Document) -> bytes | None:
         return None
 
 
-def _from_docuseal(payload: dict) -> dict:
-    """Translate a DocuSeal callback into the shape this endpoint already reads."""
-    data = payload.get("data") or payload
-    submission = data.get("submission") or {}
-    reference = submission.get("id") or data.get("submission_id") or data.get("id")
+def _from_opensign(payload: dict) -> dict:
+    """Translate an OpenSign callback into the shape this endpoint already reads.
+
+    OpenSign posts the document object it changed. The reference is its Parse
+    object id, prefixed the same way the adapter prefixes it when the request
+    is issued, so the two ends agree without either knowing the other's shape.
+    """
+    body = payload.get("body") or payload.get("data") or payload
+    reference = body.get("objectId") or payload.get("objectId")
     return {
-        "external_reference": f"DS-{reference}",
+        "external_reference": f"OS-{reference}",
         "certificate": {
-            "provider": "docuseal",
-            "event": payload.get("event_type"),
-            "audit_log_url": submission.get("audit_log_url") or data.get("audit_log_url"),
-            "completed_at": data.get("completed_at"),
-            "submitters": data.get("submitters") or submission.get("submitters") or [],
+            "provider": "opensign",
+            "event": payload.get("event") or payload.get("event_type"),
+            "audit_trail": body.get("AuditTrail") or [],
+            "signed_url": body.get("SignedUrl"),
+            "completed_at": body.get("completedAt") or body.get("updatedAt"),
+            "signers": body.get("Signers") or [],
         },
     }
+
+
+def _fetch_signed(certificate: dict) -> tuple[bytes | None, bytes | None]:
+    """The signed PDF and its certificate of completion, pulled back here.
+
+    Held rather than linked. The platform is the authoritative archive, and an
+    archive that is a link into somebody else's service is an archive until
+    that service is retired, reconfigured or its signed URL expires. The
+    signature is only visible on the PDF the service stamped: our own blocks
+    are the unsigned text they were before anybody signed anything.
+    """
+    def pull(url: str | None) -> bytes | None:
+        if not url:
+            return None
+        try:
+            response = httpx.get(url, timeout=120.0, follow_redirects=True)
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning("The signed copy could not be fetched from %s: %s", url, exc)
+            return None
+        return response.content
+
+    return pull(certificate.get("signed_url")), pull(certificate.get("certificate_url"))
 
 
 def _archive(db, request: SignatureRequest, certificate: dict) -> Contract:
     """On completion the executed copy becomes the authoritative record."""
     document = db.get(Document, request.document_id)
     matter = db.get(Matter, request.matter_id)
+
+    signed, completion = _fetch_signed(certificate)
+    if signed:
+        # Under object lock, because this is the copy an argument is settled
+        # against. Written before the document is marked immutable: the
+        # immutability trigger refuses an update afterwards, which is the
+        # point of it.
+        key = f"executed/{matter.number}/{document.content_hash[:16]}.pdf"
+        storage.store.put_immutable(key, signed, "application/pdf")
+        document.storage_key = key
+        certificate = {**certificate, "stored_key": key, "stored_bytes": len(signed)}
+    else:
+        logger.warning(
+            "No signed copy was stored for %s. The record says executed and the "
+            "signed document is only at the signing service.",
+            matter.number,
+        )
+
+    if completion:
+        key = f"executed/{matter.number}/{document.content_hash[:16]}-certificate.pdf"
+        storage.store.put_immutable(key, completion, "application/pdf")
+        certificate = {**certificate, "certificate_key": key}
 
     document.document_type = DocumentType.EXECUTED.value
     document.immutable = True
@@ -610,7 +733,11 @@ def _archive(db, request: SignatureRequest, certificate: dict) -> Contract:
     db.flush()
 
     matter.status = MatterState.EXECUTED.value
-    matter.next_action = "Confirm the proposed obligations"
+    # What is actually true. It used to say "Confirm the proposed obligations"
+    # while nothing had proposed any: extraction is a separate, substantive AI
+    # call that a person asks for, so the executed contract arrives with none
+    # and the matter pointed at a step that did not exist.
+    matter.next_action = "Extract the obligations from the executed contract"
 
     audit.record(
         db,

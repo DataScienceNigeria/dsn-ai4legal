@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import date, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -19,6 +20,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, EntityScoped, Timestamped, UUIDPrimaryKey
 from app.domain.enums import ApprovalDecision, ObligationStatus
+
+if TYPE_CHECKING:
+    from app.db.models.counterparty import Counterparty
+    from app.db.models.matter import Matter
 
 
 class Contract(UUIDPrimaryKey, Timestamped, EntityScoped, Base):
@@ -63,6 +68,13 @@ class Contract(UUIDPrimaryKey, Timestamped, EntityScoped, Base):
     obligations: Mapped[list["Obligation"]] = relationship(
         back_populates="contract", cascade="all, delete-orphan"
     )
+
+    # Read-only, and viewonly for that reason: an agreement belongs to its
+    # matter and its counterparty, and neither is edited from this side. The
+    # renewal task already assumed contract.matter existed and raised an
+    # AttributeError on every contract instead.
+    matter: Mapped["Matter"] = relationship("Matter", viewonly=True)
+    counterparty: Mapped["Counterparty | None"] = relationship("Counterparty", viewonly=True)
 
 class ApprovalChainDefinition(UUIDPrimaryKey, Timestamped, Base):
     """Configurable by entity, agreement type, value band and risk tier."""

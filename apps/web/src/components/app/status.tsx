@@ -125,8 +125,22 @@ export function ProvenancePill({ provenance, reference }: Readonly<{ provenance:
   );
 }
 
-export function CapabilityStatePill({ state, passesGate }: Readonly<{ state: string; passesGate: boolean }>) {
+/*
+  Three states, not two. Never measured and measured-and-failed used to read
+  the same, which is how a capability nobody had ever run reported a failure
+  it never had. A gate that is measured but not enforced says so too, rather
+  than implying a block that will not happen.
+*/
+export function CapabilityStatePill({
+  state,
+  gateStatus,
+  enforced = true,
+}: Readonly<{ state: string; gateStatus: string; enforced?: boolean }>) {
   if (state === "disabled") return <Pill tone="bad">Disabled</Pill>;
   if (state === "shadow") return <Pill tone="novel">Shadow mode</Pill>;
-  return <Pill tone={passesGate ? "good" : "warn"}>{passesGate ? "Enabled" : "At gate"}</Pill>;
+  if (gateStatus === "failing") {
+    return <Pill tone={enforced ? "warn" : "novel"}>{enforced ? "At gate" : "Below gate, reported"}</Pill>;
+  }
+  if (gateStatus === "not_measured") return <Pill tone="novel">Not yet measured</Pill>;
+  return <Pill tone="good">Enabled</Pill>;
 }

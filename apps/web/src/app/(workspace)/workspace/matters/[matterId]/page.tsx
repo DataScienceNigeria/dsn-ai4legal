@@ -6,6 +6,7 @@ import * as React from "react";
 
 import { LinkCounterparty, MatterActions } from "@/components/app/matter-actions";
 import { Rename } from "@/components/app/rename";
+import { PlaceFields } from "@/components/app/place-fields";
 import { RequestPanel } from "@/components/app/request-panel";
 import { useRoles } from "@/components/app/session";
 import { DecisionPill, SlaPill, StatusPill, TierPill } from "@/components/app/status";
@@ -36,12 +37,15 @@ import {
   Timeline,
   type TimelineStep,
 } from "@/components/ui";
-import { api, query } from "@/lib/api";
+import { api, query, view } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
 import type {
   AiInteraction,
   Approval,
+  Contract,
   DocumentRecord,
+  Extraction,
+  Obligation,
   Matter,
   RequestDetail,
 } from "@/lib/types";
@@ -73,6 +77,8 @@ type Progress = {
   documents: DocumentRecord[];
   approvals: Approval[];
   signatures: SignatureRow[];
+  contract: Contract | null;
+  obligations: number;
 };
 
 function lifecycle(matter: Matter, at: Progress, act: (id: string) => void): Stage[] {
@@ -83,6 +89,8 @@ function lifecycle(matter: Matter, at: Progress, act: (id: string) => void): Sta
   const approved = openChain.length > 0 && openChain.every((a) => a.decision === "approved");
   const signed = at.signatures.some((r) => r.status === "completed");
   const sent = at.signatures.some((r) => r.status === "sent");
+  // A request that is out but has nowhere to sign is not really out yet.
+  const placing = at.signatures.find((r) => r.placement_url)?.placement_url;
   const waitingOn = openChain.find((a) => a.actionable);
 
   /*
@@ -150,12 +158,18 @@ function lifecycle(matter: Matter, at: Progress, act: (id: string) => void): Sta
       done: signed,
       detail: signed
         ? "Executed by every party."
-        : sent
-          ? "Out for signature. Execution is recorded when the provider reports it back."
-          : approved
-            ? "Both approvals are in, so this document can be sent."
-            : "Only an approved hash can be sent, so approval comes first.",
-      action: (
+        : placing
+          ? "Requested. Nothing yet says where on the page each party signs."
+          : sent
+            ? "Out for signature. Execution is recorded when the service reports it back."
+            : approved
+              ? "Both approvals are in, so this document can be sent."
+              : "Only an approved hash can be sent, so approval comes first.",
+      action: placing ? (
+        <Button variant="primary" onClick={() => act("open-signature")}>
+          Place the signature fields
+        </Button>
+      ) : (
         <>
           <Button variant="primary" disabled={!approved} onClick={() => act("signature")}>
             {sent ? "Send another request" : "Request a signature"}
@@ -166,22 +180,38 @@ function lifecycle(matter: Matter, at: Progress, act: (id: string) => void): Sta
         </>
       ),
     },
+    /*
+      The last stage, and it is the last on purpose.
+
+      There used to be a "Live" stage after this one, and nothing in the
+      platform ever reached it: no code moves a matter to active, so the
+      stepper ended on a step that could not complete. Worse, its action was a
+      link to the archive, which meant a button naming an action it did not
+      perform, and a reader who followed it landed on a screen whose only link
+      back was to the matter they had just left.
+
+      Execution ends the legal work. What follows belongs to the agreement, so
+      the action here is the handover: extract the duties, then read them where
+      duties live.
+    */
     {
       id: "executed",
       label: "Executed",
       done: executed,
       detail: executed
-        ? "The executed copy is write-once and archived."
+        ? at.obligations > 0
+          ? `The executed copy is archived. ${at.obligations} ${at.obligations === 1 ? "duty" : "duties"} came out of it.`
+          : "The executed copy is archived. Its duties have not been drawn out of it yet."
         : "Recorded when the last signature lands.",
-    },
-    {
-      id: "live",
-      label: "Live",
-      done: matter.status === "active",
-      detail:
-        matter.status === "active"
-          ? "In force. Obligations are tracked from the executed contract."
-          : "The agreement runs, and its obligations become tracked tasks.",
+      action:
+        executed && at.contract ? (
+          <Link
+            href={`/workspace/archive/${at.contract.id}/obligations`}
+            className="no-underline"
+          >
+            <Button variant="primary">What the agreement requires</Button>
+          </Link>
+        ) : undefined,
     },
   ];
 
@@ -299,6 +329,7 @@ type SignatureRow = {
   signers: { name?: string; email?: string; party?: string }[];
   status: string;
   completed_at: string | null;
+  placement_url: string | null;
 };
 
 type DecisionRow = {
@@ -387,8 +418,9 @@ function ApprovalDecision({
 
 function SignaturePanel({
   matterId,
+  documents,
   onChanged,
-}: Readonly<{ matterId: string; onChanged: () => void }>) {
+}: Readonly<{ matterId: string; documents: DocumentRecord[]; onChanged: () => void }>) {
   const requests = useApi<SignatureRow[]>(`/matters/${matterId}/signature-requests`);
   const [cancelling, setCancelling] = React.useState<string | null>(null);
   const { has } = useRoles();
@@ -401,6 +433,12 @@ function SignaturePanel({
   });
 
   const rows = requests.data ?? [];
+  const waiting = rows.find((row) => row.placement_url);
+  const executedCopy = documents.find((document) => document.signed_copy_held);
+
+  const openSigned = useAction(async () => {
+    await view(`/documents/${executedCopy!.id}/signed`);
+  });
   const cols = "9.375rem 7.5rem minmax(0,1fr) 8.75rem 6.25rem";
 
   return (
@@ -409,6 +447,56 @@ function SignaturePanel({
         title="Signature requests"
         subtitle="Each is bound to the hash that was approved. Cancelling one voids the counterparty link immediately."
       />
+      {/*
+        Where the fields go on the page.
+
+        Placing a signature box on a PDF is dragging a box onto a PDF, and the
+        signing service already does it: pdf.js on one side, the same code that
+        later stamps the signature on the other, so the coordinates are correct
+        by construction. Reimplementing it here would mean reverse-engineering
+        a coordinate system defined by somebody else's client, and getting the
+        page origin subtly wrong puts a signature in the margin of an executed
+        agreement, which is not a fault anybody finds before it matters.
+
+        So the platform decides what may be sent, to whom, and against which
+        approved hash. The placement screen decides where on the page. The
+        handoff is a link rather than an embedded frame, because their screen
+        wearing our chrome would be neither.
+      */}
+      {waiting ? (
+        <CardBody className="border-b">
+          <Notice tone="warn" title="The fields have not been placed yet">
+            Signers were told to expect this, but nothing says where on the page they sign.
+            Open the placement screen, drag a signature box onto each party's line, and send
+            from there.
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <PlaceFields
+                requestId={waiting.id}
+                fallbackUrl={waiting.placement_url!}
+                onClosed={() => requests.reload()}
+              />
+            </div>
+          </Notice>
+        </CardBody>
+      ) : null}
+
+      {executedCopy ? (
+        <CardBody className="border-b">
+          <Notice tone="good" title="The signed agreement is held here">
+            Signatures appear on the file the signing service stamped, not on the wording
+            this platform assembled. That file is in the archive under object lock.
+            <div className="mt-2.5">
+              <Button size="sm" variant="primary" onClick={() => void openSigned.run()}>
+                {openSigned.busy ? "Opening" : "Open the signed agreement"}
+              </Button>
+            </div>
+            {openSigned.error ? (
+              <Refusal title="It could not be opened" reason={openSigned.error.message} />
+            ) : null}
+          </Notice>
+        </CardBody>
+      ) : null}
+
       {rows.length ? (
         <CardBody className="border-b">
           <Ring
@@ -571,14 +659,21 @@ export default function MatterDetail() {
   */
   const [act, setAct] = React.useState("");
 
-  React.useEffect(() => {
-    if (act !== "open-approvals") return;
-    setTab("approvals");
-    setAct("");
-  }, [act]);
   const decisions = useApi<DecisionRow[]>(`/matters/${matterId}/decisions`);
   const trace = useApi<AiInteraction[]>(`/ai/interactions?matter_id=${matterId}`);
   const request = useApi<RequestDetail | null>(`/matters/${matterId}/request`);
+  const contracts = useApi<Contract[]>(`/contracts?matter_id=${matterId}`);
+  const obligations = useApi<Obligation[]>(`/obligations?matter_id=${matterId}`);
+
+  React.useEffect(() => {
+    if (act === "open-approvals") {
+      setTab("approvals");
+      setAct("");
+    } else if (act === "open-signature") {
+      setTab("signature");
+      setAct("");
+    }
+  }, [act]);
 
   const [target, setTarget] = React.useState("");
   const [reason, setReason] = React.useState("");
@@ -667,6 +762,8 @@ export default function MatterDetail() {
             documents: documents.data ?? [],
             approvals: approvals.data ?? [],
             signatures: signatures.data ?? [],
+            contract: contracts.data?.[0] ?? null,
+            obligations: obligations.data?.length ?? 0,
           },
           setAct,
         )}
@@ -867,7 +964,21 @@ export default function MatterDetail() {
                   className="block text-foreground no-underline hover:bg-muted/60"
                 >
                   <Row cols="minmax(0,1fr) 6.875rem 6.875rem 8.125rem 5.625rem">
-                    <div className="truncate">{document.name}</div>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate">{document.name}</span>
+                      {/*
+                        The wording and the signed file are two things. The
+                        blocks are what the document says, and they say what
+                        they said before anybody signed; the signatures exist
+                        only on the file the signing service stamped, which is
+                        held here rather than linked to, because an archive
+                        that is a link into somebody else's service is an
+                        archive until that service changes.
+                      */}
+                      {document.signed_copy_held ? (
+                        <Pill tone="good">Signed copy held</Pill>
+                      ) : null}
+                    </div>
                     <div>
                       <Pill tone={document.immutable ? "good" : "neutral"}>
                         {titleCase(document.document_type)}
@@ -949,7 +1060,11 @@ export default function MatterDetail() {
       ) : null}
 
       {tab === "signature" ? (
-        <SignaturePanel matterId={matterId} onChanged={reloadAll} />
+        <SignaturePanel
+          matterId={matterId}
+          documents={documents.data ?? []}
+          onChanged={reloadAll}
+        />
       ) : null}
 
       {tab === "decisions" ? (

@@ -184,6 +184,20 @@ export type RequestStatus = {
   awaiting_confirmation: AwaitingConfirmation | null;
 };
 
+/*
+  A change written into a draft by a person, and what it replaced.
+
+  Keeping the original is the whole point. A redline that shows only the new
+  wording asks the counterparty to diff it against their own copy from memory,
+  which is what a marked-up contract exists to avoid.
+*/
+export type TrackedChange = {
+  author: string;
+  original: string | null;
+  reason: string | null;
+  inserted: boolean;
+};
+
 export type Block = {
   key: string;
   number: string;
@@ -192,6 +206,7 @@ export type Block = {
   provenance: string;
   source_reference: string | null;
   novel: boolean;
+  tracked_change?: TrackedChange | null;
 };
 
 export type Check = { name: string; passed: boolean; detail: string; items: string[] };
@@ -212,6 +227,7 @@ export type DocumentRecord = {
   blocks: Block[];
   consistency_checks: Check[];
   generated_at: string | null;
+  signed_copy_held: boolean;
 };
 
 export type Approval = {
@@ -250,6 +266,28 @@ export type Finding = {
   decided_at: string | null;
   clearance_rule: string | null;
   edited_text: string | null;
+  document_id: string | null;
+  block_key: string | null;
+  round: number;
+  carried_from_id: string | null;
+  settled_in_round: number | null;
+};
+
+/*
+  What changed between one pass over their paper and the next.
+
+  `newly_raised` is the number that pays for rounds: a point appearing for the
+  first time in a later round is something the counterparty altered while the
+  argument was about something else, and no checklist catches it.
+*/
+export type RoundSummary = {
+  round: number;
+  document_id: string | null;
+  document_name: string | null;
+  total: number;
+  settled: number;
+  still_open: number;
+  newly_raised: number;
 };
 
 export type Obligation = {
@@ -273,6 +311,37 @@ export type Obligation = {
   contract_id: string | null;
   days_until_due: number | null;
   overdue: boolean;
+  matter_id: string | null;
+  contract_reference: string | null;
+  counterparty_name: string | null;
+  matter_number: string | null;
+};
+
+export type UnaccountedClause = {
+  number: string;
+  heading: string;
+  excerpt: string;
+};
+
+/*
+  What extraction drew a duty from, and what it drew nothing from.
+
+  A duty it invents is caught by whoever confirms the proposal. A duty it
+  misses produces no proposal at all, and an absence is not something anyone
+  reviews, so the clauses that yielded nothing are named instead.
+*/
+export type ObligationCoverage = {
+  clauses_read: number;
+  clauses_with_duties: number;
+  uncited: number;
+  complete: boolean;
+  unaccounted: UnaccountedClause[];
+};
+
+export type Extraction = {
+  obligations: Obligation[];
+  coverage: ObligationCoverage;
+  measured: boolean;
 };
 
 export type Contract = {
@@ -294,6 +363,7 @@ export type Contract = {
   authoritative: boolean;
   executed_outside_platform: boolean;
   counterparty: CounterpartyBrief | null;
+  matter_number: string | null;
 };
 
 export type Fallback = {
@@ -459,7 +529,9 @@ export type Capability = {
   last_score_label: string | null;
   last_evaluated_at: string | null;
   golden_set: string | null;
+  gate_enforced: boolean;
   passes_gate: boolean;
+  gate_status: string;
 };
 
 export type AiInteraction = {

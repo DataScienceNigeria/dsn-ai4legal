@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import * as React from "react";
+import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
 
@@ -54,6 +55,7 @@ export function CardBody({ className, ...props }: React.HTMLAttributes<HTMLDivEl
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "default" | "primary" | "dark" | "ghost" | "destructive";
   size?: "sm" | "md";
+  ref?: React.Ref<HTMLButtonElement>;
 };
 
 export function Button({
@@ -354,53 +356,102 @@ export function DataState({
   do, only the next one is a filled button; the rest go behind More. Seven
   buttons of equal weight is the same as none, because nothing among them says
   which one you came here to press.
+
+  The menu is drawn in a portal at viewport coordinates rather than absolutely
+  inside its own row. A table that scrolls sideways sets `overflow-x: auto`,
+  and a box with overflow on one axis clips the other too, so a menu on the
+  last row was cut off by its own table and the reader had to scroll a table
+  sideways to read a menu. Nothing inside the table can position out of it, so
+  the menu leaves the table.
+
+  It opens upward when there is not room below, for the same reason.
 */
-export function More({ children, label = "More" }: Readonly<{ children: React.ReactNode; label?: string }>) {
+export function More({
+  children,
+  label = "More",
+}: Readonly<{ children: React.ReactNode; label?: string }>) {
   const [open, setOpen] = React.useState(false);
-  const box = React.useRef<HTMLDivElement>(null);
+  const [at, setAt] = React.useState<{ top: number; right: number; up: boolean } | null>(null);
+  const trigger = React.useRef<HTMLButtonElement>(null);
+  const menu = React.useRef<HTMLDivElement>(null);
+
+  const place = React.useCallback(() => {
+    const button = trigger.current;
+    if (!button) return;
+    const rect = button.getBoundingClientRect();
+    const below = globalThis.innerHeight - rect.bottom;
+    const up = below < 220 && rect.top > below;
+    setAt({
+      top: up ? rect.top - 6 : rect.bottom + 6,
+      right: globalThis.innerWidth - rect.right,
+      up,
+    });
+  }, []);
 
   React.useEffect(() => {
     if (!open) return;
+    place();
     function away(event: MouseEvent) {
-      if (!box.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!trigger.current?.contains(target) && !menu.current?.contains(target)) setOpen(false);
     }
     function escape(event: KeyboardEvent) {
       if (event.key === "Escape") setOpen(false);
     }
     document.addEventListener("mousedown", away);
     document.addEventListener("keydown", escape);
+    globalThis.addEventListener("scroll", place, true);
+    globalThis.addEventListener("resize", place);
     return () => {
       document.removeEventListener("mousedown", away);
       document.removeEventListener("keydown", escape);
+      globalThis.removeEventListener("scroll", place, true);
+      globalThis.removeEventListener("resize", place);
     };
-  }, [open]);
+  }, [open, place]);
 
   return (
-    <div ref={box} className="relative">
-      <Button aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((was) => !was)}>
+    <>
+      <Button
+        ref={trigger}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((was) => !was)}
+      >
         {label}
-        <span aria-hidden className="text-xs">&#9662;</span>
+        <span aria-hidden className="text-xs">
+          &#9662;
+        </span>
       </Button>
-      {open ? (
-        <div
-          role="menu"
-          onClick={() => setOpen(false)}
-          /*
-            Children are laid out as menu rows whatever they are, so a
-            component that renders its own trigger button can be dropped in
-            without knowing it is inside a menu.
+      {open && at
+        ? createPortal(
+            <div
+              ref={menu}
+              role="menu"
+              onClick={() => setOpen(false)}
+              style={{
+                top: at.top,
+                right: at.right,
+                transform: at.up ? "translateY(-100%)" : undefined,
+              }}
+              /*
+                Children are laid out as menu rows whatever they are, so a
+                component that renders its own trigger button can be dropped in
+                without knowing it is inside a menu.
 
-            The hover rule is `[&_button:hover]`, not `[&_button]:hover`. The
-            second reads as "when this menu is hovered, every button in it",
-            which lit the whole menu up at once and told the reader nothing
-            about what they were about to press.
-          */
-          className="absolute right-0 z-40 mt-1.5 flex w-max min-w-[14rem] flex-col gap-0.5 rounded-lg border bg-popover p-1.5 shadow-lg [&_a]:w-full [&_button]:h-9 [&_button]:w-full [&_button]:justify-start [&_button]:border-transparent [&_button]:bg-transparent [&_button]:font-normal [&_button:hover]:bg-muted"
-        >
-          {children}
-        </div>
-      ) : null}
-    </div>
+                The hover rule is `[&_button:hover]`, not `[&_button]:hover`.
+                The second reads as "when this menu is hovered, every button in
+                it", which lit the whole menu up at once and told the reader
+                nothing about what they were about to press.
+              */
+              className="fixed z-50 flex w-max min-w-[14rem] flex-col gap-0.5 rounded-lg border bg-popover p-1.5 shadow-lg [&_a]:w-full [&_button]:h-9 [&_button]:w-full [&_button]:justify-start [&_button]:border-transparent [&_button]:bg-transparent [&_button]:font-normal [&_button:hover]:bg-muted"
+            >
+              {children}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }
 
@@ -852,6 +903,7 @@ export function Modal({
   onClose,
   footer,
   width = "md",
+  dismissible = true,
   children,
 }: Readonly<{
   open: boolean;
@@ -860,6 +912,7 @@ export function Modal({
   onClose: () => void;
   footer?: React.ReactNode;
   width?: "sm" | "md" | "lg";
+  dismissible?: boolean;
   children: React.ReactNode;
 }>) {
   const panel = React.useRef<HTMLDialogElement>(null);
@@ -873,10 +926,17 @@ export function Modal({
   const closeRef = React.useRef(onClose);
   closeRef.current = onClose;
 
+  /*
+    Some dialogs are a step in a piece of work rather than a thing to look at.
+    Losing one to a stray click on the page behind it leaves the reader with no
+    idea whether what they started is still happening, so those are dismissed
+    deliberately, through their own controls, and not by clicking away or by
+    Escape.
+  */
   React.useEffect(() => {
     if (!open) return undefined;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeRef.current();
+      if (event.key === "Escape" && dismissible) closeRef.current();
     };
     document.addEventListener("keydown", onKey);
     const previous = document.body.style.overflow;
@@ -885,7 +945,7 @@ export function Modal({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previous;
     };
-  }, [open]);
+  }, [open, dismissible]);
 
   /*
     Focus is placed once, when the dialog opens, and on the first field rather
@@ -905,12 +965,16 @@ export function Modal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:items-center sm:p-6">
-      <button
-        type="button"
-        aria-label="Close this dialog"
-        className="fixed inset-0 cursor-default bg-background/80 backdrop-blur-sm"
-        onClick={onClose}
-      />
+      {dismissible ? (
+        <button
+          type="button"
+          aria-label="Close this dialog"
+          className="fixed inset-0 cursor-default bg-background/80 backdrop-blur-sm"
+          onClick={onClose}
+        />
+      ) : (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm" />
+      )}
       <dialog
         ref={panel}
         open
@@ -932,9 +996,11 @@ export function Modal({
               </div>
             ) : null}
           </div>
-          <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close" data-dismiss>
-            &#10005;
-          </Button>
+          {dismissible ? (
+            <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close" data-dismiss>
+              &#10005;
+            </Button>
+          ) : null}
         </div>
         <div className="max-h-[70vh] space-y-4 overflow-y-auto p-5">{children}</div>
         {footer ? (

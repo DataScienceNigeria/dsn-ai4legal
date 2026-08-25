@@ -10,7 +10,7 @@ from app.db.models.contract import (
 )
 from app.db.models.conversation import Conversation, ConversationTurn
 from app.db.models.counterparty import Counterparty, Vendor
-from app.db.models.document import Document, ReviewFinding, Suggestion
+from app.db.models.document import Document, ReviewFinding
 from app.db.models.evaluation import GoldenCase, GoldenSet
 from app.db.models.governance import (
     Assessment,
@@ -83,7 +83,6 @@ __all__ = [
     "RetentionPolicy",
     "ReviewFinding",
     "SignatureRequest",
-    "Suggestion",
     "Template",
     "TemplateVersion",
     "User",

@@ -37,6 +37,25 @@ CLOCK_PAUSED_STATES: frozenset[MatterState] = frozenset(
 
 TERMINAL_STATES: frozenset[MatterState] = frozenset({S.ARCHIVED, S.CLOSED_WITHOUT_MATTER})
 
+#: Where legal work on the matter is finished.
+#:
+#: Execution is the end of the matter, not the middle of it. What follows is
+#: the agreement's own life, and it is lived in the archive and the obligation
+#: register, against the contract rather than against the matter. Keeping
+#: executed matters in the working list mixes finished work with work in hand
+#: and makes the count meaningless.
+CONCLUDED_STATES: frozenset[MatterState] = frozenset(
+    {
+        S.EXECUTED,
+        S.ACTIVE,
+        S.AMENDED,
+        S.EXPIRED,
+        S.TERMINATED,
+        S.ARCHIVED,
+        S.CLOSED_WITHOUT_MATTER,
+    }
+)
+
 _REVERSALS: frozenset[tuple[MatterState, MatterState]] = frozenset(
     {
         (S.IN_REVIEW, S.DRAFTING),

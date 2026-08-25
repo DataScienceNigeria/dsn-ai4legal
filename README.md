@@ -9,22 +9,6 @@ confirm.** No component can independently give legal advice, accept risk,
 approve a contract, sign a document, or send a substantive external
 communication.
 
-## What is here
-
-| Path | What it is |
-| --- | --- |
-| `apps/api` | FastAPI, SQLAlchemy, Alembic. The only write path. |
-| `apps/web` | Next.js, Tailwind, shadcn anatomy over the DSN palette, dark mode. |
-| `docs/BUILD-PLAN.md` | Scope, substitutions and the reasoning behind them. |
-| `docs/TASKS.md` | Live task list, updated as work closes. |
-| `docs/WALKTHROUGH.md` | The zero to one hundred guide: every directory, file, role and feature. Start here. |
-| `docs/DESIGN_TOKENS.md` | Palette and its accessibility constraints. |
-| `docs/DESIGN-CONVENTIONS.md` | What the interface has to make visible. |
-| `_design_ref/` | The original Claude Design canvases, kept for reference. |
-
-Modules M01 to M15 are built. The platform is single-tenant for the two
-entities; there is no tenant dimension anywhere in the model.
-
 ## Running it
 
 Everything runs as a container. One command brings up the database, cache,
@@ -36,14 +20,14 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-| Service | Address | What it is |
-| --- | --- | --- |
-| `web` | http://localhost:3000 | The interface |
-| `api` | http://localhost:8000 | FastAPI, OpenAPI at `/api/v1/docs` |
-| `worker` | no port | Celery worker and beat, the scheduled sweeps |
-| `n8n` | http://localhost:5678 | Plumbing only, mailbox polling |
-| `db` | localhost:5433 | PostgreSQL 18 with pgvector |
-| `minio` | http://localhost:9101 | Object store console |
+| Service    | Address               | What it is                                   |
+| ---------- | --------------------- | -------------------------------------------- |
+| `web`    | http://localhost:3000 | The interface                                |
+| `api`    | http://localhost:8000 | FastAPI, OpenAPI at`/api/v1/docs`          |
+| `worker` | no port               | Celery worker and beat, the scheduled sweeps |
+| `n8n`    | http://localhost:5678 | Plumbing only, mailbox polling               |
+| `db`     | localhost:5433        | PostgreSQL 18 with pgvector                  |
+| `minio`  | http://localhost:9101 | Object store console                         |
 
 Sign in as `adaeze.okafor@dsn.example` with the password `Lop-Demo-2026`. Other
 seeded accounts are listed on the sign-in page and show the same platform under
@@ -99,19 +83,19 @@ commercial provider; it goes to a self-hosted model or nowhere.
 
 Each of these is a test or a database policy rather than a claim.
 
-| Control | Where it lives |
-| --- | --- |
-| Entity separation and restricted matters | PostgreSQL row-level security, `alembic/versions/0003`, `tests/test_isolation.py` |
-| Append-only audit trail | Table grant plus a trigger, with a chained digest per row |
-| Deterministic generation | `tests/test_generation.py`, byte-identical archive output |
-| Approval binds to a content hash | `tests/test_approvals.py` |
-| Grounding, routing and no-action | `tests/test_ai_envelope.py` |
-| Tier derivation and authority to concede | `tests/test_tiering.py`, `app/domain/enums.py` |
-| House style is enforced, not suggested | `tests/test_phase_g.py`, `app/services/style.py` |
-| Tier 1 auto-issue stops at any deviation | `tests/test_phase_g.py`, `app/services/autoissue.py` |
-| Imported clauses arrive as proposals | `tests/test_phase_g.py`, `app/services/docx_import.py` |
-| Nobody approves their own export or deletion | `app/api/v1/admin.py`, refused by user identity |
-| A legal hold outranks every role | `app/api/v1/admin.py`, refused before the request is written |
+| Control                                      | Where it lives                                                                       |
+| -------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Entity separation and restricted matters     | PostgreSQL row-level security,`alembic/versions/0003`, `tests/test_isolation.py` |
+| Append-only audit trail                      | Table grant plus a trigger, with a chained digest per row                            |
+| Deterministic generation                     | `tests/test_generation.py`, byte-identical archive output                          |
+| Approval binds to a content hash             | `tests/test_approvals.py`                                                          |
+| Grounding, routing and no-action             | `tests/test_ai_envelope.py`                                                        |
+| Tier derivation and authority to concede     | `tests/test_tiering.py`, `app/domain/enums.py`                                   |
+| House style is enforced, not suggested       | `tests/test_phase_g.py`, `app/services/style.py`                                 |
+| Tier 1 auto-issue stops at any deviation     | `tests/test_phase_g.py`, `app/services/autoissue.py`                             |
+| Imported clauses arrive as proposals         | `tests/test_phase_g.py`, `app/services/docx_import.py`                           |
+| Nobody approves their own export or deletion | `app/api/v1/admin.py`, refused by user identity                                    |
+| A legal hold outranks every role             | `app/api/v1/admin.py`, refused before the request is written                       |
 
 ```bash
 cd apps/api && .venv/bin/pytest tests/ -q

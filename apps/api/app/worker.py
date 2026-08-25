@@ -22,6 +22,7 @@ from app.db.models.platform import OutboxEvent
 from app.db.session import owner_session
 from app.domain.enums import ApprovalDecision, ObligationStatus
 from app.services import obligations as obligation_rules
+from app.services.obligations import LEGAL_DEADLINES
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,9 @@ celery_app.conf.update(
     timezone="UTC",
     beat_schedule={
         "drain-outbox": {"task": "dsn_lai.drain_outbox", "schedule": 30.0},
+        # Every ten minutes, because nothing is coming the other way. See
+        # signature_sweep for why this is a poll rather than a callback.
+        "signature-sweep": {"task": "dsn_lai.signature_sweep", "schedule": 600.0},
         "obligation-reminders": {
             "task": "dsn_lai.obligation_reminders",
             "schedule": crontab(hour="7", minute="0"),
@@ -119,10 +123,79 @@ def deliver(event: OutboxEvent) -> None:
     )
 
 
+@celery_app.task(name="dsn_lai.signature_sweep")
+def signature_sweep() -> dict:
+    """Ask the signing service what happened to every request still out.
+
+    A poll, and not by preference. The self-hosted signing service carries no
+    outbound webhook: the feature belongs to the hosted product and there is no
+    dispatcher anywhere in the container, so nothing will ever call this
+    platform to say a document was signed. Waiting for a callback that cannot
+    arrive would leave every executed agreement unrecorded and every obligation
+    underneath it unproposed.
+
+    It is also the safer half of the trade. A missed callback is silent and
+    permanent; a missed poll is retried in ten minutes.
+
+    Completion runs the same archive path a callback would: the executed copy
+    becomes immutable, a contract record is created and obligations are
+    proposed. One function, one behaviour, whichever way the news arrives.
+    """
+    from app.api.v1.approvals import _archive
+    from app.db.models.contract import SignatureRequest
+    from app.services import signature as signature_service
+
+    provider = signature_service.selected()
+    looked_at = 0
+    completed = 0
+    declined = 0
+
+    with owner_session() as session:
+        outstanding = list(
+            session.execute(
+                select(SignatureRequest).where(SignatureRequest.status == "sent")
+            ).scalars()
+        )
+
+        for request in outstanding:
+            if not request.external_reference:
+                continue
+            looked_at += 1
+            state = provider.state_of(request.external_reference)
+            if state is None or state["status"] == "sent":
+                continue
+
+            if state["status"] == "completed":
+                request.status = "completed"
+                request.completed_at = datetime.now(UTC)
+                request.audit_certificate = state["certificate"]
+                _archive(session, request, state["certificate"])
+                completed += 1
+            elif state["status"] == "declined":
+                # Declined is not cancelled. Somebody was asked and said no,
+                # and the record should say which of those happened.
+                request.status = "declined"
+                request.cancelled_reason = "A signer declined at the signing service."
+                declined += 1
+
+    if completed or declined:
+        logger.info(
+            "Signature sweep: %s completed, %s declined, of %s outstanding.",
+            completed,
+            declined,
+            looked_at,
+        )
+    return {"checked": looked_at, "completed": completed, "declined": declined}
+
+
 @celery_app.task(name="dsn_lai.obligation_reminders")
 def obligation_reminders() -> int:
     """Reminders reach the owner at their configured lead time, and escalate on
-    breach (PRD LOP-M08-US-03)."""
+    breach (PRD LOP-M08-US-03).
+
+    Only for the deadlines that are legal's own. What an agreement requires of
+    the business is a record to read, not a queue to work.
+    """
     from app.services.notifications import notify
 
     raised = 0
@@ -132,6 +205,7 @@ def obligation_reminders() -> int:
                 select(Obligation).where(
                     Obligation.status == ObligationStatus.OPEN.value,
                     Obligation.due_date.is_not(None),
+                    Obligation.obligation_type.in_(LEGAL_DEADLINES),
                 )
             )
             .scalars()

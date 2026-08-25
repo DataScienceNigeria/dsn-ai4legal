@@ -271,6 +271,10 @@ class DocumentOut(ApiModel):
     blocks: list[BlockOut]
     consistency_checks: list[CheckOut]
     generated_at: datetime | None
+    #: True where the signed file is held here rather than merely referenced
+    #: at the service that stamped it. The blocks are the wording, which is
+    #: what it was before anybody signed; the signatures are on the file.
+    signed_copy_held: bool = False
 
 
 class ApprovalOut(ApiModel):
@@ -315,6 +319,11 @@ class SignatureOut(ApiModel):
     signers: list[dict]
     status: str
     completed_at: datetime | None
+    #: Where the fields are placed on the page, for a provider that offers a
+    #: placement screen. Legal drags a signature box onto the document there
+    #: and sends from there; the platform decides what may be sent and to
+    #: whom, and does not try to reimplement dragging a box onto a PDF.
+    placement_url: str | None = None
 
 
 class WetInkExecution(BaseModel):
@@ -343,6 +352,9 @@ class ContractOut(ApiModel):
     authoritative: bool
     executed_outside_platform: bool
     counterparty: CounterpartyBrief | None = None
+    matter_number: str | None = None
+    """The matter this agreement came out of, named rather than linked from the
+    list, so the archive does not read as a way back to where you started."""
 
 
 class ObligationOut(ApiModel):
@@ -364,8 +376,49 @@ class ObligationOut(ApiModel):
     decision_options: list[str]
     decision_taken: str | None
     contract_id: UUID | None
+    matter_id: UUID | None = None
     days_until_due: int | None = None
     overdue: bool = False
+
+    contract_reference: str | None = None
+    counterparty_name: str | None = None
+    matter_number: str | None = None
+    """Which agreement this duty came out of.
+
+    A list of duties with no agreement beside them is a list of orphans: the
+    reader cannot tell whose contract they belong to, and has no route back to
+    the clause they were drawn from.
+    """
+
+
+class UnaccountedClauseOut(ApiModel):
+    number: str
+    heading: str
+    excerpt: str
+
+
+class ObligationCoverageOut(ApiModel):
+    """Every clause of the executed agreement, accounted for or not.
+
+    The point is the second list. A duty extraction invented is caught by the
+    person confirming it; a duty extraction missed produces nothing to catch,
+    so the clauses it drew nothing from are named and looked at.
+    """
+
+    clauses_read: int
+    clauses_with_duties: int
+    uncited: int
+    complete: bool
+    unaccounted: list[UnaccountedClauseOut]
+
+
+class ExtractionOut(ApiModel):
+    obligations: list[ObligationOut]
+    coverage: ObligationCoverageOut
+    measured: bool
+    """Whether the capability has ever been run against its golden set. An
+    unmeasured capability still runs, and says so, rather than reporting a
+    failure nobody measured."""
 
 
 class ObligationDecision(BaseModel):
@@ -400,6 +453,32 @@ class FindingOut(ApiModel):
     decided_at: datetime | None
     clearance_rule: str | None
     edited_text: str | None = None
+    document_id: UUID | None = None
+    block_key: str | None = None
+    """Which clause of their paper this is about, so the editor can be taken
+    to it. Null on an absent clause, and null where the block could not be told
+    from its neighbours."""
+
+    round: int = 1
+    carried_from_id: UUID | None = None
+    settled_in_round: int | None = None
+
+
+class RoundSummary(ApiModel):
+    """What changed between one pass over their paper and the next.
+
+    The third number is the one that pays for this: a point raised for the
+    first time in a later round is something the counterparty altered while the
+    argument was about something else, and no checklist catches it.
+    """
+
+    round: int
+    document_id: UUID | None
+    document_name: str | None
+    total: int
+    settled: int
+    still_open: int
+    newly_raised: int
 
 
 class FindingDecision(BaseModel):

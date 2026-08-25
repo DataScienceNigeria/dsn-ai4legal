@@ -97,12 +97,18 @@ export default function DeliveryDashboard() {
           detail="Acceptance to execution"
           href="/workspace/metrics"
         />
+        {/*
+          Library reviews, not obligations. Legal does not work a consultant's
+          milestones, so counting them here asked the legal team to answer for
+          somebody else's schedule. What an agreement requires is read from the
+          agreement, in the archive.
+        */}
         <Kpi
-          label="Overdue obligations"
-          value={data.obligations_overdue}
-          tone={data.obligations_overdue ? "bad" : "good"}
-          detail={`${data.reviews_overdue} library reviews overdue`}
-          href="/workspace/obligations"
+          label="Library reviews overdue"
+          value={data.reviews_overdue}
+          tone={data.reviews_overdue ? "bad" : "good"}
+          detail="Clauses past their review date"
+          href="/workspace/library"
         />
       </div>
 

@@ -11,7 +11,7 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, EntityScoped, Timestamped, UUIDPrimaryKey
 from app.domain.enums import DataClass, DocumentType
@@ -86,29 +86,38 @@ class ReviewFinding(UUIDPrimaryKey, Timestamped, Base):
     edited_text: Mapped[str | None] = mapped_column(Text)
     interaction_id: Mapped[str | None] = mapped_column(String(64))
 
-class Suggestion(UUIDPrimaryKey, Timestamped, Base):
-    """A proposed change to a clause in a draft, M05 and M06.
+    round: Mapped[int] = mapped_column(Integer, default=1, index=True)
+    """Which pass over their paper raised this.
 
-    Every accepted change is attributed to the counsel, not to the model.
+    Negotiation is rounds. Their draft comes back changed, and the question is
+    never "what is wrong with it" but "what did they fix, what is still open,
+    and what did they change that nobody asked about". That last one is what a
+    reviewer working from a checklist cannot see, so the review is re-run
+    against the returned version and the rounds are compared.
     """
 
-    __tablename__ = "suggestion"
-
-    document_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("document.id", ondelete="CASCADE"), nullable=False
+    carried_from_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("review_finding.id", ondelete="SET NULL")
     )
-    block_key: Mapped[str] = mapped_column(String(64), nullable=False)
-    instruction: Mapped[str | None] = mapped_column(Text)
-    original_text: Mapped[str] = mapped_column(Text, nullable=False)
-    proposed_text: Mapped[str] = mapped_column(Text, nullable=False)
-    rationale: Mapped[str | None] = mapped_column(Text)
-    source_reference: Mapped[str | None] = mapped_column(String(64))
-    novel: Mapped[bool] = mapped_column(Boolean, default=False)
-    decision: Mapped[str] = mapped_column(String(16), default="pending")
-    decided_by_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("app_user.id", ondelete="SET NULL")
-    )
-    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    interaction_id: Mapped[str | None] = mapped_column(String(64))
+    """The same point, raised again in an earlier round. Set where a finding in
+    this round matches one already raised, so a point that survives negotiation
+    reads as one argument rather than as a new complaint each time."""
 
-    document: Mapped[Document] = relationship()
+    settled_in_round: Mapped[int | None] = mapped_column(Integer)
+    """The round whose paper no longer carries this. Closed by reading the
+    returned document rather than by anyone ticking it off, which is the only
+    way it stays true when the work happened somewhere else."""
+
+    block_key: Mapped[str | None] = mapped_column(String(64))
+    """Which block of their draft this finding is about.
+
+    A finding knows what is wrong. A tracked change needs to know what to
+    replace. Without this the accepted wording had nowhere to go, so a review
+    ended at a record of decisions while the marked-up draft was retyped by
+    hand in the editor.
+
+    Null where the clause is absent altogether, and null where the block could
+    not be told from its neighbours. Neither is silently skipped when the
+    redline is produced: see services/redline.py.
+    """
+

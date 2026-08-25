@@ -55,6 +55,7 @@ CAPABILITY_NOT_FOUND = "That capability is not in the register."
 def _decorate(capability: Capability) -> CapabilityOut:
     model = CapabilityOut.model_validate(capability)
     model.passes_gate = capability.passes_gate
+    model.gate_status = capability.gate_status
     return model
 
 
@@ -98,10 +99,11 @@ def set_capability_state(
             types.discard(payload.agreement_type)
         capability.disabled_for_types = sorted(types)
     else:
-        if state is CapabilityState.ENABLED and not capability.passes_gate:
+        if state is CapabilityState.ENABLED and capability.blocks_calls:
             raise Conflict(
                 f"{capability.name} scores {capability.last_score} against a gate of "
-                f"{capability.gate_threshold}. A capability below its gate does not run."
+                f"{capability.gate_threshold}. A capability below an enforced gate does "
+                "not run. Measure it again, and it comes back on when it passes."
             )
         capability.state = state.value
         capability.disabled_reason = payload.reason if state is CapabilityState.DISABLED else None

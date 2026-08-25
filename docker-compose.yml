@@ -66,14 +66,14 @@ services:
       # By service name from inside the network. The .env value is the
       # published port, which is what the host process needs and what a
       # container would fail to resolve.
-      DOCUSEAL_BASE_URL: http://docuseal:3000/api
+      OPENSIGN_BASE_URL: http://opensign:8080/app
     ports:
       - "${DSNLAI_API_PORT:-8000}:8000"
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
       minio: {condition: service_healthy}
-      docuseal: {condition: service_started}
+      opensign: {condition: service_started}
     command: >
       sh -c "alembic upgrade head && python -m app.seed --if-empty &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
@@ -88,7 +88,7 @@ services:
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
-      DOCUSEAL_BASE_URL: http://docuseal:3000/api
+      OPENSIGN_BASE_URL: http://opensign:8080/app
     depends_on:
       api: {condition: service_healthy}
     command: ["celery", "-A", "app.worker.celery_app", "worker", "--beat", "--loglevel=info"]
@@ -114,47 +114,92 @@ services:
     depends_on:
       api: {condition: service_healthy}
 
-  docuseal:
-    # Signature, run here rather than as somebody else's service.
-    #
-    # DocuSeal is AGPL-3.0 and self-hostable, and the hosted API was the wrong
-    # default for this platform twice over. An executed agreement is the most
-    # confidential record the organisation holds, and sending every draft to a
-    # third party to be signed is a data transfer nobody asked for and the
-    # entity separation cannot follow. It also broke the loop in development:
-    # completion arrives by webhook, and a hosted service cannot reach an API
-    # on localhost, so a document could be signed and the platform would never
-    # learn of it.
-    #
-    # On this network the two reach each other by name, which is what closes
-    # that loop.
-    image: docuseal/docuseal:latest
-    environment:
-      # Its own schema in the platform's database rather than the bundled
-      # SQLite file, so one backup covers the agreements and the signatures
-      # taken against them.
-      DATABASE_URL: >-
-        postgresql://${POSTGRES_USER:-dsnlai_owner}:${POSTGRES_PASSWORD:-dsnlai_owner_dev_password}@db:5432/${DOCUSEAL_DB:-docuseal}
-      SECRET_KEY_BASE: ${DOCUSEAL_SECRET_KEY_BASE:-change-me-in-every-environment}
-      # Where a signer's link points. It is opened by a person in a browser,
-      # not by a container, so it is the host address rather than the service
-      # name.
-      HOST: ${DOCUSEAL_HOST:-localhost:3100}
-      FORCE_SSL: "false"
-    ports:
-      # 3000 inside, because that is what the image serves. Not 3000 outside,
-      # because the workspace is already there.
-      - "${DSNLAI_DOCUSEAL_PORT:-3100}:3000"
+  opensign-mongo:
+    # OpenSign is Parse Server on Mongo. The platform's own records stay in
+    # Postgres; this holds the signature service's state and nothing else.
+    image: mongo:7
+    command: ["--quiet", "--wiredTigerCacheSizeGB", "0.25"]
     volumes:
-      - docuseal_data:/data
-    depends_on:
-      db: {condition: service_healthy}
+      - opensign_mongo:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ >/dev/null 2>&1 || exit 1"]
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 10s
       timeout: 5s
-      retries: 30
-      start_period: 60s
+      retries: 20
+
+  opensign:
+    # Signature, self-hosted and unrestricted.
+    #
+    # DocuSeal was here first and could not do the job in its free edition:
+    # every route that accepts a document, from PDF, DOCX or HTML, answers 404
+    # with a link to its pricing page, and its Alpine image ships no converter.
+    # OpenSign is AGPL-3.0 with no feature gate in the self-hosted build, and
+    # carries LibreOffice, so the .docx the platform renders becomes the PDF
+    # the counterparty signs. That matters more than convenience: the PDF
+    # derives from the same blocks the content hash was computed over, so what
+    # is signed is what was approved.
+    image: opensign/opensignserver:main
+    environment:
+      NODE_ENV: production
+      APP_ID: ${OPENSIGN_APP_ID:-opensign}
+      appName: open_sign_server
+      MASTER_KEY: ${OPENSIGN_MASTER_KEY:-change-me-in-every-environment}
+      MONGODB_URI: mongodb://opensign-mongo:27017/opensign
+      PARSE_MOUNT: /app
+      # Where OpenSign believes it lives. A signer opens the link in a browser
+      # on the host, so it is the published address rather than the service
+      # name, even though the platform calls it by service name.
+      SERVER_URL: http://localhost:${DSNLAI_OPENSIGN_PORT:-8080}/app
+      PUBLIC_URL: http://localhost:${DSNLAI_OPENSIGN_CLIENT_PORT:-3200}
+      # The certificate embedded into a signed PDF. Unset, the Finish button
+      # throws Buffer.from(undefined) after somebody has already drawn their
+      # signature, which reads as the signature failing rather than as the
+      # deployment missing a certificate.
+      PFX_BASE64: ${OPENSIGN_PFX_BASE64:-}
+      PASS_PHRASE: ${OPENSIGN_PFX_PASSPHRASE:-}
+      SMTP_ENABLE: ${OPENSIGN_SMTP_ENABLE:-true}
+      SMTP_HOST: ${OPENSIGN_SMTP_HOST:-mail}
+      SMTP_PORT: ${OPENSIGN_SMTP_PORT:-1025}
+      SMTP_USER_EMAIL: ${OPENSIGN_SMTP_USER:-signatures@dsn.example}
+      SMTP_PASS: ${OPENSIGN_SMTP_PASS:-anything}
+    ports:
+      - "${DSNLAI_OPENSIGN_PORT:-8080}:8080"
+    volumes:
+      - opensign_files:/usr/src/app/files
+    depends_on:
+      opensign-mongo: {condition: service_healthy}
+      mail: {condition: service_healthy}
+
+  mail:
+    # A mailbox that goes nowhere. The signing service emails each signer a
+    # link, and in development those addresses are made up, so a real sender
+    # would either bounce or, worse, reach somebody. Everything lands here and
+    # is read in a browser instead.
+    image: axllent/mailpit:latest
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "${DSNLAI_MAIL_UI_PORT:-8025}:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  opensign-client:
+    # The signing surface a counterparty opens. The platform never renders it;
+    # it hands over a link.
+    image: opensign/opensign:main
+    environment:
+      REACT_APP_SERVERURL: http://localhost:${DSNLAI_OPENSIGN_PORT:-8080}/app
+      REACT_APP_APPID: ${OPENSIGN_APP_ID:-opensign}
+      PUBLIC_URL: http://localhost:${DSNLAI_OPENSIGN_CLIENT_PORT:-3200}
+      GENERATE_SOURCEMAP: "false"
+    ports:
+      - "${DSNLAI_OPENSIGN_CLIENT_PORT:-3200}:3000"
+    depends_on:
+      - opensign
 
   n8n:
     # Plumbing, not the platform. n8n polls approved mailboxes, fans out
@@ -188,5 +233,6 @@ volumes:
   db_data:
   redis_data:
   minio_data:
-  docuseal_data:
+  opensign_mongo:
+  opensign_files:
   n8n_data:

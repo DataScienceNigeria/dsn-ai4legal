@@ -25,7 +25,12 @@ from app.db.models.organisation import User
 from app.domain import tiering
 from app.domain.enums import AUTHORITY_MATRIX, AuthorityLevel, MatterState, RiskTier, Role
 from app.domain.sla import ClockSegment, evaluate
-from app.domain.state_machine import IllegalTransition, assert_transition, permitted_next
+from app.domain.state_machine import (
+    CONCLUDED_STATES,
+    IllegalTransition,
+    assert_transition,
+    permitted_next,
+)
 from app.schemas.common import Ack, DecisionOut, DecisionRequest, TransitionRequest
 from app.schemas.intake import (
     AcceptRequest,
@@ -607,13 +612,25 @@ def list_matters(
     mine: bool = Query(default=False),
     status: str | None = Query(default=None),
     tier: str | None = Query(default=None),
+    stage: str | None = Query(default=None),
     limit: int = Query(default=100, le=500),
 ) -> list[MatterListItem]:
     """Row-level security already scopes this to the caller's entities and
-    excludes restricted matters they are not named on."""
+    excludes restricted matters they are not named on.
+
+    ``stage`` is "open" for work in hand and "concluded" for matters that have
+    reached execution or beyond. Executed matters used to sit in the same list
+    as live work, so the count on the navigation counted finished things and a
+    matter nobody could act on stayed at the top of the list forever.
+    """
+    concluded = [state.value for state in CONCLUDED_STATES]
     stmt = select(Matter).where(Matter.entity == entity)
     if mine:
         stmt = stmt.where(Matter.responsible_lawyer_id == uuid.UUID(principal.user_id))
+    if stage == "open":
+        stmt = stmt.where(Matter.status.notin_(concluded))
+    elif stage == "concluded":
+        stmt = stmt.where(Matter.status.in_(concluded))
     if status:
         stmt = stmt.where(Matter.status == status)
     if tier:

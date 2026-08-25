@@ -27,6 +27,9 @@ def _decorate(db, contract: Contract) -> ContractOut:
         counterparty = db.get(Counterparty, contract.counterparty_id)
         if counterparty:
             model.counterparty = CounterpartyBrief.model_validate(counterparty)
+    matter = db.get(Matter, contract.matter_id)
+    if matter:
+        model.matter_number = matter.number
     return model
 
 
@@ -38,6 +41,7 @@ def search_contracts(
     q: str | None = Query(default=None),
     agreement_type: str | None = None,
     counterparty_id: uuid.UUID | None = None,
+    matter_id: uuid.UUID | None = None,
     value_min: float | None = None,
     value_max: float | None = None,
     effective_from: date | None = None,
@@ -56,6 +60,8 @@ def search_contracts(
         stmt = stmt.where(Contract.agreement_type == agreement_type)
     if counterparty_id:
         stmt = stmt.where(Contract.counterparty_id == counterparty_id)
+    if matter_id:
+        stmt = stmt.where(Contract.matter_id == matter_id)
     if value_min is not None:
         stmt = stmt.where(Contract.value_amount >= value_min)
     if value_max is not None:

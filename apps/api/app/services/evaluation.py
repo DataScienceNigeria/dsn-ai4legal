@@ -119,14 +119,10 @@ def _macro_f1(pairs: list[tuple[str, str]]) -> float:
 
 
 def _score_classification(results: list[CaseResult]) -> Measurement:
-    pairs = [
-        (_normalise(result.expected), _normalise(result.predicted)) for result in results
-    ]
+    pairs = [(_normalise(result.expected), _normalise(result.predicted)) for result in results]
     score = _macro_f1(pairs)
     action = [(e, p) for e, p in pairs if e == "action_required"]
-    action_recall = (
-        sum(1 for e, p in action if p == e) / len(action) if action else 1.0
-    )
+    action_recall = sum(1 for e, p in action if p == e) / len(action) if action else 1.0
     return Measurement(
         score=round(score, 4),
         label=f"{score:.2f} macro F1, {action_recall:.2f} recall on action required",
@@ -164,9 +160,7 @@ def _classification_case(output: dict, expected: dict) -> CaseResult:
     )
 
 
-def _pairs_case(
-    predicted: set[str], want: set[str], noun: str
-) -> tuple[CaseResult, float, float]:
+def _pairs_case(predicted: set[str], want: set[str], noun: str) -> tuple[CaseResult, float, float]:
     precision = _precision(want, predicted)
     recall = _recall(want, predicted)
     missed = sorted(want - predicted)
@@ -192,9 +186,7 @@ def _grounded_rate(output: dict) -> float:
     if not isinstance(paragraphs, list) or not paragraphs:
         return 0.0
     cited = sum(
-        1
-        for paragraph in paragraphs
-        if isinstance(paragraph, dict) and paragraph.get("cites")
+        1 for paragraph in paragraphs if isinstance(paragraph, dict) and paragraph.get("cites")
     )
     return cited / len(paragraphs)
 
@@ -269,9 +261,7 @@ def _run_retrieval(outputs: list[tuple[GoldenCase, dict, list[str]]]) -> Measure
         results.append(result)
         recalls.append(recall)
     value = sum(recalls) / len(recalls) if recalls else 0.0
-    return Measurement(
-        score=round(value, 4), label=f"{value:.2f} recall at 5", results=results
-    )
+    return Measurement(score=round(value, 4), label=f"{value:.2f} recall at 5", results=results)
 
 
 def _run_review(outputs: list[tuple[GoldenCase, dict]]) -> Measurement:
@@ -463,9 +453,7 @@ def measure(session: Session, capability: Capability, entity: str = "EAI") -> Me
 
     measurement = scorer(payloads)
     if refusals:
-        measurement.label += (
-            f", {len(refusals)} of {len(cases)} cases could not be run"
-        )
+        measurement.label += f", {len(refusals)} of {len(cases)} cases could not be run"
         measurement.unrunnable = len(refusals)
     return measurement
 
@@ -502,7 +490,7 @@ def record(
                     "detail": result.detail,
                 }
                 for result in measurement.results
-            ]
+            ],
         },
         run_at=datetime.now(UTC),
     )
@@ -513,7 +501,8 @@ def record(
     capability.last_evaluated_at = run.run_at
     capability.golden_set = golden_set_name
 
-    if not passed and capability.state == CapabilityState.ENABLED.value:
+    auto_disables = not passed and capability.gate_enforced
+    if auto_disables and capability.state == CapabilityState.ENABLED.value:
         capability.state = CapabilityState.DISABLED.value
         capability.disabled_reason = (
             f"Scored {measurement.score:.3f} against a gate of {capability.gate_threshold} "

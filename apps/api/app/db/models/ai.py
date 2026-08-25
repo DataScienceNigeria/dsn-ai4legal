@@ -16,6 +16,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, Timestamped, UUIDPrimaryKey
 from app.domain.enums import CapabilityState, DataClass, HumanDecision
 
+GATE_NOT_MEASURED = "not_measured"
+GATE_PASSING = "passing"
+GATE_FAILING = "failing"
+
 
 class Capability(UUIDPrimaryKey, Timestamped, Base):
     """One row of the capability register.
@@ -23,6 +27,9 @@ class Capability(UUIDPrimaryKey, Timestamped, Base):
     A capability that falls below its threshold on the golden set is disabled
     until it passes again (PRD section 4.2). Disablement is instant, per
     capability and per agreement type, and needs no deployment.
+
+    Enforcement is per capability, because blocking is not always the safer
+    answer. See gate_enforced.
     """
 
     __tablename__ = "capability"
@@ -57,15 +64,44 @@ class Capability(UUIDPrimaryKey, Timestamped, Base):
     prompt_reference: Mapped[str | None] = mapped_column(String(128))
     tools_allowed: Mapped[list[str]] = mapped_column(JSONB, default=list)
 
+    gate_enforced: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    """Whether falling below the gate stops the capability running.
+
+    A gate is an on/off switch, and a switch only protects anyone where the
+    output goes somewhere a person will not check line by line. Obligation
+    extraction is the opposite: every proposal is confirmed one at a time
+    before it becomes a task, so switching it off hands Legal an empty list
+    instead of a reviewable one, which is the silent failure the gate exists
+    to prevent. Those capabilities are measured and reported on, not blocked.
+    """
+
     evaluations: Mapped[list["EvaluationRun"]] = relationship(
         back_populates="capability", cascade="all, delete-orphan"
     )
 
     @property
-    def passes_gate(self) -> bool:
+    def gate_status(self) -> str:
+        """Never measured is not the same as measured and failed.
+
+        Collapsing the two into one boolean is how a capability nobody had
+        ever run came to report a failure it never had.
+        """
         if self.gate_threshold is None or self.last_score is None:
-            return False
-        return self.last_score >= self.gate_threshold
+            return GATE_NOT_MEASURED
+        return GATE_PASSING if self.last_score >= self.gate_threshold else GATE_FAILING
+
+    @property
+    def below_gate(self) -> bool:
+        """Measured, and it failed. An unmeasured capability is not below anything."""
+        return self.gate_status == GATE_FAILING
+
+    @property
+    def blocks_calls(self) -> bool:
+        return self.below_gate and self.gate_enforced
+
+    @property
+    def passes_gate(self) -> bool:
+        return not self.below_gate
 
 class EvaluationRun(UUIDPrimaryKey, Timestamped, Base):
     """A run of a golden set against a capability, PRD section 16.1."""

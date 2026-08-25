@@ -39,6 +39,8 @@ type QualityRow = {
   cost_usd: number;
   median_latency_ms: number | null;
   gate_threshold: number | null;
+  gate_enforced: boolean;
+  gate_status: string;
   last_score: number | null;
   disabled_reason: string | null;
 };
@@ -307,16 +309,18 @@ function KillSwitch({
     return <span className="text-xs text-muted-foreground">Read only for your role</span>;
   }
 
+  const blocked = capability.gate_status === "failing" && capability.gate_enforced;
+
   if (capability.state === "disabled") {
     return (
       <Button
         size="sm"
         variant="primary"
-        disabled={busy || !capability.passes_gate}
+        disabled={busy || blocked}
         title={
-          capability.passes_gate
-            ? "Re-enable"
-            : "It cannot be enabled while it is below its gate."
+          blocked
+            ? "It cannot be enabled while it is below an enforced gate. Measure it again."
+            : "Re-enable"
         }
         onClick={() => onToggle(capability.code, "enabled", "Re-enabled after review.")}
       >
@@ -338,6 +342,12 @@ function KillSwitch({
     </Button>
   );
 }
+
+const GATE_TONE: Record<string, "good" | "warn" | "novel"> = {
+  passing: "good",
+  failing: "warn",
+  not_measured: "novel",
+};
 
 export default function Capabilities() {
   const { has } = useRoles();
@@ -417,8 +427,10 @@ export default function Capabilities() {
                   <Mono>{capability.module}</Mono>
                   <div className="text-xs">{capability.metric_name}</div>
                   <div>
-                    <Pill tone={capability.passes_gate ? "good" : "bad"}>
-                      {capability.last_score_label ?? capability.last_score ?? "Not measured"}
+                    <Pill tone={GATE_TONE[capability.gate_status] ?? "novel"}>
+                      {capability.gate_status === "not_measured"
+                        ? "Not yet measured"
+                        : (capability.last_score_label ?? capability.last_score)}
                     </Pill>
                   </div>
                   <div className="text-xs text-muted-foreground">
@@ -427,7 +439,8 @@ export default function Capabilities() {
                   <div>
                     <CapabilityStatePill
                       state={capability.state}
-                      passesGate={capability.passes_gate}
+                      gateStatus={capability.gate_status}
+                      enforced={capability.gate_enforced}
                     />
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
