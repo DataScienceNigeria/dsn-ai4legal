@@ -218,7 +218,7 @@ export default function NewRequest() {
       <Card>
         <CardHeader
           title="What data is involved?"
-          subtitle="A yes on any of these sets a privacy flag on the matter and notifies the data protection officer."
+          subtitle="A yes on any of these sets a privacy flag on the matter and tells the legal team."
         />
         <CardBody className="space-y-2">
           {(

@@ -16,7 +16,12 @@ from app.db.models.governance import ComplianceItem
 from app.db.models.organisation import User
 from app.domain.enums import ObligationStatus, Role
 from app.schemas.common import Ack
-from app.schemas.governance import ComplianceCompletion, ComplianceItemOut, ComplianceVersion
+from app.schemas.governance import (
+    ComplianceCompletion,
+    ComplianceItemCreate,
+    ComplianceItemOut,
+    ComplianceVersion,
+)
 from app.schemas.matters import (
     ObligationCompletion,
     ObligationDecision,
@@ -310,6 +315,68 @@ def compliance_items(
     return list(
         db.execute(stmt.order_by(ComplianceItem.next_due_date.asc().nulls_last())).scalars()
     )
+
+
+@router.post("/compliance", response_model=ComplianceItemOut, status_code=201)
+def add_compliance_item(
+    payload: ComplianceItemCreate, db: Db, principal: CurrentUser, entity: WorkingEntity
+) -> ComplianceItem:
+    """Put a statutory requirement on the calendar.
+
+    An owner is required rather than optional. Everything on this page ends in
+    somebody filing something, and a deadline recorded against nobody is a
+    deadline that passes with everyone assuming it was somebody else's. It is
+    also where the reminder will be addressed when there is one to send.
+    """
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+
+    if payload.recurrence not in service.RECURRENCES:
+        raise ValidationFailed(
+            "That is not a recurrence the calendar recognises.",
+            {"recurrence": f"One of {', '.join(sorted(service.RECURRENCES))}."},
+        )
+
+    owner = db.get(User, payload.accountable_owner_id)
+    if owner is None:
+        raise ValidationFailed(
+            "That person is not on the platform.",
+            {"accountable_owner_id": "Choose somebody who can be reminded."},
+        )
+
+    item = ComplianceItem(
+        entity=entity,
+        requirement=payload.requirement,
+        statutory_reference=payload.statutory_reference,
+        jurisdiction=payload.jurisdiction,
+        recurrence=payload.recurrence,
+        accountable_owner_id=owner.id,
+        evidence_required=payload.evidence_required,
+        next_due_date=payload.next_due_date,
+        filing_date=payload.next_due_date,
+        lead_time_days=payload.lead_time_days,
+        version=1,
+        effective_date=date.today(),
+        status="open",
+    )
+    db.add(item)
+    db.flush()
+
+    audit.record(
+        db,
+        action="compliance_requirement_added",
+        object_type="compliance_item",
+        object_id=str(item.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=entity,
+        after_state={
+            "requirement": item.requirement,
+            "recurrence": item.recurrence,
+            "next_due_date": str(item.next_due_date),
+            "owner": owner.name,
+        },
+    )
+    return item
 
 
 @router.post("/compliance/{item_id}/complete", response_model=ComplianceItemOut)

@@ -172,17 +172,19 @@ def create_request(
     )
 
     if privacy_flag:
-        notifications.notify(
+        notifications.raise_for_role(
             db,
-            connector_code="mail_administrative",
-            recipients=["dpo@dsn.example"],
-            subject=f"Privacy flag raised on {record.reference}",
+            role=Role.COUNSEL.value,
+            entity=record.entity,
+            kind="privacy_flag",
+            title=f"Privacy flag raised on {record.reference}",
             body=(
                 f"Request {record.reference} declares personal data, special-category "
                 "data, third-party confidential information, or a transfer out of "
                 "Nigeria. A privacy review is required."
             ),
-            record_reference=record.reference,
+            href="/workspace/triage",
+            reference=record.reference,
         )
 
     audit.record(

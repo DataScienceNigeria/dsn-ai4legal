@@ -77,8 +77,12 @@ STAGE_OWNERS = {
 #
 # Requesters are the team leads of other departments: the person building a
 # product is the person who knows what it does with personal data. They answer;
-# the data protection officer assesses. Two jobs, two sets of endpoints, one
-# record.
+# legal assesses. Two jobs, two sets of endpoints, one record.
+#
+# There is no data protection officer role, because nobody here holds that job
+# and nothing else. The assessment is written by whoever is building the thing
+# and read by legal, which is what data protection is in an organisation this
+# size. Anyone signed in may open one; only legal may score or decide it.
 
 
 @router.get("/form/dpia", response_model=DpiaFormOut)
@@ -165,11 +169,11 @@ def start_dpia(
     return assessment
 
 
-def _own_or_privacy(assessment: Assessment, principal) -> None:
+def _own_or_legal(assessment: Assessment, principal) -> None:
     """The person who raised it, or the people whose job it is to read it."""
     if str(assessment.raised_by_id) == principal.user_id:
         return
-    principal.require_role(Role.PRIVACY, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
 
 @router.patch("/{assessment_id}/answers", response_model=AssessmentOut)
@@ -186,13 +190,13 @@ def save_answers(
     assessment = db.get(Assessment, assessment_id)
     if assessment is None:
         raise NotFound(ASSESSMENT_NOT_FOUND)
-    _own_or_privacy(assessment, principal)
+    _own_or_legal(assessment, principal)
 
     if assessment.stage == AssessmentStage.CLOSED.value:
         raise Conflict("This assessment is closed. Reopen it with a reassessment.")
     if assessment.submitted_at and str(assessment.raised_by_id) == principal.user_id:
         raise Conflict(
-            "This assessment has been submitted and is with the data protection officer. "
+            "This assessment has been submitted and is with the legal team. "
             "Ask them to return it if it needs changing."
         )
 
@@ -220,7 +224,7 @@ def submit_dpia(
     assessment = db.get(Assessment, assessment_id)
     if assessment is None:
         raise NotFound(ASSESSMENT_NOT_FOUND)
-    _own_or_privacy(assessment, principal)
+    _own_or_legal(assessment, principal)
 
     state = dpia.completeness(assessment.captured or {})
     if not state.complete:
@@ -245,7 +249,7 @@ def submit_dpia(
 
     notifications.raise_for_role(
         db,
-        role=Role.PRIVACY.value,
+        role=Role.COUNSEL.value,
         entity=assessment.entity,
         kind="dpia_submitted",
         title=f"DPIA for {assessment.title}",
@@ -270,7 +274,7 @@ def record_section_assessment(
     and a date. The score is the DPO's, not a computation: it is what they think
     the information is worth against what the section reasonably required.
     """
-    principal.require_role(Role.PRIVACY, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     assessment = db.get(Assessment, assessment_id)
     if assessment is None:
@@ -317,7 +321,7 @@ def record_dpia_decision(
     is a formality, and a formality is what a DPIA becomes when the only
     available answer is a longer list of conditions.
     """
-    principal.require_role(Role.PRIVACY, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     assessment = db.get(Assessment, assessment_id)
     if assessment is None:
@@ -374,9 +378,7 @@ def record_dpia_decision(
 def list_assessments(
     db: Db, principal: CurrentUser, entity: WorkingEntity, stage: str | None = None
 ) -> list[Assessment]:
-    principal.require_role(
-        Role.PRIVACY, Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.COUNSEL, Role.ADMIN
-    )
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     stmt = select(Assessment).where(Assessment.entity == entity)
     if stage:
         stmt = stmt.where(Assessment.stage == stage)
@@ -387,7 +389,7 @@ def list_assessments(
 def create_assessment(
     payload: AssessmentCreate, db: Db, principal: CurrentUser
 ) -> Assessment:
-    principal.require_role(Role.PRIVACY, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     assessment = Assessment(
         reference=sequences.new_assessment_reference(db),
@@ -484,7 +486,7 @@ def close_assessment(
     The platform will not close an assessment with an unassigned residual risk,
     and outstanding conditions become tracked tasks on the same engine as M08.
     """
-    principal.require_role(Role.PRIVACY, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     assessment = db.get(Assessment, assessment_id)
     if assessment is None:

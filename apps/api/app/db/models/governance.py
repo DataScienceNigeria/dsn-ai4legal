@@ -204,3 +204,25 @@ class ComplianceItem(UUIDPrimaryKey, Timestamped, EntityScoped, Base):
         PgUUID(as_uuid=True), ForeignKey("compliance_item.id", ondelete="SET NULL")
     )
     status: Mapped[str] = mapped_column(String(24), default="open", index=True)
+
+    # A deadline with no name against it is nobody's deadline, and the reminder
+    # that will one day go out has to have somewhere to go.
+    accountable_owner: Mapped["User | None"] = relationship(  # noqa: F821
+        "User", foreign_keys=[accountable_owner_id], lazy="joined", viewonly=True
+    )
+
+    @property
+    def accountable_owner_name(self) -> str | None:
+        return self.accountable_owner.name if self.accountable_owner else None
+
+    @property
+    def due_soon_days(self) -> int:
+        """How many days ahead of the date this starts asking to be done.
+
+        A share of its own cycle rather than a flat number, because thirty days
+        out is most of the month for a monthly return and barely worth saying
+        for an annual one.
+        """
+        from app.services.obligations import due_soon_days as window
+
+        return window(self.recurrence, self.lead_time_days)

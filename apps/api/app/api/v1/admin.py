@@ -62,9 +62,7 @@ def _decorate(capability: Capability) -> CapabilityOut:
 @router.get("/capabilities")
 def list_capabilities(db: Db, principal: CurrentUser) -> list[CapabilityOut]:
     """The capability register. Nothing runs as an unnamed model call."""
-    principal.require_role(
-        Role.ADMIN, Role.HEAD_OF_LEGAL, Role.AUDITOR, Role.COUNSEL, Role.PRIVACY
-    )
+    principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL, Role.AUDITOR, Role.COUNSEL)
     return [
         _decorate(c)
         for c in db.execute(
@@ -659,7 +657,7 @@ def set_config(
 @router.get("/connectors")
 def list_connectors(db: Db, principal: CurrentUser) -> list[dict]:
     """Every route out of the platform, registered, owned and reviewed."""
-    principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL, Role.AUDITOR, Role.PRIVACY)
+    principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL, Role.AUDITOR)
     return [
         {
             "code": c.code,

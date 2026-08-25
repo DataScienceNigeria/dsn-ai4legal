@@ -567,6 +567,7 @@ export type KpiRow = {
   unit: string;
   measurement_method: string;
   baseline: number | null;
+  baseline_captured_on: string | null;
   current: number | null;
   phase_1_target: number | null;
   phase_3_target: number | null;
@@ -611,13 +612,6 @@ export type ExposureReport = {
     value_currency: string;
     reason: string;
   }[];
-  obligations_at_risk: {
-    reference: string;
-    name: string;
-    due_date: string;
-    days_until_due: number;
-    owner_id: string | null;
-  }[];
   note: string;
 };
 
@@ -627,7 +621,7 @@ export type DeviationPattern = {
   challenged: number;
   accepted: number;
   rejected: number;
-  cleared_by_ops: number;
+  undecided: number;
   absent: number;
   concession_rate: number | null;
 };
@@ -664,6 +658,8 @@ export type ComplianceItem = {
   version: number;
   effective_date: string | null;
   status: string;
+  accountable_owner_name: string | null;
+  due_soon_days: number;
 };
 
 export type CounterpartyRow = {

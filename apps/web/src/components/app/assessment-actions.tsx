@@ -168,7 +168,7 @@ function CloseAssessment({
 
   const missing = REQUIRED_FIELDS.filter((field) => !assessment.captured?.[field]);
 
-  if (!has("privacy", "head_of_legal", "admin") || assessment.stage === "closed") return null;
+  if (!has("counsel", "head_of_legal", "admin") || assessment.stage === "closed") return null;
 
   return (
     <>

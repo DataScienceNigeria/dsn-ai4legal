@@ -367,6 +367,27 @@ class ComplianceItemOut(ApiModel):
     version: int
     effective_date: date | None
     status: str
+    accountable_owner_name: str | None = None
+    due_soon_days: int = 0
+
+
+class ComplianceItemCreate(BaseModel):
+    """A statutory requirement the organisation has to meet.
+
+    Everything a reminder needs is on the form: what is owed, who owes it, when
+    it falls due and how far ahead they want to hear about it. A calendar that
+    can only be added to by editing the seed is a calendar with three rows in
+    it forever.
+    """
+
+    requirement: str = Field(min_length=5, max_length=255)
+    statutory_reference: str | None = Field(default=None, max_length=128)
+    jurisdiction: str = Field(default="Nigeria", max_length=64)
+    recurrence: str = "annual"
+    next_due_date: date
+    lead_time_days: int = Field(default=30, ge=0, le=365)
+    accountable_owner_id: UUID
+    evidence_required: bool = True
 
 
 class ComplianceCompletion(BaseModel):
@@ -481,11 +502,25 @@ class KpiRow(BaseModel):
     unit: str
     measurement_method: str
     baseline: float | None
+    baseline_captured_on: date | None = None
     current: float | None
     phase_1_target: float | None
     phase_3_target: float | None
     direction: str
     on_track: bool | None = None
+
+
+class BaselineUpdate(BaseModel):
+    """The two numbers on a KPI that no system can measure for you.
+
+    The current figure is the platform's; it comes from what actually happened.
+    The baseline is what the team was doing before, and the target is what they
+    have agreed to aim at, and both are somebody's judgement written down.
+    """
+
+    baseline_value: float | None = Field(default=None, ge=0)
+    target: float | None = Field(default=None, ge=0)
+    clear_baseline: bool = False
 
 
 class AgeingBucket(BaseModel):

@@ -44,7 +44,7 @@ function state(assessment: Assessment): { label: string; tone: "neutral" | "info
       tone: DECISION_TONE[assessment.final_decision] ?? "neutral",
     };
   }
-  if (assessment.submitted_at) return { label: "With data protection", tone: "info" };
+  if (assessment.submitted_at) return { label: "With legal", tone: "info" };
   return { label: "Draft", tone: "neutral" };
 }
 
@@ -77,7 +77,7 @@ export default function PortalAssessments() {
         title="Data protection assessments"
         subtitle={
           "Before a product handles personal data, the team building it describes what it " +
-          "does with that data. The data protection officer reads it, scores it and decides."
+          "does with that data. Legal reads it, scores it and decides."
         }
         actions={
           <Button variant="primary" onClick={() => setOpening(true)}>
@@ -179,7 +179,7 @@ export default function PortalAssessments() {
         </Field>
         <Notice tone="info" title="It does not have to be finished today">
           Thirteen sections, and several need somebody else on your team to answer. Everything is
-          saved as you write it, and nothing reaches the data protection officer until you submit.
+          saved as you write it, and nothing reaches the legal team until you submit.
         </Notice>
       </Modal>
     </div>

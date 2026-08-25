@@ -132,7 +132,7 @@ export default function PortalAssessment() {
           record.data.final_decision
             ? "Assessed and decided. This is the record of what was asked and what was concluded."
             : locked
-              ? "With the data protection officer. You will be told what they decide."
+              ? "With the legal team. You will be told what they decide."
               : "Answer what you can. Everything is saved as you write it."
         }
         actions={
@@ -149,7 +149,7 @@ export default function PortalAssessment() {
                 title={
                   outstanding.length
                     ? `${outstanding.length} answers still needed`
-                    : "Send it to the data protection officer"
+                    : "Send it to the legal team"
                 }
               >
                 Submit for assessment
@@ -416,7 +416,7 @@ function Review({
   return (
     <Card>
       <CardHeader
-        title="The data protection officer's assessment"
+        title="Legal's assessment"
         subtitle={`Assessed by ${review.assessed_by}`}
         actions={
           <div className="flex items-center gap-2">

@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 
 from app.core import audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
-from app.core.errors import Forbidden
+from app.core.errors import Forbidden, NotFound
 from app.db.models.ai import AIInteraction, Baseline, Capability
 from app.db.models.contract import Contract, Obligation
 from app.db.models.counterparty import Counterparty
@@ -37,6 +37,7 @@ from app.domain.sla import ClockSegment, evaluate
 from app.schemas.governance import (
     AgeingBucket,
     AiQualityRow,
+    BaselineUpdate,
     KpiRow,
     OperationalReport,
     OwnerLoad,
@@ -216,35 +217,95 @@ def kpi(db: Db, principal: CurrentUser, entity: WorkingEntity) -> list[KpiRow]:
     baseline reports a null current value rather than an unqualified figure.
     """
     principal.require_role(
-        Role.HEAD_OF_LEGAL, Role.MANAGEMENT, Role.ADMIN, Role.AUDITOR
+        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.MANAGEMENT, Role.ADMIN, Role.AUDITOR
     )
 
     measured = _measure_kpis(db, entity)
-    rows = []
-    for baseline in db.execute(select(Baseline).order_by(Baseline.kpi_code)).scalars():
-        current = measured.get(baseline.kpi_code)
-        on_track = None
-        if current is not None and baseline.phase_1_target is not None:
-            on_track = (
-                current <= baseline.phase_1_target
-                if baseline.target_direction == "down"
-                else current >= baseline.phase_1_target
-            )
-        rows.append(
-            KpiRow(
-                code=baseline.kpi_code,
-                name=baseline.name,
-                unit=baseline.unit,
-                measurement_method=baseline.measurement_method,
-                baseline=baseline.baseline_value,
-                current=current,
-                phase_1_target=baseline.phase_1_target,
-                phase_3_target=baseline.phase_3_target,
-                direction=baseline.target_direction,
-                on_track=on_track,
-            )
+    return [
+        _kpi_row(baseline, measured.get(baseline.kpi_code))
+        for baseline in db.execute(select(Baseline).order_by(Baseline.kpi_code)).scalars()
+    ]
+
+
+@router.put("/kpi/{code}", response_model=KpiRow)
+def set_baseline(
+    code: str, payload: BaselineUpdate, db: Db, principal: CurrentUser, entity: WorkingEntity
+) -> KpiRow:
+    """Record the baseline this KPI is measured from, and the target it is aimed at.
+
+    Both were seeded, and eight of the ten arrived empty, which left most of the
+    table reading "not set" against a target nobody could be held to. A baseline
+    is a measurement somebody took on a date, so the date is stamped when the
+    figure is written rather than asked for: it is the date the reading was
+    entered, and a reading entered today did not come from last quarter.
+
+    Nothing here computes. The current column is measured by the platform from
+    what actually happened; this is only the two numbers a person has to supply
+    because no system holds them.
+    """
+    principal.require_role(Role.HEAD_OF_LEGAL, Role.ADMIN)
+
+    baseline = db.execute(
+        select(Baseline).where(Baseline.kpi_code == code)
+    ).scalar_one_or_none()
+    if baseline is None:
+        raise NotFound("That KPI is not in the register.")
+
+    before = {"baseline": baseline.baseline_value, "target": baseline.phase_1_target}
+
+    if payload.baseline_value is not None:
+        baseline.baseline_value = payload.baseline_value
+        baseline.baseline_captured_on = date.today()
+    elif payload.clear_baseline:
+        baseline.baseline_value = None
+        baseline.baseline_captured_on = None
+
+    if payload.target is not None:
+        baseline.phase_1_target = payload.target
+
+    audit.record(
+        db,
+        action="kpi_baseline_recorded",
+        object_type="kpi_baseline",
+        object_id=baseline.kpi_code,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=entity,
+        before_state=before,
+        after_state={
+            "baseline": baseline.baseline_value,
+            "target": baseline.phase_1_target,
+            "captured_on": str(baseline.baseline_captured_on)
+            if baseline.baseline_captured_on
+            else None,
+        },
+    )
+
+    current = _measure_kpis(db, entity).get(code)
+    return _kpi_row(baseline, current)
+
+
+def _kpi_row(baseline: Baseline, current: float | None) -> KpiRow:
+    on_track = None
+    if current is not None and baseline.phase_1_target is not None:
+        on_track = (
+            current <= baseline.phase_1_target
+            if baseline.target_direction == "down"
+            else current >= baseline.phase_1_target
         )
-    return rows
+    return KpiRow(
+        code=baseline.kpi_code,
+        name=baseline.name,
+        unit=baseline.unit,
+        measurement_method=baseline.measurement_method,
+        baseline=baseline.baseline_value,
+        baseline_captured_on=baseline.baseline_captured_on,
+        current=current,
+        phase_1_target=baseline.phase_1_target,
+        phase_3_target=baseline.phase_3_target,
+        direction=baseline.target_direction,
+        on_track=on_track,
+    )
 
 
 def _measure_kpis(db, entity: str) -> dict[str, float]:
@@ -461,8 +522,15 @@ def exposure(
     """Risk and exposure, LOP-M14-US-03.
 
     Deviations accepted by severity and by the authority that cleared them, the
-    clauses conceded most often, contracts sitting on an unusual liability
-    position, and obligations at risk of being missed.
+    clauses conceded most often, and contracts sitting on an unusual liability
+    position.
+
+    Obligations falling due used to be counted here and are not exposure. This
+    report answers what we agreed to that was not our position; an obligation
+    inside its notice period is work nobody has done yet, which is a different
+    question wearing the same clothes. The renewal and notice deadlines that are
+    legal's own reach the calendar feed and the reminders, which is where a
+    date that has not passed belongs.
     """
     principal.require_role(Role.HEAD_OF_LEGAL, Role.COUNSEL, Role.ADMIN, Role.AUDITOR)
     entities = _reporting_entities(db, principal, entity, cross_entity, "exposure")
@@ -481,7 +549,7 @@ def exposure(
         if matter_ids
         else []
     )
-    conceded = [f for f in findings if f.decision in {"accepted", "cleared"}]
+    conceded = [f for f in findings if f.decision == "accepted"]
 
     by_severity: dict[str, int] = {}
     by_authority: dict[str, int] = {}
@@ -510,25 +578,6 @@ def exposure(
         for contract, reason in _unusual_liability(db, entities)
     ]
 
-    today = date.today()
-    at_risk = [
-        {
-            "reference": obligation.reference,
-            "name": obligation.name,
-            "due_date": obligation.due_date,
-            "days_until_due": (obligation.due_date - today).days,
-            "owner_id": str(obligation.owner_id) if obligation.owner_id else None,
-        }
-        for obligation in db.execute(
-            select(Obligation).where(
-                Obligation.entity.in_(entities),
-                Obligation.status == ObligationStatus.OPEN.value,
-                Obligation.due_date.is_not(None),
-                Obligation.due_date <= today + timedelta(days=30),
-            )
-        ).scalars()
-    ]
-
     return {
         "entities": entities,
         "deviations_accepted": len(conceded),
@@ -538,10 +587,10 @@ def exposure(
             by_clause.values(), key=lambda row: row["conceded"], reverse=True
         ),
         "unusual_liability_positions": unusual,
-        "obligations_at_risk": sorted(at_risk, key=lambda row: row["days_until_due"]),
         "note": (
-            "Exposure is counted from accepted and cleared findings, so a "
-            "deviation that legal rejected does not appear here."
+            "Exposure is counted from findings legal accepted, so a deviation "
+            "that was rejected does not appear here, and one nobody has ruled "
+            "on yet does not appear either."
         ),
     }
 
@@ -563,7 +612,7 @@ def _unusual_liability(db, entities: list[str]) -> list[tuple]:
                 )
             ).scalars()
         )
-        conceded = [f for f in findings if f.decision in {"accepted", "cleared"}]
+        conceded = [f for f in findings if f.decision == "accepted"]
         if any(f.severity in {Severity.CRITICAL.value, Severity.MATERIAL.value} for f in conceded):
             results.append((contract, "A critical or material liability deviation was accepted."))
         elif any(f.clause_absent for f in findings):
@@ -600,7 +649,7 @@ def deviation_patterns(
         select(ReviewFinding).where(ReviewFinding.matter_id.in_(list(matters)))
     ).scalars():
         matter = matters[finding.matter_id]
-        counterparty_class = classes.get(matter.counterparty_id, "unknown")
+        counterparty_class = classes.get(matter.counterparty_id) or "no counterparty"
         key = (finding.clause_category or "uncategorised", counterparty_class)
         row = patterns.setdefault(
             key,
@@ -610,7 +659,7 @@ def deviation_patterns(
                 "challenged": 0,
                 "accepted": 0,
                 "rejected": 0,
-                "cleared_by_ops": 0,
+                "undecided": 0,
                 "absent": 0,
             },
         )
@@ -619,16 +668,18 @@ def deviation_patterns(
             row["accepted"] += 1
         elif finding.decision == "rejected":
             row["rejected"] += 1
-        elif finding.decision == "cleared":
-            row["cleared_by_ops"] += 1
+        else:
+            row["undecided"] += 1
         if finding.clause_absent:
             row["absent"] += 1
 
+    # Undecided findings are counted as challenged and left out of the rate. A
+    # point nobody has ruled on says nothing about whether the position holds,
+    # and folding it in either way would make the number agree with whoever is
+    # slowest to decide.
     for row in patterns.values():
-        decided = row["accepted"] + row["rejected"] + row["cleared_by_ops"]
-        row["concession_rate"] = (
-            round((row["accepted"] + row["cleared_by_ops"]) / decided, 3) if decided else None
-        )
+        decided = row["accepted"] + row["rejected"]
+        row["concession_rate"] = round(row["accepted"] / decided, 3) if decided else None
 
     return sorted(patterns.values(), key=lambda row: row["challenged"], reverse=True)
 

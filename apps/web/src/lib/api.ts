@@ -125,7 +125,6 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
 const WORKSPACE_ROLES = new Set([
   "counsel",
   "head_of_legal",
-  "privacy",
   "admin",
   "auditor",
   "management",

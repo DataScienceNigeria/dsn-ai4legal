@@ -145,7 +145,6 @@ ASK_POOL = 80
 ASK_ROLES = (
     Role.COUNSEL,
     Role.HEAD_OF_LEGAL,
-    Role.PRIVACY,
     Role.MANAGEMENT,
     Role.ADMIN,
 )

@@ -36,15 +36,20 @@ class Role(StrEnum):
 
     HEAD_OF_LEGAL = "head_of_legal"
     """The legal lead. Publication, capability state, restricted access,
-    signature and anything else that needs re-authentication is theirs."""
-    PRIVACY = "privacy"
+    signature and anything else that needs re-authentication is theirs.
+
+    There was a third rank, ``privacy``, the data protection officer. Nobody in
+    an organisation this size holds that job and nothing else: the assessments
+    are written by the team lead who is building the thing, and read by legal.
+    A role held by one seconded person is a single point of failure with a
+    permission attached, and it made every DPIA wait on one calendar. Data
+    protection is now what it is in practice, part of legal's work.
+    """
     ADMIN = "admin"
     AUDITOR = "auditor"
     COUNTERPARTY = "counterparty"
 
-LEGAL_ROLES: frozenset[Role] = frozenset(
-    {Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN}
-)
+LEGAL_ROLES: frozenset[Role] = frozenset({Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN})
 
 class MatterState(StrEnum):
     """PRD section 8.2, matter state model."""

@@ -1133,7 +1133,7 @@ export function MatterActions({
     close();
   });
 
-  if (readOnly || !has("counsel", "head_of_legal", "privacy", "admin")) return null;
+  if (readOnly || !has("counsel", "head_of_legal", "admin")) return null;
 
   const canSign = has("counsel", "head_of_legal", "admin");
 

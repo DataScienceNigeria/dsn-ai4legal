@@ -63,7 +63,7 @@ export default function AssessDpia() {
   const form = useApi<DpiaForm>("/assessments/form/dpia");
   const record = useApi<Assessment>(`/assessments/${id}`, [id]);
 
-  const canAssess = has("privacy", "head_of_legal", "admin");
+  const canAssess = has("counsel", "head_of_legal", "admin");
 
   if (form.loading || record.loading) return <Spinner />;
   if (!form.data || !record.data) {

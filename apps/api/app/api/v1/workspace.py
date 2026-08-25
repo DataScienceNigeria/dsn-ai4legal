@@ -61,6 +61,26 @@ def _count(db, stmt) -> int:
     return int(db.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0)
 
 
+def _compliance_due(db, entity: str, today: date) -> int:
+    """Filings due soon or already overdue.
+
+    The window is a share of each filing's own cycle rather than a flat number
+    of days, so it has to be worked out per row. The table holds one entry per
+    statutory duty the organisation has, which is tens of rows, not thousands.
+    """
+    due = 0
+    for item in db.execute(
+        select(ComplianceItem).where(
+            ComplianceItem.entity == entity,
+            ComplianceItem.status == "open",
+            ComplianceItem.next_due_date.is_not(None),
+        )
+    ).scalars():
+        if (item.next_due_date - today).days <= item.due_soon_days:
+            due += 1
+    return due
+
+
 @router.get("/counts")
 def nav_counts(db: Db, principal: CurrentUser, entity: WorkingEntity) -> NavCounts:
     """What is waiting behind each menu item, for this entity.
@@ -114,15 +134,7 @@ def nav_counts(db: Db, principal: CurrentUser, entity: WorkingEntity) -> NavCoun
                 Assessment.stage.notin_(CLOSED_ASSESSMENT_STAGES),
             ),
         ),
-        compliance=_count(
-            db,
-            select(ComplianceItem.id).where(
-                ComplianceItem.entity == entity,
-                ComplianceItem.status != "filed",
-                ComplianceItem.next_due_date.is_not(None),
-                ComplianceItem.next_due_date <= today,
-            ),
-        ),
+        compliance=_compliance_due(db, entity, today),
     )
 
 

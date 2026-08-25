@@ -45,7 +45,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       {
         href: "/workspace",
         icon: "delivery",
-        label: "Delivery",
+        label: "Dashboard",
         module: "M14",
         roles: [...LEGAL, "management"],
       },
@@ -120,7 +120,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
         icon: "assessments",
         label: "Assessments",
         module: "M11",
-        roles: [...LEGAL, "privacy"],
+        roles: LEGAL,
         counter: "assessments",
       },
       {
@@ -136,7 +136,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
         icon: "counterparties",
         label: "Counterparties",
         module: "M13",
-        roles: [...LEGAL, "privacy"],
+        roles: LEGAL,
       },
     ],
   },
@@ -155,7 +155,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
         icon: "capabilities",
         label: "Capabilities",
         module: "M15",
-        roles: ["admin", "head_of_legal", "auditor", "counsel", "privacy"],
+        roles: ["admin", "head_of_legal", "auditor", "counsel"],
       },
       {
         href: "/workspace/admin",
@@ -189,7 +189,6 @@ const ROLE_LABELS: Record<string, string> = {
   management: "Management",
   counsel: "Legal",
   head_of_legal: "Legal lead",
-  privacy: "Privacy, the DPO",
   admin: "Administrator",
   auditor: "Auditor",
   counterparty: "Counterparty",
@@ -240,8 +239,7 @@ function primaryRole(roles: string[]): string {
     "head_of_legal",
     "admin",
     "counsel",
-    "privacy",
-      "auditor",
+    "auditor",
     "management",
     "requester",
   ];

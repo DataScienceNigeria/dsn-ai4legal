@@ -11,6 +11,7 @@ watching.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
@@ -60,15 +61,55 @@ def notice_deadline(end_date: date, notice_period_days: int) -> date:
     return end_date - timedelta(days=notice_period_days)
 
 
+#: How far apart two occurrences of the same duty fall, in months. A duty not
+#: named here happens once, or when something else makes it happen, and the
+#: calendar has no way to work out the next date on its own.
+RECURRING_MONTHS = {
+    "monthly": 1,
+    "quarterly": 3,
+    "biannual": 6,
+    "annual": 12,
+}
+
+#: Everything the calendar will accept. ``one_off`` and ``event_driven`` are
+#: real answers: an annual return recurs, a filing triggered by a change of
+#: directors does not, and refusing to record the second is how it ends up in
+#: somebody's inbox instead.
+RECURRENCES = frozenset(RECURRING_MONTHS) | {"one_off", "event_driven"}
+
+#: How much of a filing's own cycle counts as "soon".
+#:
+#: A fixed number of days cannot serve both a monthly return and an annual one.
+#: Thirty days out is most of the month for the first and barely worth
+#: mentioning for the second, so a calendar that warns on a flat lead time
+#: either shouts at the monthly filings or stays silent on the annual ones
+#: until it is nearly too late. The window is a share of the period instead:
+#: fifteen per cent, which is fifty-five days on an annual return and five on a
+#: monthly one.
+DUE_SOON_FRACTION = 0.15
+
+#: The period in days, for working out that share. Deliberately the nominal
+#: length rather than the true one: the window is a warning, not an arithmetic
+#: claim, and 365 against 365.25 moves it by two hours.
+PERIOD_DAYS = {"monthly": 30, "quarterly": 91, "biannual": 182, "annual": 365}
+
+
+def due_soon_days(recurrence: str, lead_time_days: int) -> int:
+    """How many days before it falls due a filing starts asking to be done.
+
+    A one-off filing has no cycle to take a share of, and neither does one
+    triggered by an event. Those are the only two that fall back to the lead
+    time recorded on the row, which is the only thing that can speak for them.
+    """
+    period = PERIOD_DAYS.get(recurrence)
+    if period is None:
+        return lead_time_days
+    return math.ceil(period * DUE_SOON_FRACTION)
+
+
 def next_occurrence(due: date, recurrence: str) -> date | None:
     """The next due date for a recurring obligation."""
-    steps = {
-        "monthly": 1,
-        "quarterly": 3,
-        "biannual": 6,
-        "annual": 12,
-    }
-    months = steps.get(recurrence)
+    months = RECURRING_MONTHS.get(recurrence)
     if months is None:
         return None
     month = due.month - 1 + months

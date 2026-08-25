@@ -21,7 +21,6 @@ const WORKSPACE_ROLES = new Set([
   "head_of_legal",
   "admin",
   "auditor",
-  "privacy",
   "management",
 ]);
 

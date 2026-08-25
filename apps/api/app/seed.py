@@ -106,7 +106,7 @@ PEOPLE = [
     ("Tunde Bakare", "tunde.bakare@dsn.example", [Role.REQUESTER], ["DSN"], [], 0),
     ("Ngozi Adeyemi", "ngozi.adeyemi@dsn.example", [Role.REQUESTER], ["EAI"], [], 0),
     ("Segun Lawal", "segun.lawal@dsn.example", [Role.REQUESTER, Role.MANAGEMENT], ["DSN"], [], 0),
-    ("Fatima Bello", "fatima.bello@dsn.example", [Role.PRIVACY], ["DSN", "EAI"], ["dpr"], 2),
+    ("Fatima Bello", "fatima.bello@dsn.example", [Role.COUNSEL], ["DSN", "EAI"], ["dpr"], 2),
     ("Emeka Obi", "emeka.obi@dsn.example", [Role.ADMIN], ["DSN", "EAI"], [], 0),
     ("Yusuf Danjuma", "yusuf.danjuma@dsn.example", [Role.AUDITOR], ["DSN", "EAI"], [], 0),
 ]

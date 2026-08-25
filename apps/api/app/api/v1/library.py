@@ -72,9 +72,7 @@ def _current_template_version(template: Template) -> TemplateVersion | None:
 @router.get("/clauses")
 def list_clauses(db: Db, principal: CurrentUser, entity: WorkingEntity) -> list[ClauseOut]:
     """A requester never sees the clause library (PRD section 5.2)."""
-    principal.require_role(
-        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
-    )
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     clauses = list(db.execute(select(Clause).order_by(Clause.category)).scalars())
     out = []
     for clause in clauses:
@@ -90,9 +88,7 @@ def list_clauses(db: Db, principal: CurrentUser, entity: WorkingEntity) -> list[
 
 @router.get("/clauses/{category}")
 def get_clause(category: str, db: Db, principal: CurrentUser) -> ClauseOut:
-    principal.require_role(
-        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
-    )
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     clause = db.execute(
         select(Clause).where(Clause.category == category.upper())
     ).scalar_one_or_none()
@@ -352,9 +348,7 @@ def reject_version(reference: str, db: Db, principal: CurrentUser) -> Ack:
 
 @router.get("/templates")
 def list_templates(db: Db, principal: CurrentUser, entity: WorkingEntity) -> list[TemplateOut]:
-    principal.require_role(
-        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
-    )
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     out = []
     for template in db.execute(select(Template).order_by(Template.name)).scalars():
         if entity not in (template.entity_applicability or []):
@@ -383,9 +377,7 @@ def _template_version_out(version) -> TemplateVersionOut:
 
 
 def get_template(code: str, db: Db, principal: CurrentUser) -> TemplateOut:
-    principal.require_role(
-        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
-    )
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     template = db.execute(select(Template).where(Template.code == code)).scalar_one_or_none()
     if template is None:
         raise NotFound(TEMPLATE_NOT_FOUND)
@@ -552,9 +544,7 @@ def preview_template(
     the template describes. Clause blocks are resolved to the text of the
     clause version the template pins, so what is read is what would issue.
     """
-    principal.require_role(
-        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
-    )
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     template = db.execute(select(Template).where(Template.code == code)).scalar_one_or_none()
     if template is None:
         raise NotFound(TEMPLATE_NOT_FOUND)

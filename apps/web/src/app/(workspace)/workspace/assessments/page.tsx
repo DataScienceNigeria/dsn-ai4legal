@@ -1,15 +1,20 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import * as React from "react";
 
 import { AssessmentActions } from "@/components/app/assessment-actions";
 import { useSession } from "@/components/app/session";
 import {
+  Button,
   Card,
   CardBody,
   CardHeader,
   Empty,
+  Field,
+  Input,
+  Modal,
   Mono,
   Notice,
   PageTitle,
@@ -18,16 +23,37 @@ import {
   Row,
   Spinner,
 } from "@/components/ui";
-import { useApi } from "@/lib/hooks";
+import { api } from "@/lib/api";
+import { useAction, useApi } from "@/lib/hooks";
 import type { Assessment } from "@/lib/types";
 import { cn, formatDate, titleCase } from "@/lib/utils";
 
 const STAGE_ORDER = ["product", "engineering", "legal", "business_owner"];
 
+/*
+  Legal raises assessments too.
+
+  There is no data protection officer role any more, which means legal is the
+  officer. An officer who can only score somebody else's assessment and never
+  open one for their own work is half a job, and legal builds things that touch
+  personal data like every other department does. The form is the same one the
+  department leads fill in, so it is the same screen.
+*/
 export default function Assessments() {
   const { entity } = useSession();
+  const router = useRouter();
   const { data, loading, error, reload } = useApi<Assessment[]>("/assessments", [entity]);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [starting, setStarting] = React.useState(false);
+  const [project, setProject] = React.useState("");
+
+  const start = useAction(async () => {
+    const created = await api<Assessment>("/assessments/dpia", {
+      method: "POST",
+      body: { project_name: project.trim() },
+    });
+    router.push(`/portal/assessments/${created.id}`);
+  });
 
   const current = data?.find((item) => item.id === selectedId) ?? data?.[0] ?? null;
 
@@ -43,7 +69,42 @@ export default function Assessments() {
           "Assessment is a workflow with stages, owners, evidence and an accountable owner, " +
           "not a form completed at the end."
         }
+        actions={
+          <Button variant="primary" onClick={() => setStarting(true)}>
+            Start a DPIA
+          </Button>
+        }
       />
+
+      <Modal
+        open={starting}
+        title="Start a data protection assessment"
+        subtitle="Name the thing being built. Everything else is saved as you write it."
+        onClose={() => setStarting(false)}
+        footer={
+          <>
+            <Button onClick={() => setStarting(false)}>Cancel</Button>
+            <Button
+              variant="primary"
+              disabled={project.trim().length < 3 || start.busy}
+              onClick={() => void start.run()}
+            >
+              Start it
+            </Button>
+          </>
+        }
+      >
+        {start.error ? (
+          <Refusal title="That could not be started" reason={start.error.message} />
+        ) : null}
+        <Field label="Project or product name" required>
+          <Input
+            value={project}
+            onChange={(event) => setProject(event.target.value)}
+            placeholder="EqualyzAI Voice Agents"
+          />
+        </Field>
+      </Modal>
 
       {loading ? (
         <Spinner />

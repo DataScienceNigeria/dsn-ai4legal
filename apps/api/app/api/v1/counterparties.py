@@ -363,9 +363,7 @@ def merge(
 
 @router.get("/vendors")
 def list_vendors(db: Db, principal: CurrentUser) -> list[VendorOut]:
-    principal.require_role(
-        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
-    )
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     names = {
         row.id: row.legal_name for row in db.execute(select(Counterparty)).scalars()
     }
@@ -380,9 +378,7 @@ def list_vendors(db: Db, principal: CurrentUser) -> list[VendorOut]:
 @router.get("/vendors/{vendor_id}/renewal-risk")
 def renewal_risk(vendor_id: uuid.UUID, db: Db, principal: CurrentUser) -> dict:
     """A renewal task surfaces outstanding findings and expired assessments."""
-    principal.require_role(
-        Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.PRIVACY, Role.ADMIN
-    )
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     vendor = db.get(Vendor, vendor_id)
     if vendor is None:
         raise NotFound("That vendor was not found.")
