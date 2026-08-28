@@ -532,7 +532,14 @@ def exposure(
     legal's own reach the calendar feed and the reminders, which is where a
     date that has not passed belongs.
     """
-    principal.require_role(Role.HEAD_OF_LEGAL, Role.COUNSEL, Role.ADMIN, Role.AUDITOR)
+    # Management reads this one. It answers what the organisation committed to
+    # that was not its own position, which is a board question, and it is the
+    # report that makes their access to Ask consistent with the rest of what
+    # they can open. How the department works and how the AI performs stay
+    # with legal and the auditor.
+    principal.require_role(
+        Role.HEAD_OF_LEGAL, Role.COUNSEL, Role.MANAGEMENT, Role.ADMIN, Role.AUDITOR
+    )
     entities = _reporting_entities(db, principal, entity, cross_entity, "exposure")
 
     matter_ids = [

@@ -40,12 +40,12 @@ const LEGAL = ["counsel", "head_of_legal", "admin"];
 
 const NAV: { group: string; items: NavItem[] }[] = [
   {
-    group: "The work",
+    group: "WORSKPACE",
     items: [
       {
         href: "/workspace",
         icon: "delivery",
-        label: "Dashboard",
+        label: "Overview",
         module: "M14",
         roles: [...LEGAL, "management"],
       },
@@ -82,12 +82,24 @@ const NAV: { group: string; items: NavItem[] }[] = [
         an agreement requires, read when someone disagrees about it, so they
         are reached from the agreement and nowhere else.
       */
+      /*
+        Signed paper, and everything that happens to it afterwards.
+
+        This was two items, Archive and After signature, and the split did not
+        survive contact with the register. "Archive" says dead storage, and the
+        table holds agreements being performed, varied and closed; "After
+        signature" held the queue of what has gone wrong across them. They are
+        one subject and they are now one destination with tabs.
+
+        The counter carries the queue: open issues and undetermined changes.
+      */
       {
-        href: "/workspace/archive",
+        href: "/workspace/agreements",
         icon: "archive",
-        label: "Archive",
-        module: "M08",
-        roles: [...LEGAL, "auditor"],
+        label: "Agreements",
+        module: "M07",
+        roles: [...LEGAL, "auditor", "management"],
+        counter: "lifecycle",
       },
     ],
   },
@@ -189,6 +201,9 @@ const ROLE_LABELS: Record<string, string> = {
   management: "Management",
   counsel: "Legal",
   head_of_legal: "Legal lead",
+  finance: "Finance",
+  procurement: "Procurement",
+  consultant: "Legal consultant",
   admin: "Administrator",
   auditor: "Auditor",
   counterparty: "Counterparty",
@@ -239,6 +254,9 @@ function primaryRole(roles: string[]): string {
     "head_of_legal",
     "admin",
     "counsel",
+    "finance",
+    "procurement",
+    "consultant",
     "auditor",
     "management",
     "requester",

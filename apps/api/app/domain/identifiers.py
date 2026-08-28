@@ -26,6 +26,8 @@ PATTERNS: dict[str, re.Pattern[str]] = {
     "clause": re.compile(r"^CLS-[A-Z0-9]+-v\d+\.\d+$"),
     "obligation": re.compile(r"^OBL-\d{4}-\d{2}$"),
     "assessment": re.compile(r"^ASM-\d{4}-\d{4}$"),
+    "contract_issue": re.compile(r"^ISS-\d{4}-\d{4}$"),
+    "change_request": re.compile(r"^CHG-\d{4}-\d{4}$"),
 }
 
 def counterparty_id(sequence: int) -> str:
@@ -50,6 +52,12 @@ def obligation_id(contract_sequence: int, sequence: int) -> str:
 
 def assessment_id(year: int, sequence: int) -> str:
     return f"ASM-{year}-{sequence:04d}"
+
+def contract_issue_id(year: int, sequence: int) -> str:
+    return f"ISS-{year}-{sequence:04d}"
+
+def change_request_id(year: int, sequence: int) -> str:
+    return f"CHG-{year}-{sequence:04d}"
 
 def validate(kind: str, value: str) -> bool:
     pattern = PATTERNS.get(kind)

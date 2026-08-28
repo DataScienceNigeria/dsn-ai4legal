@@ -186,7 +186,7 @@ function ExtractedValueRow({
 
 export default function Inbox() {
   const { entity } = useSession();
-  const [view, setView] = React.useState("action");
+  const [view, setView] = React.useState("all");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
   const messages = useApi<Communication[]>(`/ai/inbox?view=${view}`, [entity, view]);
@@ -231,6 +231,7 @@ export default function Inbox() {
 
       <Tabs
         tabs={[
+          { id: "all", label: "All" },
           { id: "action", label: "Action queue" },
           { id: "watch", label: "Implied work" },
           { id: "handled", label: "Handled" },

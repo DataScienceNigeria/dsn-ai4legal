@@ -13,6 +13,11 @@ const DEMO_ACCOUNTS = [
   { email: "amaka.eze@dsn.example", role: "Legal" },
   { email: "ngozi.adeyemi@dsn.example", role: "Department lead, the portal" },
   { email: "fatima.bello@dsn.example", role: "Legal" },
+  { email: "bola.adeniyi@dsn.example", role: "Finance, confirms the money" },
+  { email: "kelechi.umeh@dsn.example", role: "Procurement, confirms the process" },
+  { email: "olumide.fashola@chambers.example", role: "External counsel, sees only what it is sent" },
+  { email: "chioma.nwankwo@dsn.example", role: "Management, reads outcomes" },
+  { email: "yusuf.danjuma@dsn.example", role: "Auditor, reads evidence" },
   { email: "emeka.obi@dsn.example", role: "AI and platform administrator" },
 ];
 

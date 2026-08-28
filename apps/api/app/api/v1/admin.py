@@ -30,14 +30,14 @@ from app.domain.enums import CapabilityState, DataClass, Role
 from app.schemas.common import AuditEventOut, ConfigValue
 from app.schemas.governance import (
     AIInteractionOut,
+    CapabilityGateUpdate,
     CapabilityOut,
     CapabilityToggle,
     DeletionRequestCreate,
     EvaluationRunOut,
     ExportRequestCreate,
-    GoldenCaseCreate,
     GoldenCaseOut,
-    GoldenSetCreate,
+    GoldenSetImport,
     GoldenSetOut,
     LegalHoldRequest,
     MfaReset,
@@ -100,8 +100,8 @@ def set_capability_state(
         if state is CapabilityState.ENABLED and capability.blocks_calls:
             raise Conflict(
                 f"{capability.name} scores {capability.last_score} against a gate of "
-                f"{capability.gate_threshold}. A capability below an enforced gate does "
-                "not run. Measure it again, and it comes back on when it passes."
+                f"{capability.gate_threshold}, and this gate is set to stop calls. "
+                "Measure it again, or change the gate."
             )
         capability.state = state.value
         capability.disabled_reason = payload.reason if state is CapabilityState.DISABLED else None
@@ -132,16 +132,44 @@ def _capability(db, code: str) -> Capability:
     return capability
 
 
+def _shape(code: str) -> tuple[dict, str, bool]:
+    """The expected answer this capability's scorer reads, published so a set
+    can be written without reading the scorer."""
+    shape = evaluation.shape_of(code)
+    if shape is None:
+        return (
+            {},
+            "This capability has no scorer, so no golden set can be measured against it.",
+            False,
+        )
+    return shape.example, shape.note, True
+
+
 @router.get("/capabilities/{code}/golden-set")
 def get_golden_set(code: str, db: Db, principal: CurrentUser) -> GoldenSetOut:
-    """The set the gate is measured against, and every case in it."""
+    """The set the gate is measured against, and every case in it.
+
+    A capability with no set is not an error. It is a capability nobody has
+    written cases for yet, and the interface needs the expected shape to let
+    somebody start.
+    """
     principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL, Role.AUDITOR, Role.COUNSEL)
     _capability(db, code)
+    example, note, measurable = _shape(code)
 
     golden = evaluation.active_set(db, code)
     if golden is None:
-        raise NotFound(
-            f"No golden set exists for {code}, so its gate has nothing to measure."
+        return GoldenSetOut(
+            id=None,
+            name=code,
+            version=0,
+            capability_code=code,
+            description=None,
+            active=False,
+            cases=[],
+            expected_shape=example,
+            shape_note=note,
+            measurable=measurable,
         )
     return GoldenSetOut(
         id=golden.id,
@@ -151,49 +179,123 @@ def get_golden_set(code: str, db: Db, principal: CurrentUser) -> GoldenSetOut:
         description=golden.description,
         active=golden.active,
         cases=[GoldenCaseOut.model_validate(case) for case in golden.cases],
+        expected_shape=example,
+        shape_note=note,
+        measurable=measurable,
     )
 
 
-@router.post("/capabilities/{code}/golden-set", status_code=201)
-def create_golden_set(
-    code: str, payload: GoldenSetCreate, db: Db, principal: CurrentUser
+@router.post("/capabilities/{code}/golden-set/import", status_code=201)
+def import_golden_set(
+    code: str, payload: GoldenSetImport, db: Db, principal: CurrentUser
 ) -> GoldenSetOut:
-    """A new version rather than an edit.
+    """Take a file of cases and land them as the next version of the set.
 
-    Editing a set in place would make an old score unreadable, because nobody
-    could say which cases produced it.
+    A set arrives whole rather than a case at a time, because the cases are
+    written together by the people who would otherwise argue about whether an
+    answer was right, and a set assembled one box at a time is a set nobody
+    reviewed. Each case is checked against the shape its scorer reads before
+    anything is stored, so a mistyped key is refused rather than scored zero.
     """
     principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL)
     _capability(db, code)
 
+    if evaluation.shape_of(code) is None:
+        raise Conflict(
+            f"{code} has no scorer, so a golden set could never be measured against it."
+        )
+
     previous = list(
-        db.execute(
-            select(GoldenSet).where(GoldenSet.capability_code == code)
-        ).scalars()
+        db.execute(select(GoldenSet).where(GoldenSet.capability_code == code)).scalars()
     )
+    current = evaluation.active_set(db, code)
+    carried = (
+        [case for case in current.cases if case.active]
+        if current is not None and payload.keep_existing
+        else []
+    )
+
+    incoming = [
+        (case.reference.strip(), case) for case in payload.cases if case.reference.strip()
+    ]
+    problems: list[str] = []
+    for reference, case in incoming:
+        problems.extend(evaluation.check_case(code, reference, case.prompt, case.expected))
+
+    references = [reference for reference, _ in incoming]
+    duplicates = sorted({one for one in references if references.count(one) > 1})
+    if duplicates:
+        problems.append(f"These references appear more than once: {', '.join(duplicates)}.")
+    if problems:
+        raise ValidationFailed(
+            "No case was imported. Every case is checked before any is stored.",
+            {"cases": " ".join(problems[:8])},
+        )
+
+    replaced = {reference for reference, _ in incoming}
     for existing in previous:
         existing.active = False
 
     golden = GoldenSet(
-        name=payload.name,
+        name=payload.name or (current.name if current else code),
         version=max((row.version for row in previous), default=0) + 1,
         capability_code=code,
-        description=payload.description,
+        description=payload.description or (current.description if current else None),
         owner_id=uuid.UUID(principal.user_id),
         active=True,
     )
     db.add(golden)
     db.flush()
 
+    # A carried case whose reference the import repeats is superseded, not
+    # duplicated, so importing a corrected case fixes it rather than leaving
+    # both answers in the set.
+    for case in carried:
+        if case.reference in replaced:
+            continue
+        db.add(
+            GoldenCase(
+                set_id=golden.id,
+                reference=case.reference,
+                prompt=case.prompt,
+                context=case.context,
+                expected=case.expected,
+                notes=case.notes,
+                source=case.source,
+                active=True,
+            )
+        )
+    for reference, case in incoming:
+        db.add(
+            GoldenCase(
+                set_id=golden.id,
+                reference=reference,
+                prompt=case.prompt,
+                context=case.context,
+                expected=case.expected,
+                notes=case.notes,
+                source=case.source or "Imported",
+                active=True,
+            )
+        )
+    db.flush()
+
     audit.record(
         db,
-        action="golden_set_created",
+        action="golden_set_imported",
         object_type="golden_set",
         object_id=f"{golden.name}@v{golden.version}",
         actor_id=principal.user_id,
         actor_label=principal.name,
-        after_state={"capability": code},
+        before_state={"version": current.version if current else 0},
+        after_state={
+            "capability": code,
+            "version": golden.version,
+            "imported": len(incoming),
+            "carried": len(golden.cases) - len(incoming),
+        },
     )
+    example, note, measurable = _shape(code)
     return GoldenSetOut(
         id=golden.id,
         name=golden.name,
@@ -201,58 +303,80 @@ def create_golden_set(
         capability_code=code,
         description=golden.description,
         active=True,
-        cases=[],
+        cases=[GoldenCaseOut.model_validate(case) for case in golden.cases],
+        expected_shape=example,
+        shape_note=note,
+        measurable=measurable,
     )
 
 
-@router.post("/capabilities/{code}/golden-set/cases", status_code=201)
-def add_golden_case(
-    code: str, payload: GoldenCaseCreate, db: Db, principal: CurrentUser
-) -> GoldenCaseOut:
-    """One case: what goes in, and the answer a competent person would give."""
-    principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL, Role.COUNSEL)
-    _capability(db, code)
+@router.post("/capabilities/{code}/gate")
+def set_capability_gate(
+    code: str, payload: CapabilityGateUpdate, db: Db, principal: CurrentUser
+) -> CapabilityOut:
+    """Move the line, or change what crossing it does.
 
-    golden = evaluation.active_set(db, code)
-    if golden is None:
-        raise Conflict(
-            f"No golden set exists for {code}. Create the set before adding cases."
+    A threshold written into a seed file is a number. A threshold somebody set,
+    against a named metric, with a reason recorded, is a control. Both the old
+    and the new gate are written to the audit so a score can always be read
+    against the gate that was in force when it was taken.
+    """
+    principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL)
+    principal.require_step_up("change a capability gate")
+    capability = _capability(db, code)
+
+    if payload.gate_threshold is not None and evaluation.shape_of(code) is None:
+        raise ValidationFailed(
+            "A threshold cannot be set on this capability.",
+            {
+                "gate_threshold": (
+                    f"{capability.name} has no scorer, so nothing could ever measure it "
+                    "against a threshold. Leave the threshold empty."
+                )
+            },
         )
 
-    case = GoldenCase(
-        set_id=golden.id,
-        reference=payload.reference,
-        prompt=payload.prompt,
-        context=payload.context,
-        expected=payload.expected,
-        notes=payload.notes,
-        source=payload.source,
-        active=True,
-    )
-    db.add(case)
-    db.flush()
+    before = {
+        "metric_name": capability.metric_name,
+        "gate_expression": capability.gate_expression,
+        "gate_threshold": capability.gate_threshold,
+        "gate_enforced": capability.gate_enforced,
+    }
+    capability.metric_name = payload.metric_name.strip()
+    capability.gate_expression = payload.gate_expression.strip()
+    capability.gate_threshold = payload.gate_threshold
+    capability.gate_enforced = payload.gate_enforced
 
     audit.record(
         db,
-        action="golden_case_added",
-        object_type="golden_case",
-        object_id=case.reference,
+        action="capability_gate_changed",
+        object_type="capability",
+        object_id=capability.code,
         actor_id=principal.user_id,
         actor_label=principal.name,
-        after_state={"set": golden.name, "capability": code},
+        before_state=before,
+        after_state={
+            "metric_name": capability.metric_name,
+            "gate_expression": capability.gate_expression,
+            "gate_threshold": capability.gate_threshold,
+            "gate_enforced": capability.gate_enforced,
+            "reason": payload.reason,
+            "last_score": capability.last_score,
+        },
     )
-    return GoldenCaseOut.model_validate(case)
+    return _decorate(capability)
 
 
 @router.post("/capabilities/{code}/run-evaluation")
 def run_evaluation(
     code: str, db: Db, principal: CurrentUser, entity: WorkingEntity
 ) -> CapabilityOut:
-    """Run the capability over its golden set and act on the result.
+    """Run the capability over its golden set and record what it scored.
 
-    This is the measurement the gate depends on. A capability that falls below
-    its threshold is disabled here, and a disabled one is still measurable, so
-    it can come back when it passes again.
+    The run changes nothing but the score. A capability that fails shows as
+    failing in the register and waits for somebody to decide, and a disabled
+    one is still measurable, so it can be shown to pass before it is turned
+    back on.
     """
     principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL)
     capability = _capability(db, code)

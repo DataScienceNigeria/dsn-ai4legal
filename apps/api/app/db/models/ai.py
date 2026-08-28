@@ -24,12 +24,13 @@ GATE_FAILING = "failing"
 class Capability(UUIDPrimaryKey, Timestamped, Base):
     """One row of the capability register.
 
-    A capability that falls below its threshold on the golden set is disabled
-    until it passes again (PRD section 4.2). Disablement is instant, per
-    capability and per agreement type, and needs no deployment.
+    A capability below an enforced threshold does not run until it passes
+    again (PRD section 4.2). It is not disabled by that: its state is left
+    alone and only a person changes it. Disablement is a human act, instant,
+    per capability and per agreement type, and needs no deployment.
 
-    Enforcement is per capability, because blocking is not always the safer
-    answer. See gate_enforced.
+    Enforcement is per capability and set from the register, because blocking
+    is not always the safer answer. See gate_enforced.
     """
 
     __tablename__ = "capability"
@@ -73,6 +74,10 @@ class Capability(UUIDPrimaryKey, Timestamped, Base):
     before it becomes a task, so switching it off hands Legal an empty list
     instead of a reviewable one, which is the silent failure the gate exists
     to prevent. Those capabilities are measured and reported on, not blocked.
+
+    Set per capability from the register, with a reason, and audited. It is
+    the only thing a failing score can do on its own, and it does nothing
+    unless somebody turned it on.
     """
 
     evaluations: Mapped[list["EvaluationRun"]] = relationship(

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import * as React from "react";
 
 import { useSession } from "@/components/app/session";
+import { StepUpGate } from "@/components/app/step-up";
 import { SuperDocEditor } from "@/components/app/superdoc-editor";
 import {
   Button,
@@ -170,6 +171,7 @@ export default function ReadDraft() {
           />
         </Field>
       </Modal>
+      <StepUpGate action="Confirming the draft" state={decide} />
     </div>
   );
 }

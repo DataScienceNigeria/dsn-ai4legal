@@ -140,6 +140,20 @@ class Assessment(UUIDPrimaryKey, Timestamped, EntityScoped, Base):
     )
     stage_records: Mapped[list[dict]] = mapped_column(JSONB, default=list)
     captured: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    imported_fields: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    """Which answers came out of an uploaded Word template rather than from a
+    person typing them.
+
+    Provenance, kept because the two are not the same evidence. An answer a lead
+    wrote in the form is one they wrote today, knowing it would be assessed; an
+    answer lifted from a document written a year ago is a record of what was
+    true then. The officer reading it should be able to tell which is which, and
+    the lead should be able to see what the import filled in so they can correct
+    it."""
+
+    imported_from: Mapped[str | None] = mapped_column(String(255))
+    """The file it came from, by name."""
     risks: Mapped[list[dict]] = mapped_column(JSONB, default=list)
     controls: Mapped[list[dict]] = mapped_column(JSONB, default=list)
     testing_evidence: Mapped[list[dict]] = mapped_column(JSONB, default=list)

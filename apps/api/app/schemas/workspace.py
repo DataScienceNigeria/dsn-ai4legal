@@ -18,6 +18,7 @@ class NavCounts(BaseModel):
     inbox: int = 0
     assessments: int = 0
     compliance: int = 0
+    lifecycle: int = 0
 
 
 class SearchHit(BaseModel):

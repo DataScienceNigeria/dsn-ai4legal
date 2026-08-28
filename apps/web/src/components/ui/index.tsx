@@ -126,7 +126,7 @@ export function Field({
   required,
   children,
 }: Readonly<{
-  label: string;
+  label: React.ReactNode;
   hint?: string | null;
   error?: string | null;
   required?: boolean;
@@ -336,6 +336,7 @@ export function DataState({
   errorTitle = "That view is not available to you",
   isEmpty,
   emptyTitle = "Nothing in this view",
+  emptyDetail,
   children,
 }: Readonly<{
   loading: boolean;
@@ -343,11 +344,12 @@ export function DataState({
   errorTitle?: string;
   isEmpty: boolean;
   emptyTitle?: string;
+  emptyDetail?: string;
   children: React.ReactNode;
 }>) {
   if (loading) return <Spinner />;
   if (errorMessage) return <Empty title={errorTitle} detail={errorMessage} />;
-  if (isEmpty) return <Empty title={emptyTitle} />;
+  if (isEmpty) return <Empty title={emptyTitle} detail={emptyDetail} />;
   return <>{children}</>;
 }
 

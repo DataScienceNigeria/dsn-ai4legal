@@ -4,6 +4,9 @@ from app.db.models.ai import AIInteraction, Baseline, Capability, EvaluationRun
 from app.db.models.contract import (
     Approval,
     Contract,
+    ContractChangeRequest,
+    ContractClosureItem,
+    ContractIssue,
     Obligation,
     SignatureRequest,
 )
@@ -22,6 +25,7 @@ from app.db.models.governance import (
 from app.db.models.intake import Attachment, Request, RequestType
 from app.db.models.library import Clause, ClauseVersion, Playbook, Template, TemplateVersion
 from app.db.models.matter import (
+    ConsultantReview,
     DecisionRecord,
     Matter,
     MatterAccess,
@@ -52,8 +56,12 @@ __all__ = [
     "Communication",
     "ComplianceItem",
     "ConfigSetting",
+    "ConsultantReview",
     "Connector",
     "Contract",
+    "ContractChangeRequest",
+    "ContractClosureItem",
+    "ContractIssue",
     "Conversation",
     "ConversationTurn",
     "Counterparty",

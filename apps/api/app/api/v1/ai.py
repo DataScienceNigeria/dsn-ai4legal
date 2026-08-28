@@ -641,9 +641,14 @@ def inbox(
     db: Db,
     principal: CurrentUser,
     entity: WorkingEntity,
-    view: str = Query(default="action", pattern="^(action|watch|handled)$"),
+    view: str = Query(default="all", pattern="^(all|action|watch|handled)$"),
 ) -> list[CommunicationOut]:
-    """The action queue and the implied-work watch view are separate."""
+    """The action queue and the implied-work watch view are separate.
+
+    ``all`` is the whole mailbox and the default. Three queues with no
+    unfiltered view among them cannot answer "did that message arrive", which is
+    the first question anybody asks of an inbox.
+    """
     principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
 
     stmt = select(Communication).where(Communication.entity == entity)
@@ -651,7 +656,7 @@ def inbox(
         stmt = stmt.where(Communication.handled.is_(False), Communication.implied_work.is_(False))
     elif view == "watch":
         stmt = stmt.where(Communication.handled.is_(False), Communication.implied_work.is_(True))
-    else:
+    elif view == "handled":
         stmt = stmt.where(Communication.handled.is_(True))
 
     out = []

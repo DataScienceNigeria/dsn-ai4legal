@@ -9,6 +9,7 @@ import { Rename } from "@/components/app/rename";
 import { PlaceFields } from "@/components/app/place-fields";
 import { RequestPanel } from "@/components/app/request-panel";
 import { useRoles } from "@/components/app/session";
+import { StepUpGate } from "@/components/app/step-up";
 import { DecisionPill, SlaPill, StatusPill, TierPill } from "@/components/app/status";
 import {
   Button,
@@ -205,7 +206,7 @@ function lifecycle(matter: Matter, at: Progress, act: (id: string) => void): Sta
       action:
         executed && at.contract ? (
           <Link
-            href={`/workspace/archive/${at.contract.id}/obligations`}
+            href={`/workspace/agreements/${at.contract.id}/obligations`}
             className="no-underline"
           >
             <Button variant="primary">What the agreement requires</Button>
@@ -411,6 +412,7 @@ function ApprovalDecision({
           <Refusal title="That decision was refused" reason={decide.error.message} reasons={decide.error.reasons} />
         ) : null}
       </Modal>
+      <StepUpGate action={`Approving ${approval.step_name}`} state={decide} />
     </>
   );
 }

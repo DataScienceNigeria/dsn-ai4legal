@@ -30,8 +30,14 @@ const CONCLUDED = new Set([
   "closed_without_matter",
 ]);
 
+/*
+  All comes first and is unfiltered. The id was already "all" and the label said
+  "Open", which read as a filter beside three others when it was in fact the
+  whole list. Concluded matters are not here at all; they are in the archive and
+  open from the matter name.
+*/
 const FILTERS = [
-  { id: "all", label: "Open" },
+  { id: "all", label: "All" },
   { id: "mine", label: "Mine" },
   { id: "breach", label: "Past target" },
   { id: "waiting", label: "Waiting on someone" },

@@ -127,10 +127,18 @@ export type RequestType = {
   sort_order: number;
 };
 
+export type BriefSection = {
+  key: string;
+  letter: string;
+  title: string;
+  intent: string;
+};
+
 export type FieldDefinition = {
   name: string;
   label: string;
   type: string;
+  section?: string | null;
   help_text?: string | null;
   unit?: string | null;
   options?: string[];
@@ -322,6 +330,17 @@ export type Contract = {
   executed_outside_platform: boolean;
   counterparty: CounterpartyBrief | null;
   matter_number: string | null;
+  status: string;
+  user_department: string | null;
+  contract_owner_name: string | null;
+  payment_terms: string | null;
+  key_deliverables: string | null;
+  termination_deadline: string | null;
+  remarks: string | null;
+  amends_contract_id: string | null;
+  amends_reference: string | null;
+  open_issue_count: number;
+  open_change_count: number;
 };
 
 export type Fallback = {
@@ -512,6 +531,17 @@ export type AiInteraction = {
   retrieved_sources: { reference: string; kind: string }[];
 };
 
+export type DpiaImport = {
+  filename: string;
+  found: number;
+  total: number;
+  answers: Record<string, unknown>;
+  imported_fields: string[];
+  missing: string[];
+  unmatched: string[];
+  note: string;
+};
+
 export type Assessment = {
   id: string;
   reference: string;
@@ -528,6 +558,8 @@ export type Assessment = {
     completed_by?: string;
   }[];
   captured: Record<string, unknown>;
+  imported_fields: string[];
+  imported_from: string | null;
   risks: { risk: string; likelihood: string; impact: string; control: string }[];
   controls: { control: string; status: string }[];
   testing_evidence: { test: string; result: string; date: string }[];
@@ -763,6 +795,7 @@ export type NavCounts = {
   inbox: number;
   assessments: number;
   compliance: number;
+  lifecycle: number;
 };
 
 export type SearchHit = {
@@ -851,4 +884,119 @@ export type DpoSectionReview = {
   due_date: string | null;
   assessed_by: string;
   assessed_at: string;
+};
+
+export type ContractIssue = {
+  id: string;
+  entity: string;
+  reference: string;
+  contract_id: string;
+  issue_type: string;
+  severity: string;
+  title: string;
+  description: string;
+  occurred_on: string | null;
+  evidence_document_id: string | null;
+  evidence_note: string | null;
+  raised_by_name: string | null;
+  assignee_id: string | null;
+  assignee_name: string | null;
+  status: string;
+  resolution: string | null;
+  resolved_at: string | null;
+  change_request_id: string | null;
+  settled: boolean;
+  created_at: string;
+  contract_reference: string | null;
+  counterparty_name: string | null;
+};
+
+export type ChangeRequest = {
+  id: string;
+  entity: string;
+  reference: string;
+  contract_id: string;
+  change_type: string;
+  rationale: string;
+  proposed_changes: string;
+  financial_effect: string | null;
+  value_delta: number | null;
+  value_currency: string | null;
+  financial_note: string | null;
+  timeline_effect: string | null;
+  proposed_end_date: string | null;
+  timeline_note: string | null;
+  requested_by_name: string | null;
+  instrument: string | null;
+  decision: string;
+  decision_reason: string | null;
+  decided_at: string | null;
+  resulting_matter_id: string | null;
+  created_at: string;
+  contract_reference: string | null;
+  counterparty_name: string | null;
+  resulting_matter_number: string | null;
+};
+
+export type ClosureItem = {
+  id: string;
+  item_key: string;
+  group_key: string;
+  status: string;
+  evidence_document_id: string | null;
+  evidence_reference: string | null;
+  note: string | null;
+  confirmed_by_name: string | null;
+  confirmed_at: string | null;
+  label: string;
+  intent: string;
+  evidence_required: boolean;
+  may_not_apply: boolean;
+};
+
+export type Closure = {
+  contract_id: string;
+  contract_reference: string;
+  status: string;
+  opened_at: string | null;
+  closed_at: string | null;
+  closure_note: string | null;
+  settled: number;
+  total: number;
+  blocking: string[];
+  groups: { key: string; title: string; intent: string; items: ClosureItem[] }[];
+};
+
+export type Term = { key: string; label: string };
+
+export type Vocabulary = {
+  agreement_types: Term[];
+  issue_types: Term[];
+  issue_statuses: Term[];
+  change_types: Term[];
+  instruments: Term[];
+  change_decisions: Term[];
+  contract_statuses: Term[];
+  closure_statuses: Term[];
+  severities: string[];
+};
+
+export type ConsultantReview = {
+  id: string;
+  entity: string;
+  matter_id: string;
+  document_id: string | null;
+  consultant_id: string;
+  consultant_name: string | null;
+  brief: string;
+  due_date: string | null;
+  status: string;
+  comments: string | null;
+  returned_at: string | null;
+  assessment: string | null;
+  assessed_at: string | null;
+  created_at: string;
+  matter_number: string | null;
+  matter_title: string | null;
+  document_name: string | null;
 };

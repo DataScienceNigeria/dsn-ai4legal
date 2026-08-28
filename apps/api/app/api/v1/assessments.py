@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, File, UploadFile
 from sqlalchemy import select
 
 from app.core import audit
@@ -29,13 +30,15 @@ from app.schemas.governance import (
     DpiaAnswers,
     DpiaDecision,
     DpiaFormOut,
+    DpiaImportOut,
+    DpiaImportStart,
     DpiaQuestionOut,
     DpiaSectionOut,
     DpiaStart,
     DpoAssessment,
     StageComplete,
 )
-from app.services import notifications, sequences
+from app.services import dpia_import, notifications, sequences
 
 ASSESSMENT_NOT_FOUND = "That assessment was not found."
 
@@ -165,6 +168,95 @@ def start_dpia(
         actor_label=principal.name,
         entity=entity,
         after_state={"project": payload.project_name},
+    )
+    return assessment
+
+
+@router.post("/dpia/read-template", response_model=DpiaImportOut)
+async def read_template(
+    principal: CurrentUser, file: Annotated[UploadFile, File()]
+) -> DpiaImportOut:
+    """Read a DPIA that was already written on the Word template.
+
+    Read first, create second, and nothing is written by this call. A lead
+    uploading a document sees what was found and what was not before an
+    assessment exists, because an import that silently produced a half-filled
+    record is one they would submit without reading.
+
+    The importer never guesses. A question whose answer cannot be identified
+    with confidence is left for them, and the six questions that offer a fixed
+    set of options are never imported at all, because the template writes its
+    options as prose and reading the menu as the order is the confident wrong
+    answer this exists to avoid.
+    """
+    data = await file.read()
+    try:
+        result = dpia_import.read(data)
+    except dpia_import.NotATemplate as exception:
+        raise ValidationFailed(str(exception), {"file": str(exception)}) from exception
+
+    total = sum(len(section.questions) for section in dpia.SECTIONS)
+    return DpiaImportOut(
+        filename=file.filename or "the document",
+        found=len(result.imported_keys),
+        total=total,
+        answers=result.answers,
+        imported_fields=result.imported_keys,
+        missing=result.missing,
+        unmatched=result.unmatched,
+        note=(
+            f"{len(result.imported_keys)} of {total} answers were read from the "
+            "document. The rest are for you to fill in, including anything that "
+            "asks you to choose from a list: the template writes its options out "
+            "in full, so a choice cannot be read from it without guessing."
+        ),
+    )
+
+
+@router.post("/dpia/import", response_model=AssessmentOut, status_code=201)
+def import_dpia(
+    payload: DpiaImportStart, db: Db, principal: CurrentUser, entity: WorkingEntity
+) -> Assessment:
+    """Open a DPIA from what the import found.
+
+    Only keys the form actually asks about are kept, so a client cannot write
+    arbitrary fields into the record by way of the import.
+    """
+    known = {
+        question.key for section in dpia.SECTIONS for question in section.questions
+    }
+    answers = {key: value for key, value in payload.answers.items() if key in known}
+    answers["project_name"] = payload.project_name
+    imported = [key for key in payload.imported_fields if key in known]
+
+    assessment = Assessment(
+        reference=sequences.new_assessment_reference(db),
+        assessment_type=AssessmentType.DPIA.value,
+        title=payload.project_name,
+        entity=entity,
+        stage=AssessmentStage.INITIATED.value,
+        raised_by_id=uuid.UUID(principal.user_id),
+        captured=answers,
+        imported_fields=imported,
+        imported_from=payload.imported_from,
+        stage_records=[],
+    )
+    db.add(assessment)
+    db.flush()
+
+    audit.record(
+        db,
+        action="dpia_imported",
+        object_type="assessment",
+        object_id=assessment.reference,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=entity,
+        after_state={
+            "project": payload.project_name,
+            "from": payload.imported_from,
+            "answers_read": len(imported),
+        },
     )
     return assessment
 

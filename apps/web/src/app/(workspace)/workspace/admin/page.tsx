@@ -132,6 +132,8 @@ function Retention() {
         <Refusal title="That hold was not changed" reason={toggle.error.message} />
       ) : null}
 
+      <StepUpGate action="Placing or lifting a legal hold" state={toggle} />
+
       <Card>
         <CardHeader title="Retention schedules" />
         <div className="table-scroll">
@@ -265,6 +267,9 @@ function Boundary() {
       </Notice>
 
       {error ? <Refusal title="That action was refused" reason={error.message} /> : null}
+
+      <StepUpGate action="Approving a bulk export" state={decideExport} />
+      <StepUpGate action="Approving a deletion" state={decideDeletion} />
 
       <Card>
         <CardHeader title="Request a bulk export" />
@@ -872,6 +877,8 @@ function Configuration() {
       {save.error ? (
         <Refusal title="That change was refused" reason={save.error.message} />
       ) : null}
+
+      <StepUpGate action="Changing platform configuration" state={save} />
 
       <Card>
         <CardHeader

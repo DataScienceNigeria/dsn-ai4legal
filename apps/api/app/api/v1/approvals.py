@@ -116,7 +116,7 @@ def open_approvals(
         raise Conflict("This document hash is already in an approval chain.")
 
     request_type = matter.request_type_id
-    agreement_type = "unknown"
+    agreement_type = "other"
     if request_type:
         from app.db.models.intake import RequestType
 
@@ -125,16 +125,26 @@ def open_approvals(
             agreement_type = record.agreement_type
 
     drafter = db.get(User, document.generated_by_id) if document.generated_by_id else None
+
+    # Sections 8 and 9 of the guide. Both derived rather than asked for: a
+    # matter that names an amount moves money, and one that appoints a supplier
+    # for money runs through Procurement. Asking Legal to tick a box for each
+    # would put the routing in the hands of whoever is in a hurry.
+    value = float(matter.value_amount) if matter.value_amount else None
+    has_value = bool(value and value > 0)
+
     context = service.ChainContext(
         entity=matter.entity,
         agreement_type=agreement_type,
         risk_tier=matter.risk_tier,
-        value_amount=float(matter.value_amount) if matter.value_amount else None,
+        value_amount=value,
         privacy_flag=matter.privacy_flag,
         requester_id=matter.requester_id,
         drafter_id=document.generated_by_id,
         drafter_is_head=bool(drafter and Role.HEAD_OF_LEGAL.value in (drafter.roles or [])),
         counterparty_paper=document.document_type == DocumentType.COUNTERPARTY.value,
+        has_value=has_value,
+        procurement_route=has_value and agreement_type in service.PROCUREMENT_TYPES,
     )
     name, steps, notes = service.derive_chain(context)
     created = service.open_chain(

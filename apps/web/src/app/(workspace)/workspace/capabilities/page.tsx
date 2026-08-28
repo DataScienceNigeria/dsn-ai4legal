@@ -3,6 +3,7 @@
 import * as React from "react";
 
 import { CapabilityStatePill } from "@/components/app/status";
+import { StepUpGate } from "@/components/app/step-up";
 import {
   Button,
   Card,
@@ -55,10 +56,14 @@ type GoldenCase = {
 };
 
 type GoldenSet = {
+  id: string | null;
   name: string;
   version: number;
   description: string | null;
   cases: GoldenCase[];
+  expected_shape: Record<string, unknown>;
+  shape_note: string;
+  measurable: boolean;
 };
 
 type EvaluationRun = {
@@ -74,14 +79,16 @@ type EvaluationRun = {
 };
 
 /*
-  The gate is only a control if something measures it. This runs the capability
-  over its golden set, scores it by the metric the register names, and lets the
-  result act: below the gate, the capability switches itself off everywhere.
+  The gate is only a reading if something measures it. This runs the capability
+  over its golden set and scores it by the metric the register names. The
+  result changes nothing on its own: a failure is shown to the people who own
+  the capability, and they decide.
 */
 function Evaluation({
   capability,
+  canImport,
   onChanged,
-}: Readonly<{ capability: Capability; onChanged: () => void }>) {
+}: Readonly<{ capability: Capability; canImport: boolean; onChanged: () => void }>) {
   const [open, setOpen] = React.useState(false);
   const golden = useApi<GoldenSet>(
     open ? `/capabilities/${capability.code}/golden-set` : null,
@@ -100,6 +107,7 @@ function Evaluation({
   });
 
   const latest = runs.data?.[0];
+  const set = golden.data ?? null;
 
   return (
     <>
@@ -109,13 +117,31 @@ function Evaluation({
       <Modal
         open={open}
         title={`${capability.name}, evaluation`}
-        subtitle={`${capability.metric_name}, ${capability.gate_expression}.`}
+        subtitle={
+          `${capability.metric_name}, ${capability.gate_expression}. ` +
+          `Confirmed by ${titleCase(capability.confirming_role)}, up to ` +
+          `${titleCase(capability.max_data_class)}.`
+        }
         width="lg"
         onClose={() => setOpen(false)}
         footer={
           <>
             <Button onClick={() => setOpen(false)}>Close</Button>
-            <Button variant="primary" disabled={measure.busy} onClick={() => void measure.run()}>
+            {canImport ? (
+              <ImportSet
+                code={capability.code}
+                golden={set}
+                onDone={() => {
+                  golden.reload();
+                  onChanged();
+                }}
+              />
+            ) : null}
+            <Button
+              variant="primary"
+              disabled={measure.busy || (set !== null && !set.measurable)}
+              onClick={() => void measure.run()}
+            >
               {measure.busy ? "Running the set" : "Run the golden set"}
             </Button>
           </>
@@ -142,25 +168,41 @@ function Evaluation({
           </Notice>
         ) : null}
 
+        {set && !set.measurable ? (
+          <Notice tone="warn" title="This capability has no scorer">
+            {set.shape_note} Its gate is a statement about how it is used, not a number anything
+            can take.
+          </Notice>
+        ) : null}
+
+        {set && set.measurable && set.cases.length > 0 && set.cases.length < 10 ? (
+          <Notice tone="warn" title={`This set holds ${set.cases.length} cases`}>
+            A set this small moves in steps too large to read. One case failing out of three is a
+            third of the score, so the number swings past most thresholds on a single clause.
+            Import more before treating it as a control.
+          </Notice>
+        ) : null}
+
         <Card>
           <CardHeader
             title="Golden set"
             subtitle={
-              golden.data
-                ? `${golden.data.name} version ${golden.data.version}, ${golden.data.cases.length} cases`
-                : "The cases the gate is measured against."
+              set && set.version > 0
+                ? `${set.name} version ${set.version}, ${set.cases.length} cases`
+                : "No set has been written for this capability yet."
             }
           />
           <CardBody>
             <DataState
               loading={golden.loading}
               errorMessage={golden.error?.message}
-              errorTitle="No golden set exists for this capability"
-              isEmpty={(golden.data?.cases ?? []).length === 0}
-              emptyTitle="This set holds no cases"
+              errorTitle="The golden set could not be read"
+              isEmpty={(set?.cases ?? []).length === 0}
+              emptyTitle="This capability has no cases"
+              emptyDetail="Import a file of cases to give its gate something to measure."
             >
               <div className="space-y-2">
-                {(golden.data?.cases ?? []).map((row) => (
+                {(set?.cases ?? []).map((row) => (
                   <div key={row.id} className="rounded-md border p-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <Mono>{row.reference}</Mono>
@@ -215,77 +257,299 @@ function Evaluation({
 }
 
 /*
-  A case is added by the people who would otherwise argue about whether the
-  answer was right. Writing the expected answer down is the argument, settled
-  once, in a form a machine can check.
+  A set arrives whole. Cases are written together by the people who would
+  otherwise argue about whether an answer was right, and a set assembled one
+  box at a time is a set nobody reviewed. Each import lands as the next
+  version, so a score taken last quarter still names the cases behind it.
 */
-function AddCase({ code, onDone }: Readonly<{ code: string; onDone: () => void }>) {
+function ImportSet({
+  code,
+  golden,
+  onDone,
+}: Readonly<{ code: string; golden: GoldenSet | null; onDone: () => void }>) {
   const [open, setOpen] = React.useState(false);
-  const [reference, setReference] = React.useState("");
-  const [prompt, setPrompt] = React.useState("");
-  const [expected, setExpected] = React.useState("{}");
+  const [body, setBody] = React.useState("");
+  const [name, setName] = React.useState("");
+  const [keepExisting, setKeepExisting] = React.useState(true);
+  const file = React.useRef<HTMLInputElement>(null);
 
-  const add = useAction(async () => {
-    await api(`/capabilities/${code}/golden-set/cases`, {
+  const template = React.useMemo(
+    () =>
+      JSON.stringify(
+        {
+          cases: [
+            {
+              reference: "GC-001",
+              prompt: "The text, email or document the capability is given.",
+              expected: golden?.expected_shape ?? {},
+              notes: "Why a competent person would answer that way.",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    [golden?.expected_shape],
+  );
+
+  const parsed = React.useMemo(() => {
+    if (!body.trim()) return { cases: null as unknown[] | null, error: null as string | null };
+    try {
+      const value = JSON.parse(body);
+      const cases = Array.isArray(value) ? value : value?.cases;
+      if (!Array.isArray(cases) || cases.length === 0) {
+        return {
+          cases: null,
+          error: "That holds no cases. Give a list of cases, or an object with a cases list.",
+        };
+      }
+      return { cases, error: null };
+    } catch {
+      return { cases: null, error: "That is not valid JSON." };
+    }
+  }, [body]);
+
+  const send = useAction(async () => {
+    await api(`/capabilities/${code}/golden-set/import`, {
       method: "POST",
-      body: { reference, prompt, expected: JSON.parse(expected) },
+      body: {
+        cases: parsed.cases,
+        keep_existing: keepExisting,
+        ...(name.trim() ? { name: name.trim() } : {}),
+      },
     });
     onDone();
     setOpen(false);
-    setReference("");
-    setPrompt("");
+    setBody("");
   });
 
-  let valid = true;
-  try {
-    JSON.parse(expected);
-  } catch {
-    valid = false;
-  }
+  const read = async (chosen: File | null) => {
+    if (!chosen) return;
+    setBody(await chosen.text());
+  };
 
   return (
     <>
-      <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
-        Add a case
+      <Button size="sm" onClick={() => setOpen(true)}>
+        Import cases
       </Button>
       <Modal
         open={open}
-        title="Add a golden case"
-        subtitle="What goes in, and the answer a competent person would give. The scorer for this capability knows how to read the expected shape."
+        title="Import golden cases"
+        subtitle={
+          golden && golden.version > 0
+            ? `This lands as ${golden.name} version ${golden.version + 1}. The version in force now is left as it is, so the scores already taken against it still name their cases.`
+            : "This creates the first version of the set."
+        }
+        width="lg"
         onClose={() => setOpen(false)}
         footer={
           <>
             <Button onClick={() => setOpen(false)}>Cancel</Button>
             <Button
               variant="primary"
-              disabled={!reference.trim() || !prompt.trim() || !valid || add.busy}
-              onClick={() => void add.run()}
+              disabled={!parsed.cases || send.busy}
+              onClick={() => void send.run()}
             >
-              Add it
+              {send.busy
+                ? "Importing"
+                : `Import ${parsed.cases ? parsed.cases.length : 0} cases`}
             </Button>
           </>
         }
       >
-        <Field label="Reference" required>
-          <Input value={reference} onChange={(event) => setReference(event.target.value)} />
+        {send.error ? (
+          <Refusal
+            title="Nothing was imported"
+            reason={send.error.message}
+            reasons={Object.values(send.error.fieldErrors)}
+          />
+        ) : null}
+
+        <Field label="The file" error={parsed.error}>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={file}
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={(event) => void read(event.target.files?.[0] ?? null)}
+            />
+            <Button size="sm" onClick={() => file.current?.click()}>
+              Choose a .json
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              {parsed.cases
+                ? `${parsed.cases.length} cases read`
+                : "Or paste the cases below"}
+            </span>
+          </div>
         </Field>
-        <Field label="Input" required>
+
+        <Field label="Cases" required hint={golden?.shape_note}>
           <Textarea
-            className="min-h-[8rem]"
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
+            className="min-h-[10rem] font-mono text-xs"
+            placeholder={template}
+            value={body}
+            onChange={(event) => setBody(event.target.value)}
           />
         </Field>
-        <Field
-          label="Expected"
-          required
-          error={valid ? null : "That is not valid JSON."}
-          hint="JSON. For a classification set, {&quot;classification&quot;: &quot;action_required&quot;}."
-        >
-          <Textarea value={expected} onChange={(event) => setExpected(event.target.value)} />
+
+        <Field label="What this capability expects">
+          <pre className="overflow-x-auto rounded-md border bg-muted/40 p-3 text-xs leading-relaxed">
+            {template}
+          </pre>
         </Field>
-        {add.error ? <Refusal title="That case was refused" reason={add.error.message} /> : null}
+
+        <Field label="Set name" hint="Leave it as it is to keep the name the set already carries.">
+          <Input
+            value={name}
+            placeholder={golden?.name ?? code}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={keepExisting}
+            onChange={(event) => setKeepExisting(event.target.checked)}
+          />
+          <span>
+            Carry the cases already in the set into the new version. A case whose reference this
+            import repeats is replaced rather than duplicated. Clear this to start the set again
+            from what you are importing.
+          </span>
+        </label>
       </Modal>
+    </>
+  );
+}
+
+/*
+  The gate is a number somebody set against a named metric, not a number
+  written into a seed file. Both the old and the new gate go to the audit, so
+  a score can be read against the gate that was in force when it was taken.
+*/
+function GateEditor({
+  capability,
+  onChanged,
+}: Readonly<{ capability: Capability; onChanged: () => void }>) {
+  const [open, setOpen] = React.useState(false);
+  const [metric, setMetric] = React.useState(capability.metric_name);
+  const [expression, setExpression] = React.useState(capability.gate_expression);
+  const [threshold, setThreshold] = React.useState(
+    capability.gate_threshold === null ? "" : String(capability.gate_threshold),
+  );
+  const [enforced, setEnforced] = React.useState(capability.gate_enforced);
+  const [reason, setReason] = React.useState("");
+
+  const value = threshold.trim() === "" ? null : Number(threshold);
+  const badThreshold =
+    value !== null && (Number.isNaN(value) || value < 0 || value > 1)
+      ? "A threshold is a score between 0 and 1."
+      : null;
+
+  const save = useAction(async () => {
+    await api(`/capabilities/${capability.code}/gate`, {
+      method: "POST",
+      body: {
+        metric_name: metric,
+        gate_expression: expression,
+        gate_threshold: value,
+        gate_enforced: enforced,
+        reason,
+      },
+    });
+    onChanged();
+    setOpen(false);
+    setReason("");
+  });
+
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => {
+          setMetric(capability.metric_name);
+          setExpression(capability.gate_expression);
+          setThreshold(
+            capability.gate_threshold === null ? "" : String(capability.gate_threshold),
+          );
+          setEnforced(capability.gate_enforced);
+          setOpen(true);
+        }}
+      >
+        Gate
+      </Button>
+      <Modal
+        open={open}
+        title={`${capability.name}, gate`}
+        subtitle="What is measured, where the line sits, and what happens when a run falls below it."
+        onClose={() => setOpen(false)}
+        footer={
+          <>
+            <Button onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              variant="primary"
+              disabled={!metric.trim() || reason.trim().length < 4 || !!badThreshold || save.busy}
+              onClick={() => void save.run()}
+            >
+              {save.busy ? "Saving" : "Save the gate"}
+            </Button>
+          </>
+        }
+      >
+        {save.error ? (
+          <Refusal
+            title="That gate was refused"
+            reason={save.error.message}
+            reasons={Object.values(save.error.fieldErrors)}
+          />
+        ) : null}
+
+        <Field label="Metric" required hint="The name of the number, as the register reports it.">
+          <Input value={metric} onChange={(event) => setMetric(event.target.value)} />
+        </Field>
+
+        <Field label="Gate" hint="How the line reads in words, for example at least 0.93 recall.">
+          <Input value={expression} onChange={(event) => setExpression(event.target.value)} />
+        </Field>
+
+        <Field
+          label="Threshold"
+          error={badThreshold}
+          hint="Leave it empty for a capability that is watched rather than gated. It scores 0 to 1."
+        >
+          <Input
+            inputMode="decimal"
+            value={threshold}
+            onChange={(event) => setThreshold(event.target.value)}
+          />
+        </Field>
+
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={enforced}
+            onChange={(event) => setEnforced(event.target.checked)}
+          />
+          <span>
+            Stop calls while the last score is below the threshold. Worth having where the output
+            goes somewhere nobody reads line by line. Where every item is confirmed one at a time,
+            stopping the capability hands the reviewer an empty list instead of a reviewable one,
+            which is the silent failure the gate exists to prevent.
+          </span>
+        </label>
+
+        <Field label="Why" required hint="Recorded against the change, beside the old gate.">
+          <Textarea value={reason} onChange={(event) => setReason(event.target.value)} />
+        </Field>
+      </Modal>
+      <StepUpGate action="Changing a capability gate" state={save} />
     </>
   );
 }
@@ -392,21 +656,26 @@ export default function Capabilities() {
 
       {toggle.error ? <Refusal title="That change was refused" reason={toggle.error.message} /> : null}
 
+      <StepUpGate action="Changing a capability state" state={toggle} />
+
       <Card>
         <CardHeader
           title="Capability register"
-          subtitle="A capability below its gate does not run, whatever anyone sets here."
+          subtitle={
+            "A run records what a capability scored. Nothing switches itself off: where a gate " +
+            "is set to stop calls, it stops them and says so, and every other failure waits for " +
+            "somebody to act on it."
+          }
         />
         <div className="table-scroll">
-          <div className="min-w-[67.5rem]">
-            <Row cols="minmax(0,1.3fr) 4.375rem 8.125rem 7.5rem 7.5rem 8.125rem minmax(0,1fr)" head>
+          <div className="min-w-[68rem]">
+            <Row cols="minmax(0,1.9fr) 9rem 6.5rem 8.125rem 6.5rem minmax(0,15rem)" head>
               <div>Capability</div>
-              <div>Module</div>
-              <div>Metric</div>
               <div>Score</div>
               <div>Gate</div>
               <div>State</div>
-              <div>Kill switch</div>
+              <div>Measured</div>
+              <div>Actions</div>
             </Row>
 
             {capabilities.loading ? (
@@ -415,17 +684,15 @@ export default function Capabilities() {
               capabilities.data?.map((capability) => (
                 <Row
                   key={capability.id}
-                  cols="minmax(0,1.3fr) 4.375rem 8.125rem 7.5rem 7.5rem 8.125rem minmax(0,1fr)"
+                  cols="minmax(0,1.9fr) 9rem 6.5rem 8.125rem 6.5rem minmax(0,15rem)"
                 >
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium">{capability.name}</div>
                     <div className="truncate text-xs text-muted-foreground">
-                      Confirmed by {titleCase(capability.confirming_role)}, up to{" "}
-                      {titleCase(capability.max_data_class)}
+                      {capability.metric_name}
+                      {capability.gate_expression ? `, ${capability.gate_expression}` : ""}
                     </div>
                   </div>
-                  <Mono>{capability.module}</Mono>
-                  <div className="text-xs">{capability.metric_name}</div>
                   <div>
                     <Pill tone={GATE_TONE[capability.gate_status] ?? "novel"}>
                       {capability.gate_status === "not_measured"
@@ -433,8 +700,15 @@ export default function Capabilities() {
                         : (capability.last_score_label ?? capability.last_score)}
                     </Pill>
                   </div>
-                  <div className="text-xs text-muted-foreground">
-                    {capability.gate_threshold ?? "None"}
+                  <div className="text-xs">
+                    <div className="text-muted-foreground">
+                      {capability.gate_threshold ?? "Not gated"}
+                    </div>
+                    {capability.gate_threshold === null ? null : (
+                      <div className="text-[11px] text-muted-foreground/80">
+                        {capability.gate_enforced ? "Stops calls" : "Reported only"}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <CapabilityStatePill
@@ -442,6 +716,9 @@ export default function Capabilities() {
                       gateStatus={capability.gate_status}
                       enforced={capability.gate_enforced}
                     />
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {capability.last_evaluated_at ? formatDate(capability.last_evaluated_at) : "Never"}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <KillSwitch
@@ -452,20 +729,21 @@ export default function Capabilities() {
                     />
                     <Evaluation
                       capability={capability}
+                      canImport={canToggle}
                       onChanged={() => {
                         capabilities.reload();
                         quality.reload();
                       }}
                     />
                     {canToggle ? (
-                      <AddCase
-                        code={capability.code}
-                        onDone={() => capabilities.reload()}
+                      <GateEditor
+                        capability={capability}
+                        onChanged={() => {
+                          capabilities.reload();
+                          quality.reload();
+                        }}
                       />
                     ) : null}
-                    <span className="text-xs text-muted-foreground">
-                      {formatDate(capability.last_evaluated_at)}
-                    </span>
                   </div>
                 </Row>
               ))

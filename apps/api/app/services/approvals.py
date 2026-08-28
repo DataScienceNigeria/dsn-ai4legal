@@ -38,6 +38,17 @@ class ChainContext:
     #: something the business has not seen.
     counterparty_paper: bool = False
 
+    #: Whether money moves. Section 8 of the guide makes Finance the lead on
+    #: confirming contract value, payment structure, milestones, budget
+    #: availability and tax, and a draft that reached the counterparty without
+    #: it was a draft on which nobody had checked the money.
+    has_value: bool = False
+
+    #: Whether a vendor or supplier is being appointed, in which case
+    #: Procurement confirms the process, the vendor documentation and the
+    #: approvals it requires.
+    procurement_route: bool = False
+
 
 #: Two steps, derived from the matter rather than matched from a table.
 #:
@@ -59,12 +70,33 @@ REQUESTER_STEP = {
     "due_hours": 48,
 }
 
+FINANCE_STEP = {
+    "name": "Finance confirms the money",
+    "mode": "sequential",
+    "role": "finance",
+    "due_hours": 48,
+}
+
+PROCUREMENT_STEP = {
+    "name": "Procurement confirms the process",
+    "mode": "sequential",
+    "role": "procurement",
+    "due_hours": 48,
+}
+
 HEAD_STEP = {
     "name": "Legal lead",
     "mode": "sequential",
     "role": "head_of_legal",
     "due_hours": 24,
 }
+
+#: Which agreement types appoint somebody to supply goods or services, and so
+#: run through Procurement. A grant received or a research collaboration is not
+#: a purchase, and routing one through a vendor process would be theatre.
+PROCUREMENT_TYPES = frozenset(
+    {"vendor_supplier_agreement", "service_agreement", "consultancy_agreement"}
+)
 
 
 def derive_chain(context: ChainContext) -> tuple[str, list[dict], list[str]]:
@@ -93,6 +125,27 @@ def derive_chain(context: ChainContext) -> tuple[str, list[dict], list[str]]:
     else:
         steps.append({**REQUESTER_STEP, "user_id": str(context.requester_id)})
 
+    # Sections 8 and 9. The confirmations are conditional because a condition
+    # is the honest form: an NDA moves no money and appoints no vendor, and a
+    # Finance step on one is a queue nobody reads that everybody learns to
+    # click through.
+    if context.has_value:
+        steps.append(FINANCE_STEP)
+    else:
+        notes.append(
+            "No contract value, so Finance has nothing to confirm. A step here "
+            "would be a queue somebody learns to click through."
+        )
+
+    if context.procurement_route:
+        steps.append(PROCUREMENT_STEP)
+    elif context.agreement_type in PROCUREMENT_TYPES:
+        notes.append(
+            "Procurement has nothing to confirm without a value. This agreement "
+            "type usually appoints a supplier, so the absence is worth recording "
+            "rather than leaving to be inferred from a missing step."
+        )
+
     if context.drafter_is_head:
         notes.append(
             "The legal lead drafted this, so their step is their own sign-off "
@@ -101,7 +154,10 @@ def derive_chain(context: ChainContext) -> tuple[str, list[dict], list[str]]:
         )
     steps.append(HEAD_STEP)
 
-    name = "Requester and legal lead" if len(steps) > 1 else "Legal lead"
+    # The lead is always last. Section 9 calls it final internal clearance, and
+    # it is only final if everything it is clearing has already happened.
+    named = [step["name"] for step in steps]
+    name = ", then ".join(named) if len(named) > 1 else named[0]
     return name, steps, notes
 
 

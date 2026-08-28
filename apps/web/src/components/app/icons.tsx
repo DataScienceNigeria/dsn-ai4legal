@@ -15,6 +15,7 @@ export type IconName =
   | "matters"
   | "review"
   | "archive"
+  | "lifecycle"
   | "templates"
   | "memory"
   | "inbox"
@@ -76,6 +77,14 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <path d="M3 5h18v4H3Z" />
       <path d="M5 9v10h14V9" />
       <path d="M10 13h4" />
+    </>
+  ),
+  lifecycle: (
+    <>
+      <path d="M4 12a8 8 0 0 1 13.7-5.6" />
+      <path d="M20 12a8 8 0 0 1-13.7 5.6" />
+      <path d="M18 4v3h-3" />
+      <path d="M6 20v-3h3" />
     </>
   ),
   templates: (

@@ -1093,6 +1093,134 @@ export function LinkCounterparty({
   );
 }
 
+
+/*
+  Sending a draft to external counsel, stage 3 of the guide.
+
+  Asking is what grants access. A consultant who has not been asked about a
+  matter cannot open it, so there is no separate permission step to forget and
+  none to forget to withdraw.
+
+  The brief has a floor for a reason that is not pedantry: "please review" is
+  how a consultant bills for reading a whole agreement to answer a question
+  about one clause, and it is also how the comments come back about the wrong
+  thing.
+*/
+export function ConsultantDialog({
+  matter,
+  documents,
+  open,
+  onClose,
+  onDone,
+}: Readonly<{
+  matter: Matter;
+  documents: DocumentRecord[];
+  open: boolean;
+  onClose: () => void;
+  onDone: () => void;
+}>) {
+  const users = useApi<UserRow[]>(open ? "/users" : null, [open]);
+  const [consultant, setConsultant] = React.useState("");
+  const [documentId, setDocumentId] = React.useState("");
+  const [brief, setBrief] = React.useState("");
+  const [due, setDue] = React.useState("");
+
+  const send = useAction(async () => {
+    await api(`/matters/${matter.id}/consultant-review`, {
+      method: "POST",
+      body: {
+        consultant_id: consultant,
+        document_id: documentId || null,
+        brief: brief.trim(),
+        due_date: due || null,
+      },
+    });
+    setBrief("");
+    setDue("");
+    onClose();
+    onDone();
+  });
+
+  const counsel = (users.data ?? []).filter(
+    (person) => person.active && person.roles.includes("consultant"),
+  );
+
+  return (
+    <Modal
+      open={open}
+      title="Send this to external counsel"
+      subtitle="They read it and comment. Nothing they write changes the document, and they see this matter and nothing else."
+      width="lg"
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            disabled={!consultant || brief.trim().length < 25 || send.busy}
+            onClick={() => void send.run()}
+          >
+            Send it
+          </Button>
+        </>
+      }
+    >
+      {send.error ? (
+        <Refusal
+          title="That was not sent"
+          reason={send.error.message}
+          reasons={send.error.reasons}
+        />
+      ) : null}
+
+      {counsel.length === 0 && !users.loading ? (
+        <Notice tone="warn" title="Nobody holds the consultant role">
+          External counsel has to be on the platform before a draft can go to them.
+          Administration, People.
+        </Notice>
+      ) : null}
+
+      <Field label="Which consultant" required>
+        <Select value={consultant} onChange={(event) => setConsultant(event.target.value)}>
+          <option value="">Choose</option>
+          {counsel.map((person) => (
+            <option key={person.id} value={person.id}>
+              {person.name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+
+      <Field label="Which document" hint="Optional. Leave it blank to ask about the matter as a whole.">
+        <Select value={documentId} onChange={(event) => setDocumentId(event.target.value)}>
+          <option value="">The matter as a whole</option>
+          {documents.map((document) => (
+            <option key={document.id} value={document.id}>
+              {document.name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+
+      <Field
+        label="What do you want them to look at"
+        required
+        hint="Name the clause and the question. A brief that says only review is one that comes back about something else, at their hourly rate."
+      >
+        <Textarea
+          value={brief}
+          onChange={(event) => setBrief(event.target.value)}
+          className="min-h-[7rem] leading-relaxed"
+        />
+      </Field>
+
+      <Field label="Wanted by">
+        <Input type="date" value={due} onChange={(event) => setDue(event.target.value)} />
+      </Field>
+    </Modal>
+  );
+}
+
 export function MatterActions({
   matter,
   documents,
@@ -1161,6 +1289,7 @@ export function MatterActions({
           <MenuItem onClick={() => setDialog("draft")}>Propose a first draft</MenuItem>
           <MenuItem onClick={() => setDialog("paper")}>Add counterparty paper</MenuItem>
           <MenuItem onClick={() => setDialog("review")}>Review counterparty paper</MenuItem>
+          <MenuItem onClick={() => setDialog("consultant")}>Send to external counsel</MenuItem>
           {ours.length ? (
             <MenuItem onClick={() => setDialog("approval")}>Route for approval</MenuItem>
           ) : null}
@@ -1224,6 +1353,13 @@ export function MatterActions({
       <GovernanceDialog
         matter={matter}
         open={dialog === "governance"}
+        onClose={close}
+        onDone={onChanged}
+      />
+      <ConsultantDialog
+        matter={matter}
+        documents={documents}
+        open={dialog === "consultant"}
         onClose={close}
         onDone={onChanged}
       />

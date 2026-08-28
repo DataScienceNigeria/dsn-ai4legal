@@ -125,6 +125,8 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
 const WORKSPACE_ROLES = new Set([
   "counsel",
   "head_of_legal",
+  "finance",
+  "procurement",
   "admin",
   "auditor",
   "management",
@@ -145,6 +147,12 @@ export async function login(
 
   try {
     const me = await api<{ roles: string[] }>("/auth/me");
+    // External counsel has one page and it is neither of the other two. They
+    // are not staff, so the workspace would refuse every screen in it, and they
+    // are not raising requests, so the portal has nothing for them.
+    if (me.roles.includes("consultant") && !me.roles.some((role) => WORKSPACE_ROLES.has(role))) {
+      return "/consultant";
+    }
     const belongs = me.roles.some((role) => WORKSPACE_ROLES.has(role));
     return belongs ? "/workspace" : "/portal";
   } catch {

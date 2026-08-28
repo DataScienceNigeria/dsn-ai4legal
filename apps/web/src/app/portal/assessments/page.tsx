@@ -20,9 +20,9 @@ import {
   Refusal,
   Spinner,
 } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, postForm } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
-import type { Assessment } from "@/lib/types";
+import type { Assessment, DpiaImport } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
 const DECISION_TONE: Record<string, "good" | "warn" | "bad"> = {
@@ -55,6 +55,166 @@ function state(assessment: Assessment): { label: string; tone: "neutral" | "info
   product in the organisation under assessment is not theirs to read; the API
   scopes it to what they raised.
 */
+/*
+  A DPIA that was already written on the Word template.
+
+  Several projects filled the manual template before the platform existed, and
+  asking their leads to answer fifty-nine questions a second time is how a form
+  gets abandoned.
+
+  Two steps on purpose. The document is read and the result shown, and only then
+  is the assessment created. An import that silently produced a half-filled
+  record is one somebody would submit without reading it, and the whole value of
+  the import is that it saves typing rather than saving attention.
+*/
+function ImportTemplate() {
+  const router = useRouter();
+  const [open, setOpen] = React.useState(false);
+  const [name, setName] = React.useState("");
+  const [found, setFound] = React.useState<DpiaImport | null>(null);
+  const input = React.useRef<HTMLInputElement>(null);
+
+  const read = useAction(async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const result = await postForm<DpiaImport>("/assessments/dpia/read-template", form);
+    setFound(result);
+    if (!name.trim()) {
+      const guess = String(result.answers.project_name ?? "").trim();
+      setName(guess || file.name.replace(/\.docx$/i, ""));
+    }
+  });
+
+  const create = useAction(async () => {
+    if (!found) return;
+    const created = await api<Assessment>("/assessments/dpia/import", {
+      method: "POST",
+      body: {
+        project_name: name.trim(),
+        answers: found.answers,
+        imported_fields: found.imported_fields,
+        imported_from: found.filename,
+      },
+    });
+    router.push(`/portal/assessments/${created.id}`);
+  });
+
+  function reset() {
+    setOpen(false);
+    setFound(null);
+    setName("");
+  }
+
+  return (
+    <>
+      <Button onClick={() => setOpen(true)}>Upload a completed template</Button>
+      <Modal
+        open={open}
+        title="Upload a DPIA you have already written"
+        subtitle="The Word template, filled in. What it holds is read into the form so you do not type it twice."
+        width="lg"
+        onClose={reset}
+        footer={
+          <>
+            <Button onClick={reset}>Cancel</Button>
+            {found ? (
+              <Button
+                variant="primary"
+                disabled={name.trim().length < 3 || create.busy}
+                onClick={() => void create.run()}
+              >
+                Open it with these answers
+              </Button>
+            ) : null}
+          </>
+        }
+      >
+        {read.error ? (
+          <Refusal
+            title="That document was not read"
+            reason={read.error.message}
+            reasons={read.error.reasons}
+          />
+        ) : null}
+        {create.error ? (
+          <Refusal title="That was not created" reason={create.error.message} />
+        ) : null}
+
+        {found === null ? (
+          <>
+            <Notice tone="info" title="What gets read, and what does not">
+              Written answers are lifted out and put under the question they belong to. Anything
+              the reader cannot identify with confidence is left blank for you, and questions that
+              ask you to pick from a list are always left blank: the template writes its options
+              out in full, so a choice cannot be read from it without guessing.
+            </Notice>
+            <input
+              ref={input}
+              type="file"
+              accept=".docx"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void read.run(file);
+              }}
+            />
+            <Button
+              variant="primary"
+              disabled={read.busy}
+              onClick={() => input.current?.click()}
+            >
+              {read.busy ? "Reading the document" : "Choose a .docx"}
+            </Button>
+          </>
+        ) : (
+          <>
+            <Notice
+              tone={found.found > found.total / 3 ? "good" : "warn"}
+              title={`${found.found} of ${found.total} answers were read`}
+            >
+              {found.note}
+            </Notice>
+
+            <Field label="Project or product name" required>
+              <Input value={name} onChange={(event) => setName(event.target.value)} />
+            </Field>
+
+            {found.missing.length > 0 ? (
+              <div>
+                <div className="mb-1 text-sm font-medium">
+                  {`${found.missing.length} still to answer`}
+                </div>
+                <ul className="ml-5 max-h-40 list-disc space-y-0.5 overflow-y-auto text-xs leading-relaxed text-muted-foreground">
+                  {found.missing.map((label) => (
+                    <li key={label}>{label}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {found.unmatched.length > 0 ? (
+              <div>
+                <div className="mb-1 text-sm font-medium">
+                  Text the reader could not place
+                </div>
+                <p className="mb-1 text-xs text-muted-foreground">
+                  Nothing in your document is thrown away silently. These passages did not sit
+                  under a question the form asks, so they are shown rather than imported.
+                </p>
+                <ul className="ml-5 max-h-32 list-disc space-y-1 overflow-y-auto text-xs leading-relaxed text-muted-foreground">
+                  {found.unmatched.map((text) => (
+                    <li key={text}>{text.slice(0, 180)}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </>
+        )}
+      </Modal>
+    </>
+  );
+}
+
 export default function PortalAssessments() {
   const router = useRouter();
   const mine = useApi<Assessment[]>("/assessments/mine");
@@ -80,9 +240,12 @@ export default function PortalAssessments() {
           "does with that data. Legal reads it, scores it and decides."
         }
         actions={
-          <Button variant="primary" onClick={() => setOpening(true)}>
-            Start an assessment
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <ImportTemplate />
+            <Button variant="primary" onClick={() => setOpening(true)}>
+              Start an assessment
+            </Button>
+          </div>
         }
       />
 

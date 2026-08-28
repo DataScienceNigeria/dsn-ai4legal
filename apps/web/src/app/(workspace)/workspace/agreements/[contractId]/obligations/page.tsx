@@ -66,7 +66,7 @@ export default function ContractObligations() {
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Link href="/workspace/archive" className="no-underline">
+            <Link href="/workspace/agreements" className="no-underline">
               <Button size="sm">Back to the archive</Button>
             </Link>
             {canAct ? (

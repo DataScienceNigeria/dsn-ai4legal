@@ -18,6 +18,7 @@ from app.db.models.intake import Attachment, RequestType
 from app.db.models.intake import Request as RequestRecord
 from app.db.models.matter import Matter
 from app.db.models.organisation import User
+from app.domain import brief
 from app.domain.enums import ApprovalDecision, MatterState, Role
 from app.schemas.intake import (
     AttachmentOut,
@@ -64,6 +65,17 @@ TIMELINE_ORDER = [
     (MatterState.AWAITING_SIGNATURE.value, "Signature"),
     (MatterState.EXECUTED.value, "Signed"),
 ]
+
+
+@router.get("/brief-sections")
+def brief_sections(principal: CurrentUser) -> list[dict]:
+    """The Contract Brief's groups, served rather than duplicated in the form.
+
+    A list written twice disagrees with itself the first time either copy is
+    edited, which is the same reason the DPIA form and the agreement types are
+    served rather than restated.
+    """
+    return [dict(section) for section in brief.SECTIONS]
 
 
 @router.get("/types", response_model=list[RequestTypeOut])

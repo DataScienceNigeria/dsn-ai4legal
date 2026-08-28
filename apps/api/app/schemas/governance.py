@@ -271,6 +271,8 @@ class AssessmentOut(ApiModel):
     raised_by_id: UUID | None = None
     submitted_at: datetime | None = None
     dpo_review: dict[str, Any] = Field(default_factory=dict)
+    imported_fields: list[str] = Field(default_factory=list)
+    imported_from: str | None = None
     final_decision: str | None = None
     final_decision_reason: str | None = None
 
@@ -302,6 +304,34 @@ class DpiaFormOut(ApiModel):
 
     sections: list[DpiaSectionOut]
     decisions: list[dict]
+
+
+class DpiaImportOut(BaseModel):
+    """What an uploaded template gave up, before anything is created.
+
+    Read first, create second. A lead uploading a document should see what was
+    found and what was not before an assessment exists, because an import that
+    silently produced a half-filled record is one they would submit without
+    reading.
+    """
+
+    filename: str
+    found: int
+    total: int
+    answers: dict[str, Any]
+    imported_fields: list[str]
+    missing: list[str]
+    unmatched: list[str]
+    note: str
+
+
+class DpiaImportStart(BaseModel):
+    """Create the assessment from what the import found, once they have read it."""
+
+    project_name: str = Field(min_length=3, max_length=255)
+    answers: dict[str, Any]
+    imported_fields: list[str] = Field(default_factory=list)
+    imported_from: str | None = Field(default=None, max_length=255)
 
 
 class DpiaStart(BaseModel):
@@ -421,6 +451,16 @@ class CapabilityOut(ApiModel):
     gate_status: str = "not_measured"
 
 
+class CapabilityGateUpdate(BaseModel):
+    """What the gate measures, where the line sits, and what crossing it does."""
+
+    metric_name: str = Field(min_length=2, max_length=64)
+    gate_expression: str = Field(default="", max_length=128)
+    gate_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    gate_enforced: bool = True
+    reason: str = Field(min_length=4, max_length=500)
+
+
 class GoldenCaseCreate(BaseModel):
     reference: str
     prompt: str
@@ -428,6 +468,16 @@ class GoldenCaseCreate(BaseModel):
     expected: dict = Field(default_factory=dict)
     notes: str | None = None
     source: str | None = None
+
+
+class GoldenSetImport(BaseModel):
+    """A set arrives whole. Editing one in place would leave an old score
+    naming cases that no longer exist."""
+
+    name: str | None = Field(default=None, max_length=64)
+    description: str | None = None
+    cases: list[GoldenCaseCreate] = Field(min_length=1)
+    keep_existing: bool = True
 
 
 class GoldenCaseOut(ApiModel):
@@ -441,19 +491,17 @@ class GoldenCaseOut(ApiModel):
     active: bool
 
 
-class GoldenSetCreate(BaseModel):
-    name: str
-    description: str | None = None
-
-
 class GoldenSetOut(BaseModel):
-    id: UUID
+    id: UUID | None
     name: str
     version: int
     capability_code: str
     description: str | None
     active: bool
     cases: list[GoldenCaseOut] = Field(default_factory=list)
+    expected_shape: dict = Field(default_factory=dict)
+    shape_note: str = ""
+    measurable: bool = True
 
 
 class EvaluationRunOut(ApiModel):

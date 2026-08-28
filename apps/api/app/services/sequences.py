@@ -67,5 +67,15 @@ def new_assessment_reference(session: Session, year: int | None = None) -> str:
     return identifiers.assessment_id(year, next_value(session, f"assessment:{year}"))
 
 
+def new_issue_reference(session: Session, year: int | None = None) -> str:
+    year = year or datetime.now(UTC).year
+    return identifiers.contract_issue_id(year, next_value(session, f"contract_issue:{year}"))
+
+
+def new_change_request_reference(session: Session, year: int | None = None) -> str:
+    year = year or datetime.now(UTC).year
+    return identifiers.change_request_id(year, next_value(session, f"change_request:{year}"))
+
+
 def new_decision_sequence(session: Session) -> int:
     return next_value(session, "decision")

@@ -109,6 +109,26 @@ PEOPLE = [
     ("Fatima Bello", "fatima.bello@dsn.example", [Role.COUNSEL], ["DSN", "EAI"], ["dpr"], 2),
     ("Emeka Obi", "emeka.obi@dsn.example", [Role.ADMIN], ["DSN", "EAI"], [], 0),
     ("Yusuf Danjuma", "yusuf.danjuma@dsn.example", [Role.AUDITOR], ["DSN", "EAI"], [], 0),
+    # Management on its own. Segun holds it alongside requester, which is
+    # realistic for a department head but makes it impossible to see what the
+    # role alone can reach, and that is the question the role exists to answer.
+    ("Chioma Nwankwo", "chioma.nwankwo@dsn.example", [Role.MANAGEMENT], ["DSN", "EAI"], [], 0),
+    # The guide's responsibility matrix makes Finance the lead on payment
+    # confirmation and Procurement the lead on procurement confirmation. Both
+    # steps resolve by role, so without a person holding the role the chain
+    # opens a step nobody is named on and stalls there.
+    ("Bola Adeniyi", "bola.adeniyi@dsn.example", [Role.FINANCE], ["DSN", "EAI"], [], 0),
+    ("Kelechi Umeh", "kelechi.umeh@dsn.example", [Role.PROCUREMENT], ["DSN", "EAI"], [], 0),
+    # External counsel. Reads a draft and comments on it, and holds no authority
+    # to approve, publish or sign.
+    (
+        "Olumide Fashola",
+        "olumide.fashola@chambers.example",
+        [Role.CONSULTANT],
+        ["DSN", "EAI"],
+        ["com"],
+        0,
+    ),
 ]
 
 
@@ -1972,7 +1992,7 @@ CAPABILITIES = [
         "at least 0.95 attributable",
         0.95,
         "summary",
-        True,
+        False,
     ),
 ]
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as React from "react";
 
+import { Changes, Issues } from "@/components/app/lifecycle-queues";
 import { useRoles, useSession } from "@/components/app/session";
 import {
   Button,
@@ -24,11 +25,12 @@ import {
   Refusal,
   Row,
   Spinner,
+  Tabs,
 } from "@/components/ui";
 import { api, query as queryString } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
 import type { Contract, Obligation } from "@/lib/types";
-import { formatDate, titleCase } from "@/lib/utils";
+import { cn, formatDate, titleCase } from "@/lib/utils";
 
 /*
   The agreement itself: what it is, what came out of it, and what it was built
@@ -70,7 +72,7 @@ function ContractPanel({
           title="Obligations on this agreement"
           subtitle="What this contract requires of us, and by when."
           actions={
-            <Link href={`/workspace/archive/${contract.id}/obligations`} className="no-underline">
+            <Link href={`/workspace/agreements/${contract.id}/obligations`} className="no-underline">
               <Button size="sm">{held.length ? "View them" : "Extract them"}</Button>
             </Link>
           }
@@ -163,9 +165,107 @@ function RenewalDialog({
   );
 }
 
-const COLS = "10.625rem minmax(0,1fr) 9.375rem 10.625rem 7.5rem 9.375rem 6.25rem";
+const COLS = "10.625rem minmax(0,1fr) 9.375rem 8rem 8rem 9.375rem 5.5rem";
 
-export default function Archive() {
+/*
+  Sorting the register.
+
+  A register that can only be read in the order it was written is one nobody can
+  ask "what ends soonest" or "what is the largest thing we signed", which are
+  the two questions a legal team actually brings to it. Sorting is in the
+  client because the whole entity's agreements are already in hand; a register
+  of this size does not need a round trip to reorder.
+*/
+type Sortable = "reference" | "counterparty" | "agreement_type" | "executed_at" | "end_date";
+
+const SORT_LABEL: Record<Sortable, string> = {
+  reference: "Reference",
+  counterparty: "Counterparty",
+  agreement_type: "Type",
+  executed_at: "Executed",
+  end_date: "Ends",
+};
+
+function sortValue(contract: Contract, key: Sortable): string | number {
+  if (key === "counterparty") return (contract.counterparty?.legal_name ?? "").toLowerCase();
+  if (key === "agreement_type") return contract.agreement_type.toLowerCase();
+  if (key === "executed_at") return contract.executed_at ?? "";
+  if (key === "end_date") return contract.end_date ?? "";
+  return contract.reference.toLowerCase();
+}
+
+/*
+  A column heading that sorts, and says which way.
+
+  The arrow is on the active column only. A row of arrows tells the reader every
+  column is sorted, which is the one thing that cannot be true.
+*/
+function SortHead({
+  column,
+  active,
+  descending,
+  onSort,
+  className,
+}: Readonly<{
+  column: Sortable;
+  active: boolean;
+  descending: boolean;
+  onSort: (column: Sortable) => void;
+  className?: string;
+}>) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(column)}
+      className={cn(
+        "flex items-center gap-1 text-left uppercase tracking-wide transition-colors hover:text-foreground",
+        active && "text-foreground",
+        className,
+      )}
+      aria-sort={active ? (descending ? "descending" : "ascending") : "none"}
+    >
+      {SORT_LABEL[column]}
+      <span aria-hidden className={cn("text-[0.65rem]", !active && "opacity-0")}>
+        {descending ? "\u25be" : "\u25b4"}
+      </span>
+    </button>
+  );
+}
+
+/*
+  Signed paper, and everything that happens to it afterwards.
+
+  This was two destinations, Archive and After signature, and the split did not
+  survive contact with the register. "Archive" says dead storage, and these rows
+  are agreements being performed, varied and closed. "After signature" held the
+  queue of what has gone wrong across them, which is the same subject read the
+  other way round.
+
+  The queue survives the merge as a tab rather than folding into the row menu,
+  and that is deliberate. Row actions answer "what about this one"; the queue
+  answers "what is open across the whole portfolio and who owns it", which no
+  arrangement of row actions can answer without opening every row.
+*/
+const TABS = [
+  {
+    id: "register",
+    label: "All agreements",
+    roles: ["counsel", "head_of_legal", "admin", "auditor", "management"],
+  },
+  /*
+    The queues are legal's working records and the auditor's evidence.
+
+    Management reads the register and the exposure report, which answer what the
+    organisation signed and what it conceded. An issue queue with assignees and
+    a triage button is how the department runs itself, and a board watching a
+    work queue is a board doing somebody else's job.
+  */
+  { id: "issues", label: "Issues", roles: ["counsel", "head_of_legal", "admin", "auditor"] },
+  { id: "changes", label: "Changes", roles: ["counsel", "head_of_legal", "admin", "auditor"] },
+];
+
+export default function Agreements() {
+  const [tab, setTab] = React.useState("register");
   const { entity } = useSession();
   const [query, setQuery] = React.useState("");
   const [debounced, setDebounced] = React.useState("");
@@ -183,6 +283,41 @@ export default function Archive() {
   const { has } = useRoles();
   const canAct = has("counsel", "head_of_legal", "admin");
   const router = useRouter();
+
+  // Newest first, because the question a register is usually opened with is
+  // "what did we just sign".
+  // A tab a role cannot open is not offered. The API refuses independently.
+  const tabs = TABS.filter((one) => has(...one.roles));
+  const active = tabs.some((one) => one.id === tab) ? tab : (tabs[0]?.id ?? "register");
+
+  const [sort, setSort] = React.useState<Sortable>("executed_at");
+  const [descending, setDescending] = React.useState(true);
+
+  function onSort(column: Sortable) {
+    if (column === sort) {
+      setDescending((previous) => !previous);
+      return;
+    }
+    setSort(column);
+    // Dates read newest first and names read A to Z. Carrying the previous
+    // direction across means the first click on a name column shows Z.
+    setDescending(column === "executed_at" || column === "end_date");
+  }
+
+  const rows = React.useMemo(() => {
+    const all = [...(data ?? [])];
+    all.sort((left, right) => {
+      const a = sortValue(left, sort);
+      const b = sortValue(right, sort);
+      // Blanks last whichever way the column is pointing. A row with no end
+      // date is not the earliest-ending agreement.
+      if (a === "" && b !== "") return 1;
+      if (b === "" && a !== "") return -1;
+      if (a === b) return left.reference.localeCompare(right.reference);
+      return (a < b ? -1 : 1) * (descending ? -1 : 1);
+    });
+    return all;
+  }, [data, sort, descending]);
 
 
   /*
@@ -208,21 +343,37 @@ export default function Archive() {
   return (
     <div className="space-y-6">
       <PageTitle
-        title="Executed archive"
+        title="Agreements"
         subtitle={
-          "The authoritative record. Each executed copy is immutable for its retention period, " +
-          "and a later upload is a linked amendment rather than a replacement."
+          "Everything signed, and everything that has happened to it since. Each executed copy " +
+          "is immutable for its retention period, and a later upload is a linked amendment " +
+          "rather than a replacement."
         }
         actions={
-          <Input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search counterparty, reference or clause text"
-            className="w-full sm:w-72 lg:w-80"
-          />
+          active === "register" ? (
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search counterparty, reference or clause text"
+              className="w-full sm:w-72 lg:w-80"
+            />
+          ) : undefined
         }
       />
 
+      {tabs.length > 1 ? (
+        <Tabs
+          tabs={tabs.map(({ id, label }) => ({ id, label }))}
+          active={active}
+          onChange={setTab}
+        />
+      ) : null}
+
+      {active === "issues" ? <Issues entity={entity} /> : null}
+      {active === "changes" ? <Changes entity={entity} /> : null}
+
+      {active !== "register" ? null : (
+      <>
       {note ? (
         <Notice tone="good" title="Done">
           {note}
@@ -234,13 +385,13 @@ export default function Archive() {
         <div className="table-scroll">
           <div className="min-w-[70rem]">
             <Row cols={COLS} head>
-              <div>Contract</div>
-              <div>Counterparty</div>
-              <div>Type</div>
-              <div>Matter</div>
-              <div>Executed</div>
+              <SortHead column="reference" active={sort === "reference"} descending={descending} onSort={onSort} />
+              <SortHead column="counterparty" active={sort === "counterparty"} descending={descending} onSort={onSort} />
+              <SortHead column="agreement_type" active={sort === "agreement_type"} descending={descending} onSort={onSort} />
+              <SortHead column="executed_at" active={sort === "executed_at"} descending={descending} onSort={onSort} />
+              <SortHead column="end_date" active={sort === "end_date"} descending={descending} onSort={onSort} />
               <div>Record</div>
-              <div>Agreement</div>
+              <div className="text-right">Action</div>
             </Row>
 
             {loading ? (
@@ -253,7 +404,7 @@ export default function Archive() {
                 detail="A restricted agreement is absent from this list rather than redacted in it."
               />
             ) : (
-              data.map((contract) => (
+              rows.map((contract) => (
                 <Row key={contract.id} cols={COLS}>
                   {/*
                     The reference opens the record: the signed copy, its
@@ -268,6 +419,17 @@ export default function Archive() {
                     className="min-w-0 text-left"
                   >
                     <Mono>{contract.reference}</Mono>
+                    {/*
+                      The matter that produced it, as provenance rather than as
+                      a destination. It used to be a column of its own, which
+                      spent nine rem of a register saying where each row came
+                      from; the agreement's own record links to it.
+                    */}
+                    {contract.matter_number ? (
+                      <div className="truncate text-xs text-muted-foreground">
+                        {contract.matter_number}
+                      </div>
+                    ) : null}
                   </button>
                   {/*
                     Plain text, not a link back to the matter. The matter's own
@@ -280,22 +442,28 @@ export default function Archive() {
                     {contract.counterparty?.legal_name ?? "Not linked"}
                   </div>
                   <div className="text-xs">{titleCase(contract.agreement_type)}</div>
-                  {/*
-                    The concluded matter, reached by its number.
-
-                    This is the only route to a matter that has been executed:
-                    the working list holds work in hand. It is a column of its
-                    own rather than a link hidden on the counterparty name,
-                    which used to read as "leave this page" on the very row the
-                    reader had just come to open.
-                  */}
-                  <Link
-                    href={`/workspace/matters/${contract.matter_id}`}
-                    className="min-w-0 truncate text-xs no-underline hover:underline"
-                  >
-                    {contract.matter_number ?? "Linked matter"}
-                  </Link>
                   <div className="text-xs">{formatDate(contract.executed_at)}</div>
+                  {/*
+                    When it ends, and whether the last day to give notice has
+                    gone. The register is read to answer "what is ending
+                    soonest" more often than it is read to answer anything else,
+                    and the notice date is the one that cannot be recovered
+                    once it passes.
+                  */}
+                  <div className="min-w-0 text-xs">
+                    {contract.end_date ? (
+                      <>
+                        {formatDate(contract.end_date)}
+                        {contract.termination_deadline ? (
+                          <div className="text-muted-foreground">
+                            {`Notice by ${formatDate(contract.termination_deadline)}`}
+                          </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">No end date</span>
+                    )}
+                  </div>
                   {/*
                     Whether this file is the agreement or a copy of one. Set at
                     execution and never afterwards: a later upload is a linked
@@ -311,13 +479,38 @@ export default function Archive() {
                     )}
                     {contract.executed_outside_platform ? <Pill tone="warn">Wet ink</Pill> : null}
                   </div>
-                  <div>
+                  {/*
+                    Everything that happens to this agreement, each on its own
+                    page. The queue across all of them is a tab above; this menu
+                    is about the one row it sits on.
+                  */}
+                  <div className="flex justify-end">
                     <More label="Action">
-                      <MenuItem href={`/workspace/archive/${contract.id}/obligations`}>
+                      <MenuItem href={`/workspace/agreements/${contract.id}/obligations`}>
                         View obligations
                       </MenuItem>
+                      <MenuItem href={`/workspace/agreements/${contract.id}/issues`}>
+                        {contract.open_issue_count
+                          ? `Issues (${contract.open_issue_count} open)`
+                          : "Issues"}
+                      </MenuItem>
+                      <MenuItem href={`/workspace/agreements/${contract.id}/changes`}>
+                        {contract.open_change_count
+                          ? `Changes (${contract.open_change_count} waiting)`
+                          : "Changes"}
+                      </MenuItem>
+                      {canAct ? (
+                        <MenuItem href={`/workspace/agreements/${contract.id}/register`}>
+                          Register entry
+                        </MenuItem>
+                      ) : null}
                       {canAct ? (
                         <MenuItem onClick={() => setRenewing(contract)}>Renew agreement</MenuItem>
+                      ) : null}
+                      {canAct ? (
+                        <MenuItem href={`/workspace/agreements/${contract.id}/closure`}>
+                          Close the agreement
+                        </MenuItem>
                       ) : null}
                     </More>
                   </div>
@@ -338,13 +531,15 @@ export default function Archive() {
         />
       ) : null}
 
-      <Notice title="What the archive holds">
+      <Notice title="What the register holds">
         For each agreement: the executed copy, every approval that bound to its hash, the
         signature certificate and the full metadata. <strong>Signed original</strong> marks the
         file the parties actually signed, set once at execution; a later upload is a linked
         amendment rather than a replacement, so exactly one record per agreement carries it. The
         content hash is what ties the file to the approvals that authorised it.
       </Notice>
+      </>
+      )}
     </div>
   );
 }

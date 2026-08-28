@@ -45,6 +45,12 @@ const SIDE_LINKS = [
     detail: "What you have asked for, and where it is",
   },
   {
+    href: "/portal/contracts",
+    icon: "archive" as const,
+    label: "Your agreements",
+    detail: "Signed and running. Report a problem or ask for a change",
+  },
+  {
     href: "/portal/assessments",
     icon: "assessments" as const,
     label: "Data protection",

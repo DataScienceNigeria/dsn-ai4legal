@@ -21,7 +21,7 @@ import {
 } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
-import type { FieldDefinition, RequestType } from "@/lib/types";
+import type { BriefSection, FieldDefinition, RequestType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Answers = Record<string, string | boolean>;
@@ -54,6 +54,7 @@ export default function NewRequest() {
   const { me, entity, setEntity } = useSession();
 
   const types = useApi<RequestType[]>("/requests/types");
+  const sections = useApi<BriefSection[]>("/requests/brief-sections");
   const type = types.data?.find((item) => item.code === code);
 
   const [raisingFor, setRaisingFor] = React.useState(entity);
@@ -90,13 +91,43 @@ export default function NewRequest() {
     setRaisingFor(entity);
   }, [entity]);
 
+  // Hooks run before any early return, so the field list is read from the
+  // request type where there is one and is empty where there is not.
+  const fields = React.useMemo(() => type?.fields ?? [], [type]);
+  /*
+    The brief's groups, in the guide's order, holding only the fields that are
+    visible right now. A group with nothing showing is not rendered at all: an
+    empty card with a heading reads as a section somebody forgot to fill in.
+
+    Fields a request type asked for before the brief existed carry no group.
+    They are what the requester came to answer, so they lead, under the first
+    heading.
+  */
+  const groups = React.useMemo(() => {
+    const shown = fields.filter((field) => visible(field, answers, expanded));
+    const order = sections.data ?? [];
+    const known = new Set(order.map((section) => section.key));
+    return order
+      .map((section) => ({
+        ...section,
+        title: `${section.letter}. ${section.title}`,
+        fields: shown.filter((field) => {
+          const key = field.section && known.has(field.section) ? field.section : "brief";
+          return key === section.key;
+        }),
+      }))
+      .filter((group) => group.fields.length > 0);
+  }, [fields, answers, expanded, sections.data]);
+
   if (types.loading) return <Spinner />;
   if (!type) return <Refusal title="That request type is not available" />;
 
   const anyPrivacy = Object.values(declaration).some(Boolean);
   const entities = me?.entities ?? [];
   const fieldErrors = submit.error?.fieldErrors ?? {};
-  const hasProgressive = type.fields.some((field) => field.progressive);
+  const hasProgressive = fields.some((field) => field.progressive);
+
+
 
   return (
     <div className="space-y-6">
@@ -158,13 +189,24 @@ export default function NewRequest() {
         </CardBody>
       </Card>
 
-      <Card>
-        <CardHeader title="About the request" />
+      {/*
+        The Contract Brief, section 3 of the guide, in its own nine groups.
+
+        Twenty-five fields in one column is a form nobody finishes, and the
+        guide's own lettering is what the legal team already uses when they ask
+        for something missing, so a group carries its letter. Only the groups
+        Legal cannot start without are asked plainly; the rest sit behind
+        optional detail.
+      */}
+      {groups.map((group) => (
+      <Card key={group.key}>
+        <CardHeader
+          title={group.title}
+          subtitle={group.intent}
+        />
         <CardBody className="space-y-4">
-          {type.fields
-            .filter((field) => visible(field, answers, expanded))
-            .map((field) => (
-              <Field
+          {group.fields.map((field) => (
+            <Field
                 key={field.name}
                 label={field.label}
                 required={field.mandatory}
@@ -204,16 +246,17 @@ export default function NewRequest() {
                     ) : null}
                   </div>
                 )}
-              </Field>
-            ))}
-
-          {hasProgressive && !expanded ? (
-            <Button variant="ghost" size="sm" onClick={() => setExpanded(true)}>
-              Add optional detail
-            </Button>
-          ) : null}
+            </Field>
+          ))}
         </CardBody>
       </Card>
+      ))}
+
+      {hasProgressive && !expanded ? (
+        <Button variant="ghost" size="sm" onClick={() => setExpanded(true)}>
+          Add the rest of the brief
+        </Button>
+      ) : null}
 
       <Card>
         <CardHeader

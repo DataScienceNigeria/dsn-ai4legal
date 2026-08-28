@@ -186,3 +186,75 @@ class MatterLink(UUIDPrimaryKey, Base):
         PgUUID(as_uuid=True), ForeignKey("matter.id", ondelete="CASCADE"), nullable=False
     )
     link_type: Mapped[str] = mapped_column(String(32), default="related")
+
+
+class ConsultantReview(UUIDPrimaryKey, Timestamped, EntityScoped, Base):
+    """External counsel asked to read a draft, and what they said about it.
+
+    Stage 3 of the guide. Legal shares the draft with the designated Legal
+    Consultant, assesses their comments, and incorporates what it accepts while
+    holding the organisation's position.
+
+    A review rather than an approval, and the distinction is the whole design.
+    The guide's responsibility matrix has the consultant leading legal review
+    alongside Legal, which is a reader's authority; nothing here lets them
+    approve, publish, sign, or change a document. They write, Legal decides. The
+    same rule the platform applies to its own model layer, applied to a person
+    who is not on the staff.
+
+    Access is a grant, not a role. Asking for a review names the consultant on
+    that matter and nothing else, so a consultant engaged on one negotiation
+    cannot read the rest of the portfolio.
+    """
+
+    __tablename__ = "consultant_review"
+
+    matter_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("matter.id", ondelete="CASCADE"), nullable=False,
+        index=True,
+    )
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("document.id", ondelete="SET NULL")
+    )
+    consultant_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False,
+        index=True,
+    )
+    requested_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("app_user.id", ondelete="SET NULL")
+    )
+
+    brief: Mapped[str] = mapped_column(Text, nullable=False)
+    """What Legal is asking them to look at.
+
+    Required, because "please review" is how a consultant bills for reading the
+    whole agreement to answer a question about one clause."""
+
+    due_date: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(
+        String(24), default="requested", nullable=False, index=True
+    )
+    comments: Mapped[str | None] = mapped_column(Text)
+    returned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    assessment: Mapped[str | None] = mapped_column(Text)
+    """What Legal did with the comments.
+
+    The guide says Legal assesses the comments and incorporates the appropriate
+    amendments while maintaining the organisation's position. Recording which
+    were taken and which were not is what makes the second half of that sentence
+    auditable rather than aspirational."""
+
+    assessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    assessed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("app_user.id", ondelete="SET NULL")
+    )
+
+    matter: Mapped[Matter] = relationship("Matter", viewonly=True)
+    consultant: Mapped["User"] = relationship(  # noqa: F821
+        "User", foreign_keys=[consultant_id], lazy="joined", viewonly=True
+    )
+
+    @property
+    def consultant_name(self) -> str | None:
+        return self.consultant.name if self.consultant else None

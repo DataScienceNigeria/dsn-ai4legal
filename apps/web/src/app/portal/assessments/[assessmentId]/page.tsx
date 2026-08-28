@@ -224,6 +224,7 @@ export default function PortalAssessment() {
                   question={question}
                   value={answers[question.key]}
                   readOnly={locked}
+                  imported={(record.data?.imported_fields ?? []).includes(question.key)}
                   onChange={(value) => set(question.key, value)}
                 />
               ))}
@@ -321,17 +322,40 @@ function QuestionField({
   question,
   value,
   readOnly,
+  imported,
   onChange,
 }: Readonly<{
   question: DpiaQuestion;
   value: unknown;
   readOnly: boolean;
+  imported?: boolean;
   onChange: (value: unknown) => void;
 }>) {
   const chosen = Array.isArray(value) ? (value as string[]) : [];
 
+  /*
+    Where the answer came from.
+
+    An answer lifted out of a document written a year ago is not the same
+    evidence as one somebody typed today knowing it would be assessed, and the
+    person reading it should be able to tell. It is also what makes the import
+    safe to correct: they can see which fields were filled for them.
+  */
   return (
-    <Field label={question.label} hint={question.help_text ?? undefined} required={question.required}>
+    <Field
+      label={
+        imported ? (
+          <span className="flex flex-wrap items-center gap-2">
+            {question.label}
+            <Pill tone="info">From your document</Pill>
+          </span>
+        ) : (
+          question.label
+        )
+      }
+      hint={question.help_text ?? undefined}
+      required={question.required}
+    >
       {question.kind === "long_text" ? (
         <Textarea
           value={String(value ?? "")}

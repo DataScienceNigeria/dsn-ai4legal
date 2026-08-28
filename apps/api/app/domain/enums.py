@@ -45,11 +45,33 @@ class Role(StrEnum):
     permission attached, and it made every DPIA wait on one calendar. Data
     protection is now what it is in practice, part of legal's work.
     """
+    FINANCE = "finance"
+    """Confirms contract value, payment structure, milestones, budget
+    availability and tax. The guide makes Finance the lead on payment
+    confirmation, and a draft that reached the external party without it was a
+    draft nobody had checked the money on."""
+
+    PROCUREMENT = "procurement"
+    """Confirms vendor requirements, the procurement process, vendor
+    documentation and the approvals it needs. Lead on procurement confirmation
+    in the guide's responsibility matrix."""
+
+    CONSULTANT = "consultant"
+    """External counsel. Reads a draft and comments on it; cannot approve,
+    publish, sign or see anything outside the matters they are asked about.
+    The guide has them leading legal review alongside Legal, which is a
+    reviewer's authority and not a decision-maker's."""
+
     ADMIN = "admin"
     AUDITOR = "auditor"
     COUNTERPARTY = "counterparty"
 
 LEGAL_ROLES: frozenset[Role] = frozenset({Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN})
+
+#: Roles that confirm one aspect of a draft without owning it. They are asked a
+#: question inside their competence and answer it; none of them can bind the
+#: organisation, and none is a substitute for the legal lead's clearance.
+CONFIRMING_ROLES: frozenset[Role] = frozenset({Role.FINANCE, Role.PROCUREMENT})
 
 class MatterState(StrEnum):
     """PRD section 8.2, matter state model."""

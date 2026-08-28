@@ -30,7 +30,35 @@ def _decorate(db, contract: Contract) -> ContractOut:
     matter = db.get(Matter, contract.matter_id)
     if matter:
         model.matter_number = matter.number
+
+    # A varied agreement is two documents and the register has to show both.
+    if contract.amends_contract_id:
+        original = db.get(Contract, contract.amends_contract_id)
+        model.amends_reference = original.reference if original else None
     return model
+
+
+@router.get("/contracts/mine")
+def my_contracts(
+    db: Db, principal: CurrentUser, entity: WorkingEntity
+) -> list[ContractOut]:
+    """The agreements this person's matters produced.
+
+    Section 15 of the guide puts day-to-day performance with the department that
+    asked for the work, and a person cannot be accountable for a record they
+    cannot open. Theirs and nobody else's: a department lead is not legal staff
+    and the portfolio is not theirs to read.
+    """
+    stmt = (
+        select(Contract)
+        .join(Matter, Matter.id == Contract.matter_id)
+        .where(
+            Contract.entity == entity,
+            Matter.requester_id == uuid.UUID(principal.user_id),
+        )
+        .order_by(Contract.effective_date.desc().nulls_last())
+    )
+    return [_decorate(db, contract) for contract in db.execute(stmt).scalars()]
 
 
 @router.get("/contracts")

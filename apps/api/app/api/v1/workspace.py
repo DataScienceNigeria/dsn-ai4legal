@@ -16,7 +16,7 @@ from sqlalchemy import func, or_, select
 
 from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import NotFound
-from app.db.models.contract import Contract, Obligation
+from app.db.models.contract import Contract, ContractChangeRequest, ContractIssue, Obligation
 from app.db.models.counterparty import Counterparty
 from app.db.models.document import ReviewFinding
 from app.db.models.governance import Assessment, Communication, ComplianceItem
@@ -30,6 +30,7 @@ from app.domain.enums import (
     ObligationStatus,
     Role,
 )
+from app.domain.lifecycle import ISSUE_SETTLED
 from app.schemas.workspace import (
     NavCounts,
     NotificationOut,
@@ -135,6 +136,22 @@ def nav_counts(db: Db, principal: CurrentUser, entity: WorkingEntity) -> NavCoun
             ),
         ),
         compliance=_compliance_due(db, entity, today),
+        # An issue nobody has settled and a change nobody has determined are
+        # both somebody in Legal not having answered yet.
+        lifecycle=_count(
+            db,
+            select(ContractIssue.id).where(
+                ContractIssue.entity == entity,
+                ContractIssue.status.notin_(list(ISSUE_SETTLED)),
+            ),
+        )
+        + _count(
+            db,
+            select(ContractChangeRequest.id).where(
+                ContractChangeRequest.entity == entity,
+                ContractChangeRequest.decision == "pending",
+            ),
+        ),
     )
 
 

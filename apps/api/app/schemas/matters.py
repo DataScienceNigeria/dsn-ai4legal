@@ -356,6 +356,19 @@ class ContractOut(ApiModel):
     """The matter this agreement came out of, named rather than linked from the
     list, so the archive does not read as a way back to where you started."""
 
+    # The register, section 14 of the guide.
+    status: str = "executed"
+    user_department: str | None = None
+    contract_owner_name: str | None = None
+    payment_terms: str | None = None
+    key_deliverables: str | None = None
+    termination_deadline: date | None = None
+    remarks: str | None = None
+    amends_contract_id: UUID | None = None
+    amends_reference: str | None = None
+    open_issue_count: int = 0
+    open_change_count: int = 0
+
 
 class ObligationOut(ApiModel):
     id: UUID

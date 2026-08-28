@@ -3,7 +3,8 @@
 The capability register carries a metric, a gate expression and a threshold.
 Until something measures them, those are a declaration rather than a control.
 This runs a capability over its golden set, scores it by the metric the
-register names, records the run, and lets the gate act on the result.
+register names and records the run. It does not act on the result: a failing
+score is reported to the people who own the capability, and they decide.
 
 Scoring is deterministic and lives here rather than in a model, because a gate
 whose measurement is itself generated is not a gate.
@@ -28,7 +29,7 @@ from app.core import audit
 from app.db.models.ai import Capability, EvaluationRun
 from app.db.models.evaluation import GoldenCase, GoldenSet
 from app.db.models.platform import MemoryChunk
-from app.domain.enums import CapabilityState, DataClass
+from app.domain.enums import DataClass
 
 logger = logging.getLogger(__name__)
 
@@ -345,6 +346,121 @@ SCORERS: dict[str, Callable[..., Measurement]] = {
 }
 
 
+@dataclass(frozen=True)
+class CaseShape:
+    """What a case's expected answer must hold for this capability's scorer.
+
+    A case whose expected answer is shaped wrong does not error, it scores
+    zero, and a zero from a typo looks exactly like a zero from a bad model.
+    The shape is published so a set can be checked before it is measured
+    against, and shown in the interface so nobody has to read the scorer.
+    """
+
+    keys: tuple[str, ...]
+    example: dict
+    note: str
+
+
+SHAPES: dict[str, CaseShape] = {
+    "inbox_classification": CaseShape(
+        keys=("classification",),
+        example={"classification": "action_required"},
+        note=(
+            "One of the classifications the capability may return. Scored as "
+            "macro F1 across the classes present in the set."
+        ),
+    ),
+    "fact_extraction": CaseShape(
+        keys=("values",),
+        example={
+            "values": [
+                {"field_name": "counterparty_name", "value": "Kairos Systems Limited"},
+                {"field_name": "contract_value", "value": "45000000"},
+            ]
+        },
+        note=(
+            "Every field the document states, with the value as written. "
+            "Matched on field name and value together, case and spacing "
+            "insensitive."
+        ),
+    ),
+    "clause_retrieval_answer": CaseShape(
+        keys=("references",),
+        example={"references": ["CL-LIM-004", "CL-IND-002"]},
+        note=(
+            "The sources a correct answer must have retrieved, by reference. "
+            "Scored as recall at five, so put the ones that matter first."
+        ),
+    ),
+    "ai_first_draft": CaseShape(
+        keys=(),
+        example={},
+        note=(
+            "No expected answer. A draft is scored on whether its own clauses "
+            "are supported by the material it was given, so the case needs an "
+            "input and nothing else."
+        ),
+    ),
+    "deviation_detection": CaseShape(
+        keys=("critical_categories",),
+        example={"critical_categories": ["limitation_of_liability", "indemnity"]},
+        note=(
+            "The clause categories a reviewer would raise as critical. Scored "
+            "as recall on those, with the false positive rate reported beside "
+            "it."
+        ),
+    ),
+    "obligation_extraction": CaseShape(
+        keys=("dated_obligations",),
+        example={"dated_obligations": ["Quarterly service report", "Annual audit right"]},
+        note=(
+            "The obligations that carry a date, named as a reviewer would name "
+            "them. Undated duties are out of scope and are not counted against "
+            "the score."
+        ),
+    ),
+    "management_summary": CaseShape(
+        keys=("figures",),
+        example={"figures": ["14", "3", "92"]},
+        note=(
+            "Every number the summary is allowed to use, as a string. A line "
+            "carrying a number that is not in this list is not attributable."
+        ),
+    ),
+}
+
+
+def shape_of(code: str) -> CaseShape | None:
+    return SHAPES.get(code)
+
+
+def check_case(code: str, reference: str, prompt: str, expected: Any) -> list[str]:
+    """Everything wrong with one case, in words, before it is stored."""
+    problems: list[str] = []
+    if not str(reference or "").strip():
+        problems.append("It has no reference.")
+    if not str(prompt or "").strip():
+        problems.append(f"{reference or 'A case'} has no input.")
+
+    shape = SHAPES.get(code)
+    if shape is None:
+        return problems
+    if not isinstance(expected, dict):
+        problems.append(f"{reference}: the expected answer must be an object.")
+        return problems
+    for key in shape.keys:
+        if key not in expected:
+            problems.append(f"{reference}: the expected answer has no {key}.")
+            continue
+        value = expected[key]
+        if key == "classification":
+            if not str(value or "").strip():
+                problems.append(f"{reference}: classification is empty.")
+        elif not isinstance(value, list) or not value:
+            problems.append(f"{reference}: {key} must be a list holding at least one entry.")
+    return problems
+
+
 def active_set(session: Session, code: str) -> GoldenSet | None:
     return (
         session.execute(
@@ -454,10 +570,12 @@ def record(
     actor_id: str | None = None,
     actor_label: str = "The evaluation schedule",
 ) -> EvaluationRun:
-    """Write the result and let the gate act on it.
+    """Write the result. The gate is a reading, not an action.
 
-    A capability that falls below its gate is disabled here rather than at the
-    point of use, so it stops running everywhere at once and says why.
+    Nothing here changes the capability's state. A score below the threshold
+    shows in the register as a failure and stays that way until a person acts
+    on it, because a capability that switches itself off is an outage nobody
+    chose and the fault is as often the set as the model.
     """
     passed = measurement.score >= (capability.gate_threshold or 0.0)
     run = EvaluationRun(
@@ -488,14 +606,10 @@ def record(
     capability.last_evaluated_at = run.run_at
     capability.golden_set = golden_set_name
 
-    auto_disables = not passed and capability.gate_enforced
-    if auto_disables and capability.state == CapabilityState.ENABLED.value:
-        capability.state = CapabilityState.DISABLED.value
-        capability.disabled_reason = (
-            f"Scored {measurement.score:.3f} against a gate of {capability.gate_threshold} "
-            f"on the {golden_set_name} set of {set_size} cases. Disabled automatically."
-        )
-
+    # A failing score is recorded and shown. It does not switch the capability
+    # off. Something that turns itself off mid-morning is an outage the people
+    # who own it did not choose, and the register is read by the people who can
+    # make that call.
     audit.record(
         session,
         action="capability_evaluated",

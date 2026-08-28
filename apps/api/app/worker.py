@@ -473,8 +473,10 @@ def _as_date(raw: str):
 def evaluation_sweep() -> dict:
     """Re-measure every capability that has an active golden set.
 
-    A capability that falls below its gate is disabled by the harness, so this
-    is what turns the register's thresholds from a statement into a control.
+    Nothing is switched off here. A capability nobody has measured for a
+    quarter is a capability nobody can defend, so the schedule takes the
+    reading whether or not anyone remembers, and the register carries the
+    failures to whoever owns them.
     """
     from app.services import evaluation
 
