@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-import { Icon } from "@/components/app/icons";
+import { Icon, type IconName } from "@/components/app/icons";
 import { MfaEnrolment } from "@/components/app/mfa-enrolment";
 import { useRoles, useSession } from "@/components/app/session";
 import { StepUpGate } from "@/components/app/step-up";
@@ -16,6 +16,7 @@ import {
   DataState,
   Field,
   Input,
+  KeyValue,
   Modal,
   Mono,
   Notice,
@@ -33,6 +34,7 @@ import type {
   AuditRow,
   ConnectorRow,
   DeletionRow,
+  EgressRow,
   ExportRow,
   OrganisationRow,
   QualitySampleRow,
@@ -44,23 +46,16 @@ import { cn, decisionTone, entityTone, formatDateTime, titleCase } from "@/lib/u
 const RETENTION_COLS = "minmax(0,1fr) 6.875rem 8.75rem 8.125rem minmax(0,1.2fr)";
 const EXPORT_COLS = "9.375rem minmax(0,1.4fr) 7.5rem 10rem";
 const DELETION_COLS = "8.75rem minmax(0,1.2fr) 7.5rem 11.25rem 10rem";
-const CONNECTOR_COLS = "minmax(0,1.2fr) 6.875rem minmax(0,1.4fr) 11.875rem 6.25rem";
-const PEOPLE_COLS = "minmax(0,1.2fr) minmax(0,1.1fr) 6.25rem 8.75rem 6.875rem 8.75rem";
-const CONFIG_COLS = "minmax(0,1fr) minmax(0,1.6fr) 5rem 7.5rem";
+const CONNECTOR_COLS =
+  "minmax(0,1.5fr) 6.25rem 12.5rem 8.75rem 10rem 4.375rem";
+const PEOPLE_COLS = "minmax(0,1.2fr) minmax(0,1.1fr) 5.625rem minmax(0,1fr) 7.5rem 8.125rem";
+const PEOPLE_COLS_WRITE =
+  "minmax(0,1.2fr) minmax(0,1.1fr) 5.625rem minmax(0,1fr) 7.5rem 8.125rem 9.375rem";
 const SAMPLE_COLS = "7.5rem 9.375rem minmax(0,1fr) 8.125rem 9.375rem";
 
-const CONFIG_AREAS = [
-  "sla",
-  "tiering",
-  "authority",
-  "retention",
-  "notifications",
-  "ai",
-  "intake",
-];
 
 const SAMPLE_OUTCOMES = ["sound", "minor_issue", "material_issue"];
-const AUDIT_COLS = "10.625rem 10rem minmax(0,1fr) 9.375rem 5.625rem";
+const AUDIT_COLS = "10.625rem 10rem minmax(0,1fr) minmax(0,13rem) 5.625rem";
 
 const RECORD_CLASSES = [
   "matter",
@@ -272,9 +267,12 @@ function Boundary() {
       <StepUpGate action="Approving a deletion" state={decideDeletion} />
 
       <Card>
-        <CardHeader title="Request a bulk export" />
+        <CardHeader
+          title="Request a bulk export"
+          subtitle="Somebody else approves it. Restricted content is never included, whoever asks."
+        />
         <CardBody>
-          <div className="flex flex-wrap items-end gap-3">
+          <div className="grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
             <Field label="Record class">
               <Select
                 value={form.record_class}
@@ -287,22 +285,25 @@ function Boundary() {
                 ))}
               </Select>
             </Field>
-            <div className="min-w-[17.5rem] flex-1">
-              <Field label="Reason">
-                <Textarea
-                  rows={2}
-                  value={form.reason}
-                  onChange={(event) => setForm({ ...form, reason: event.target.value })}
-                  placeholder="What the export is for and who asked for it"
-                />
-              </Field>
-            </div>
+            <Field label="Reason" required>
+              <Textarea
+                rows={2}
+                value={form.reason}
+                onChange={(event) => setForm({ ...form, reason: event.target.value })}
+                placeholder="What the export is for and who asked for it"
+              />
+            </Field>
+          </div>
+          <div className="mt-4 flex items-center justify-between gap-3 border-t pt-4">
+            <p className="text-xs text-muted-foreground">
+              Internal and below. Five export requests a day, per person.
+            </p>
             <Button
               variant="primary"
-              disabled={requestExport.busy || form.reason === ""}
+              disabled={requestExport.busy || form.reason.trim() === ""}
               onClick={() => requestExport.run()}
             >
-              Request
+              {requestExport.busy ? "Requesting" : "Request the export"}
             </Button>
           </div>
         </CardBody>
@@ -423,57 +424,166 @@ function Boundary() {
   );
 }
 
+const EGRESS_COLS = "11.25rem 10rem minmax(0,1fr) 8.125rem 7.5rem";
+
+function ReviewDate({ value }: Readonly<{ value: string | null }>) {
+  if (value === null) {
+    return <span className="text-xs text-muted-foreground">Never reviewed</span>;
+  }
+  const overdue = new Date(value).getTime() < Date.now();
+  return (
+    <Pill tone={overdue ? "warn" : "neutral"}>
+      {overdue ? `Due ${formatDateTime(value)}` : formatDateTime(value)}
+    </Pill>
+  );
+}
+
+/*
+  Registration is a deployment act, not a screen. A connector is code that
+  knows how to talk to something, and a row added here would name a route
+  nothing can travel. What a register answers is the opposite question, and
+  that one belongs on a screen: what routes exist, who owns each, what each may
+  carry, when somebody last looked at it, and what has actually gone through.
+*/
 function Connectors() {
   const connectors = useApi<ConnectorRow[]>("/connectors");
+  const [chosen, setChosen] = React.useState("");
+  const egress = useApi<EgressRow[]>(
+    `/connectors/egress${chosen ? `?connector=${encodeURIComponent(chosen)}` : ""}`,
+    [chosen],
+  );
   const rows = connectors.data ?? [];
+  const sent = egress.data ?? [];
+
   return (
-    <Card>
-      <CardHeader
-        title="Every route out of the platform"
-        subtitle="A connector that is not registered here cannot carry data anywhere."
-      />
-      <div className="table-scroll">
-        <div className="min-w-[56.25rem]">
-          <Row cols={CONNECTOR_COLS} head>
-            <div>Connector</div>
-            <div>Direction</div>
-            <div>Purpose</div>
-            <div>Permitted classes</div>
-            <div>Active</div>
-          </Row>
-          <DataState
-            loading={connectors.loading}
-            errorMessage={connectors.error?.message}
-            errorTitle="Connectors are not available to you"
-            isEmpty={rows.length === 0}
-            emptyTitle="No connector is registered"
-          >
-            {rows.map((row) => (
-              <Row key={row.code} cols={CONNECTOR_COLS}>
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">{row.name}</div>
-                  <Mono>{row.code}</Mono>
-                </div>
-                <div className="text-sm">{titleCase(row.direction)}</div>
-                <div className="text-sm">{row.purpose}</div>
-                <div className="flex flex-wrap gap-1">
-                  {row.permitted_data_classes.map((value) => (
-                    <Pill key={value} tone={value === "restricted" ? "bad" : "neutral"}>
-                      {titleCase(value)}
-                    </Pill>
-                  ))}
-                </div>
-                <div>
-                  <Pill tone={row.active ? "good" : "neutral"}>
-                    {row.active ? "Active" : "Off"}
-                  </Pill>
-                </div>
-              </Row>
-            ))}
-          </DataState>
+    <div className="space-y-4">
+      <Notice tone="info" title="A route has to exist here before anything travels it">
+        Each connector is code that knows how to talk to one thing, so they arrive with a
+        deployment rather than from this screen. What the register answers is which routes exist,
+        who owns each, and what each may carry.
+      </Notice>
+
+      <Card>
+        <CardHeader
+          title="Every route in and out of the platform"
+          subtitle="A connector that is not registered here cannot carry anything anywhere."
+        />
+        <div className="table-scroll">
+          <div className="min-w-[68rem]">
+            <Row cols={CONNECTOR_COLS} head>
+              <div>Connector</div>
+              <div>Direction</div>
+              <div>Permitted classes</div>
+              <div>Owner</div>
+              <div>Next review</div>
+              <div>Calls</div>
+            </Row>
+            <DataState
+              loading={connectors.loading}
+              errorMessage={connectors.error?.message}
+              errorTitle="Connectors are not available to you"
+              isEmpty={rows.length === 0}
+              emptyTitle="No connector is registered"
+            >
+              {rows.map((row) => (
+                <Row key={row.code} cols={CONNECTOR_COLS}>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium">{row.name}</span>
+                      {row.active ? null : <Pill tone="neutral">Off</Pill>}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">{row.purpose}</div>
+                    {row.scopes.length > 0 ? (
+                      <div className="mt-1 truncate text-xs text-muted-foreground/80">
+                        {row.scopes.join(", ")}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="text-sm">{titleCase(row.direction)}</div>
+                  <div className="flex flex-wrap gap-1">
+                    {row.permitted_data_classes.map((value) => (
+                      <Pill key={value} tone={value === "restricted" ? "bad" : "neutral"}>
+                        {titleCase(value)}
+                      </Pill>
+                    ))}
+                  </div>
+                  <div className="truncate text-sm">
+                    {row.owner ?? <span className="text-muted-foreground">Unowned</span>}
+                  </div>
+                  <div>
+                    <ReviewDate value={row.review_date} />
+                  </div>
+                  <div>
+                    <button
+                      type="button"
+                      className="text-sm tabular-nums underline-offset-2 hover:underline"
+                      onClick={() => setChosen(chosen === row.code ? "" : row.code)}
+                    >
+                      {row.calls}
+                    </button>
+                  </div>
+                </Row>
+              ))}
+            </DataState>
+          </div>
         </div>
-      </div>
-    </Card>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="What actually went through them"
+          subtitle="The register says what a route may carry. This says what it carried."
+          actions={
+            <Select value={chosen} onChange={(event) => setChosen(event.target.value)}>
+              <option value="">All connectors</option>
+              {rows.map((row) => (
+                <option key={row.code} value={row.code}>
+                  {row.name}
+                </option>
+              ))}
+            </Select>
+          }
+        />
+        <div className="table-scroll">
+          <div className="min-w-[56rem]">
+            <Row cols={EGRESS_COLS} head>
+              <div>When</div>
+              <div>Connector</div>
+              <div>Purpose</div>
+              <div>Class</div>
+              <div>Result</div>
+            </Row>
+            <DataState
+              loading={egress.loading}
+              errorMessage={egress.error?.message}
+              errorTitle="The egress log is not available to you"
+              isEmpty={sent.length === 0}
+              emptyTitle="Nothing has travelled this route"
+              emptyDetail="Every outbound call writes a line here as it is made."
+            >
+              {sent.map((row) => (
+                <Row key={row.id} cols={EGRESS_COLS}>
+                  <div className="text-xs text-muted-foreground">
+                    {formatDateTime(row.occurred_at)}
+                  </div>
+                  <Mono>{row.connector_code}</Mono>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm">{row.purpose}</div>
+                    {row.record_reference ? <Mono>{row.record_reference}</Mono> : null}
+                  </div>
+                  <div className="text-sm">{titleCase(row.data_class)}</div>
+                  <div>
+                    <Pill tone={row.result === "success" ? "good" : "bad"}>
+                      {titleCase(row.result)}
+                    </Pill>
+                  </div>
+                </Row>
+              ))}
+            </DataState>
+          </div>
+        </div>
+      </Card>
+    </div>
   );
 }
 
@@ -502,9 +612,12 @@ function ResetSecondFactor({
 
   return (
     <>
-      <Button size="sm" variant="destructive" onClick={() => setOpen(true)}>
-        Reset
-      </Button>
+      <IconButton
+        icon="shield"
+        tone="destructive"
+        label={`Reset the second factor for ${user.name}`}
+        onClick={() => setOpen(true)}
+      />
       <Confirm
         open={open}
         title={`Reset the second factor for ${user.name}`}
@@ -522,70 +635,741 @@ function ResetSecondFactor({
   );
 }
 
-function People() {
-  const users = useApi<UserRow[]>("/users");
-  const rows = users.data ?? [];
+/*
+  Four actions per person, and each label longer than the button. Icons with a
+  tooltip and an accessible name, because the row is what people scan and five
+  words of chrome on every row is what stopped them scanning it.
+*/
+function IconButton({
+  icon,
+  label,
+  tone = "default",
+  disabled,
+  onClick,
+}: Readonly<{
+  icon: IconName;
+  label: string;
+  tone?: "default" | "destructive" | "primary";
+  disabled?: boolean;
+  onClick: () => void;
+}>) {
   return (
-    <Card>
-      <CardHeader
-        title="People and effective permission"
-        subtitle="Permission is the intersection of role, entity and matter access."
-      />
-      <div className="table-scroll">
-        <div className="min-w-[53.75rem]">
-          <Row cols={PEOPLE_COLS} head>
-            <div>Name</div>
-            <div>Roles</div>
-            <div>Entities</div>
-            <div>Specialisms</div>
-            <div>Workload</div>
-            <div>Second factor</div>
-          </Row>
-          <DataState
-            loading={users.loading}
-            errorMessage={users.error?.message}
-            errorTitle="People are not available to you"
-            isEmpty={rows.length === 0}
-            emptyTitle="No person is registered"
-          >
-            {rows.map((user) => (
-              <Row key={user.id} cols={PEOPLE_COLS}>
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">{user.name}</div>
-                  <div className="truncate text-xs text-muted-foreground">{user.work_email}</div>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {user.roles.map((role) => (
-                    <Pill key={role} tone="neutral">
-                      {titleCase(role)}
-                    </Pill>
-                  ))}
-                </div>
-                <div className="text-sm">{user.entities.join(", ")}</div>
-                <div className="text-xs text-muted-foreground">
-                  {user.specialisms.length > 0 ? user.specialisms.join(", ") : "None recorded"}
-                </div>
-                <div className="text-sm">
-                  <Pill tone={user.workload >= user.workload_ceiling ? "warn" : "neutral"}>
-                    {`${user.workload} of ${user.workload_ceiling}`}
-                  </Pill>
-                </div>
-                <div>
-                  <ResetSecondFactor user={user} onDone={() => users.reload()} />
-                </div>
-              </Row>
-            ))}
-          </DataState>
-        </div>
-      </div>
-    </Card>
+    <Button
+      size="sm"
+      variant={tone === "default" ? "ghost" : tone}
+      className="h-8 w-8 border-border px-0"
+      title={label}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <Icon name={icon} className="h-4 w-4" />
+    </Button>
   );
 }
 
+/*
+  The five practice areas the platform issues matter numbers under. A
+  specialism is one of these, and a matter opening in that area proposes the
+  people who hold it before anybody else.
+*/
+const SPECIALISMS: { code: string; label: string }[] = [
+  { code: "com", label: "Commercial" },
+  { code: "emp", label: "Employment" },
+  { code: "ipr", label: "Intellectual property" },
+  { code: "dpr", label: "Data protection" },
+  { code: "crp", label: "Corporate" },
+];
+
+function SpecialismChoice({
+  value,
+  onChange,
+}: Readonly<{ value: string[]; onChange: (next: string[]) => void }>) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {SPECIALISMS.map((one) => {
+        const held = value.includes(one.code);
+        return (
+          <button
+            key={one.code}
+            type="button"
+            onClick={() =>
+              onChange(held ? value.filter((c) => c !== one.code) : [...value, one.code])
+            }
+            className={cn(
+              "rounded-full border px-2.5 py-1 text-xs transition-colors",
+              held
+                ? "border-primary bg-primary/15 text-foreground"
+                : "border-border text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {one.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function specialismLabels(codes: string[]): string {
+  return codes
+    .map((code) => SPECIALISMS.find((one) => one.code === code)?.label ?? titleCase(code))
+    .join(", ");
+}
+
+const ASSIGNABLE_ROLES = [
+  "requester",
+  "counsel",
+  "head_of_legal",
+  "finance",
+  "procurement",
+  "management",
+  "auditor",
+  "consultant",
+  "admin",
+];
+
+const ENTITIES = ["DSN", "EAI"];
+
+/*
+  Entity membership is the hard boundary, so it is offered as the three
+  answers there are rather than as a pair of checkboxes somebody can leave
+  empty. Reach is the intersection of role and entity, never the wider of
+  them: a person left on DSN alone cannot open an EAI matter whatever their
+  role says.
+*/
+function EntityChoice({
+  value,
+  onChange,
+}: Readonly<{ value: string[]; onChange: (next: string[]) => void }>) {
+  const current = value.length === 2 ? "both" : (value[0] ?? "DSN");
+  return (
+    <Select
+      value={current}
+      onChange={(event) =>
+        onChange(event.target.value === "both" ? [...ENTITIES] : [event.target.value])
+      }
+    >
+      <option value="DSN">DSN only</option>
+      <option value="EAI">EAI only</option>
+      <option value="both">Both entities</option>
+    </Select>
+  );
+}
+
+function RoleChoice({
+  value,
+  onChange,
+}: Readonly<{ value: string[]; onChange: (next: string[]) => void }>) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {ASSIGNABLE_ROLES.map((role) => {
+        const held = value.includes(role);
+        return (
+          <button
+            key={role}
+            type="button"
+            onClick={() =>
+              onChange(held ? value.filter((one) => one !== role) : [...value, role])
+            }
+            className={cn(
+              "rounded-full border px-2.5 py-1 text-xs transition-colors",
+              held
+                ? "border-primary bg-primary/15 text-foreground"
+                : "border-border text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {titleCase(role)}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/*
+  Adding somebody used to mean editing the seed file, which in practice meant
+  asking whoever had a terminal. The password is set here and never shown
+  again: it is hashed on the way in, and the audit records that it was set
+  rather than what it was.
+*/
+function AddPerson({ onDone }: Readonly<{ onDone: () => void }>) {
+  const [open, setOpen] = React.useState(false);
+  const [form, setForm] = React.useState({
+    name: "",
+    work_email: "",
+    roles: ["requester"] as string[],
+    entities: ["DSN"] as string[],
+    specialisms: [] as string[],
+    workload_ceiling: "10",
+    password: "",
+  });
+
+  const add = useAction(async () => {
+    await api("/users", {
+      method: "POST",
+      body: {
+        name: form.name,
+        work_email: form.work_email,
+        roles: form.roles,
+        entities: form.entities,
+        specialisms: form.specialisms,
+        workload_ceiling: Number(form.workload_ceiling) || 10,
+        password: form.password,
+      },
+    });
+    onDone();
+    setOpen(false);
+    setForm({ ...form, name: "", work_email: "", password: "", specialisms: [] });
+  });
+
+  const ready =
+    form.name.trim().length > 1 &&
+    /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.work_email.trim()) &&
+    form.roles.length > 0 &&
+    form.password.length >= 12;
+
+  return (
+    <>
+      <Button variant="primary" onClick={() => setOpen(true)}>
+        Add a person
+      </Button>
+      <Modal
+        open={open}
+        title="Add a person"
+        subtitle="Roles say what they may do. Entities say where. Reach is the intersection, never the wider of the two."
+        onClose={() => setOpen(false)}
+        footer={
+          <>
+            <Button onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="primary" disabled={!ready || add.busy} onClick={() => void add.run()}>
+              {add.busy ? "Adding" : "Add them"}
+            </Button>
+          </>
+        }
+      >
+        {add.error ? (
+          <Refusal
+            title="That person was not added"
+            reason={add.error.message}
+            reasons={Object.values(add.error.fieldErrors)}
+          />
+        ) : null}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Name" required>
+            <Input
+              value={form.name}
+              onChange={(event) => setForm({ ...form, name: event.target.value })}
+            />
+          </Field>
+          <Field label="Work email" required hint="This is also how they sign in.">
+            <Input
+              value={form.work_email}
+              onChange={(event) => setForm({ ...form, work_email: event.target.value })}
+            />
+          </Field>
+        </div>
+
+        <Field label="Roles" required>
+          <RoleChoice value={form.roles} onChange={(roles) => setForm({ ...form, roles })} />
+        </Field>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Entities" required>
+            <EntityChoice
+              value={form.entities}
+              onChange={(entities) => setForm({ ...form, entities })}
+            />
+          </Field>
+          <Field
+            label="Most open matters at once"
+            hint="The proposal will not put an eleventh matter on somebody set to ten."
+          >
+            <Input
+              inputMode="numeric"
+              value={form.workload_ceiling}
+              onChange={(event) => setForm({ ...form, workload_ceiling: event.target.value })}
+            />
+          </Field>
+        </div>
+
+        <Field
+          label="Practice areas"
+          hint="When a matter opens in one of these, the platform proposes them as its owner before anybody else."
+        >
+          <SpecialismChoice
+            value={form.specialisms}
+            onChange={(specialisms) => setForm({ ...form, specialisms })}
+          />
+        </Field>
+
+        <Field
+          label="First password"
+          required
+          hint="At least 12 characters. You will know it, so they are expected to change it."
+        >
+          <Input
+            type="password"
+            value={form.password}
+            onChange={(event) => setForm({ ...form, password: event.target.value })}
+          />
+        </Field>
+      </Modal>
+      <StepUpGate action="Adding a person" state={add} />
+    </>
+  );
+}
+
+function EditPerson({
+  user,
+  onDone,
+}: Readonly<{ user: UserRow; onDone: () => void }>) {
+  const [open, setOpen] = React.useState(false);
+  const [roles, setRoles] = React.useState(user.roles);
+  const [entities, setEntities] = React.useState(user.entities);
+  const [name, setName] = React.useState(user.name);
+  const [specialisms, setSpecialisms] = React.useState(user.specialisms);
+  const [ceiling, setCeiling] = React.useState(String(user.workload_ceiling));
+  const [reason, setReason] = React.useState("");
+
+  const save = useAction(async () => {
+    await api(`/users/${user.id}`, {
+      method: "PATCH",
+      body: {
+        name,
+        roles,
+        entities,
+        specialisms,
+        workload_ceiling: Number(ceiling) || user.workload_ceiling,
+        reason,
+      },
+    });
+    onDone();
+    setOpen(false);
+    setReason("");
+  });
+
+  return (
+    <>
+      <IconButton
+        icon="rename"
+        label={`Edit ${user.name}`}
+        onClick={() => {
+          setName(user.name);
+          setRoles(user.roles);
+          setEntities(user.entities);
+          setSpecialisms(user.specialisms);
+          setCeiling(String(user.workload_ceiling));
+          setOpen(true);
+        }}
+      />
+      <Modal
+        open={open}
+        title={`Edit ${user.name}`}
+        subtitle={user.work_email}
+        onClose={() => setOpen(false)}
+        footer={
+          <>
+            <Button onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              variant="primary"
+              disabled={roles.length === 0 || reason.trim().length < 4 || save.busy}
+              onClick={() => void save.run()}
+            >
+              {save.busy ? "Saving" : "Save"}
+            </Button>
+          </>
+        }
+      >
+        {save.error ? (
+          <Refusal
+            title="That change was refused"
+            reason={save.error.message}
+            reasons={Object.values(save.error.fieldErrors)}
+          />
+        ) : null}
+
+        <Field label="Name" required>
+          <Input value={name} onChange={(event) => setName(event.target.value)} />
+        </Field>
+
+        <Field label="Roles" required>
+          <RoleChoice value={roles} onChange={setRoles} />
+        </Field>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Entities" required>
+            <EntityChoice value={entities} onChange={setEntities} />
+          </Field>
+          <Field label="Most open matters at once">
+            <Input
+              inputMode="numeric"
+              value={ceiling}
+              onChange={(event) => setCeiling(event.target.value)}
+            />
+          </Field>
+        </div>
+
+        <Field
+          label="Practice areas"
+          hint="A matter opening in one of these proposes them as its owner first."
+        >
+          <SpecialismChoice value={specialisms} onChange={setSpecialisms} />
+        </Field>
+
+        <Field label="Why" required hint="Recorded beside what it was before.">
+          <Textarea value={reason} onChange={(event) => setReason(event.target.value)} />
+        </Field>
+      </Modal>
+      <StepUpGate action="Changing what somebody reaches" state={save} />
+    </>
+  );
+}
+
+function SetPassword({ user, onDone }: Readonly<{ user: UserRow; onDone: () => void }>) {
+  const [open, setOpen] = React.useState(false);
+  const [password, setPassword] = React.useState("");
+  const [reason, setReason] = React.useState("");
+
+  const save = useAction(async () => {
+    await api(`/users/${user.id}/password`, {
+      method: "POST",
+      body: { password, reason },
+    });
+    onDone();
+    setOpen(false);
+    setPassword("");
+    setReason("");
+  });
+
+  return (
+    <>
+      <IconButton
+        icon="key"
+        label={`Set a password for ${user.name}`}
+        onClick={() => setOpen(true)}
+      />
+      <Modal
+        open={open}
+        title={`Set a password for ${user.name}`}
+        subtitle="You will know this password, so it is a reset and not a recovery. They are expected to change it, and the act is on the audit under both names."
+        onClose={() => setOpen(false)}
+        footer={
+          <>
+            <Button onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              variant="primary"
+              disabled={password.length < 12 || reason.trim().length < 4 || save.busy}
+              onClick={() => void save.run()}
+            >
+              {save.busy ? "Setting" : "Set it"}
+            </Button>
+          </>
+        }
+      >
+        {save.error ? (
+          <Refusal title="It was not set" reason={save.error.message} />
+        ) : null}
+        <Field label="New password" required hint="At least 12 characters.">
+          <Input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </Field>
+        <Field label="Why" required>
+          <Input value={reason} onChange={(event) => setReason(event.target.value)} />
+        </Field>
+      </Modal>
+      <StepUpGate action="Setting somebody's password" state={save} />
+    </>
+  );
+}
+
+/*
+  Suspension bites on the next request rather than the next sign-in: the
+  active flag is read when a token is turned into a principal, so a session
+  already open stops at its next call. Nothing is ever deleted, because the
+  record is on decisions, approvals and the audit chain.
+*/
+function Suspend({ user, onDone }: Readonly<{ user: UserRow; onDone: () => void }>) {
+  const { me } = useSession();
+  const [open, setOpen] = React.useState(false);
+
+  const change = useAction(async (reason: string) => {
+    await api(`/users/${user.id}/status`, {
+      method: "POST",
+      body: { active: !user.active, reason },
+    });
+    onDone();
+    setOpen(false);
+  });
+
+  if (user.id === me?.id) return null;
+
+  return (
+    <>
+      <IconButton
+        icon={user.active ? "suspend" : "reinstate"}
+        tone={user.active ? "destructive" : "primary"}
+        label={user.active ? `Suspend ${user.name}` : `Reinstate ${user.name}`}
+        onClick={() => setOpen(true)}
+      />
+      <Confirm
+        open={open}
+        title={user.active ? `Suspend ${user.name}` : `Reinstate ${user.name}`}
+        detail={
+          user.active
+            ? "They stop at their next request, not at their next sign-in. Nothing of theirs is deleted, and their name stays on every decision they made."
+            : "They can sign in again with the password they already have."
+        }
+        confirmLabel={user.active ? "Suspend them" : "Reinstate them"}
+        destructive={user.active}
+        reasonLabel="Why"
+        busy={change.busy}
+        error={change.error?.message}
+        onCancel={() => setOpen(false)}
+        onConfirm={(reason: string) => void change.run(reason)}
+      />
+      <StepUpGate action="Suspending or reinstating somebody" state={change} />
+    </>
+  );
+}
+
+function People() {
+  const { has } = useRoles();
+  const canWrite = has("admin", "head_of_legal");
+  const users = useApi<UserRow[]>("/users");
+  const rows = users.data ?? [];
+  const cols = canWrite ? PEOPLE_COLS_WRITE : PEOPLE_COLS;
+
+  return (
+    <div className="space-y-4">
+      <Notice tone="info" title="Reach is role and entity together">
+        A role says what somebody may do, an entity says where, and somebody on DSN alone cannot
+        open an EAI matter. Nobody is deleted: suspension stops them at their next request and
+        leaves their name on the work they did.
+      </Notice>
+
+      <Card>
+        <CardHeader
+          title="People and effective permission"
+          subtitle="Permission is the intersection of role, entity and matter access."
+          actions={canWrite ? <AddPerson onDone={() => users.reload()} /> : null}
+        />
+        <div className="table-scroll">
+          <div className={canWrite ? "min-w-[70rem]" : "min-w-[56rem]"}>
+            <Row cols={cols} head>
+              <div>Name</div>
+              <div>Roles</div>
+              <div>Entities</div>
+              <div>Practice areas</div>
+              <div>Open matters</div>
+              <div>Second factor</div>
+              {canWrite ? <div>Actions</div> : null}
+            </Row>
+            <DataState
+              loading={users.loading}
+              errorMessage={users.error?.message}
+              errorTitle="People are not available to you"
+              isEmpty={rows.length === 0}
+              emptyTitle="No person is registered"
+            >
+              {rows.map((user) => (
+                <Row key={user.id} cols={cols}>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium">{user.name}</span>
+                      {user.active ? null : <Pill tone="bad">Suspended</Pill>}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {user.work_email}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {user.roles.map((role) => (
+                      <Pill key={role} tone="neutral">
+                        {titleCase(role)}
+                      </Pill>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {user.entities.map((entity) => (
+                      <span
+                        key={entity}
+                        className={cn(
+                          "rounded-full px-2 py-0.5 text-xs",
+                          entityTone(entity).chip,
+                        )}
+                      >
+                        {entity}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {user.specialisms.length > 0
+                      ? specialismLabels(user.specialisms)
+                      : "None recorded"}
+                  </div>
+                  <div className="text-sm">
+                    <Pill tone={user.workload >= user.workload_ceiling ? "warn" : "neutral"}>
+                      {`${user.workload} of ${user.workload_ceiling}`}
+                    </Pill>
+                  </div>
+                  <div>
+                    <Pill tone={user.mfa_enrolled ? "good" : "neutral"}>
+                      {user.mfa_enrolled ? "Enrolled" : "Not enrolled"}
+                    </Pill>
+                  </div>
+                  {canWrite ? (
+                    <div className="flex items-center gap-1.5">
+                      <EditPerson user={user} onDone={() => users.reload()} />
+                      <SetPassword user={user} onDone={() => users.reload()} />
+                      <ResetSecondFactor user={user} onDone={() => users.reload()} />
+                      <Suspend user={user} onDone={() => users.reload()} />
+                    </div>
+                  ) : null}
+                </Row>
+              ))}
+            </DataState>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function fieldText(value: unknown): string {
+  if (value === null || value === undefined) return "nothing";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+/*
+  What changed, rather than two objects side by side. A reader looking at an
+  audit row is asking one question, what is different, and answering it with
+  the whole before and the whole after makes them do the diff themselves on
+  the row where it matters most.
+*/
+function Changes({
+  before,
+  after,
+}: Readonly<{
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+}>) {
+  const keys = Array.from(
+    new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})]),
+  ).filter((key) => fieldText(before?.[key]) !== fieldText(after?.[key]));
+
+  if (keys.length === 0) {
+    return <p className="text-xs text-muted-foreground">No field-level state was recorded.</p>;
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {keys.map((key) => (
+        <div key={key} className="grid gap-1 sm:grid-cols-[10rem_minmax(0,1fr)]">
+          <div className="text-xs font-medium">{titleCase(key)}</div>
+          <div className="min-w-0 text-xs">
+            {before && key in before ? (
+              <span className="break-words text-muted-foreground line-through">
+                {fieldText(before[key])}
+              </span>
+            ) : null}
+            {before && key in before ? <span className="px-1.5 text-muted-foreground">to</span> : null}
+            <span className="break-words">{fieldText(after?.[key])}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/*
+  The row holds fourteen columns and the table has room for five. The rest are
+  the ones that answer what changed, from where, and whether this row can be
+  trusted, so they open underneath rather than living in a file nobody opens.
+*/
+function AuditDetail({ event }: Readonly<{ event: AuditRow }>) {
+  return (
+    <div className="border-b bg-muted/30 px-4 py-3">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        <div>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            What changed
+          </div>
+          <Changes before={event.before_state} after={event.after_state} />
+          {event.detail ? (
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{event.detail}</p>
+          ) : null}
+        </div>
+        <div className="space-y-1.5 text-xs">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Where it came from, and where it sits
+          </div>
+          <KeyValue
+            rows={[
+              ["Address", event.ip_address ?? "Not recorded"],
+              ["Session", event.session_id ?? "Not recorded"],
+              ["Entity", event.entity ?? "None"],
+              ["Position", `#${event.sequence}`],
+            ]}
+          />
+          <div>
+            <div className="text-muted-foreground">Digest</div>
+            <Mono className="block break-all">{event.digest}</Mono>
+          </div>
+          <div>
+            <div className="text-muted-foreground">Follows</div>
+            <Mono className="block break-all">{event.previous_digest ?? "Nothing, this is the first row"}</Mono>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function isoDay(offsetDays: number): string {
+  const day = new Date();
+  day.setDate(day.getDate() + offsetDays);
+  return day.toISOString().slice(0, 10);
+}
+
+/*
+  The ranges people actually ask for. A date pair answers anything else, and
+  All is first and the default so the first question a reader has of a trail,
+  is the thing I am looking for in here at all, is answerable before they have
+  narrowed anything.
+*/
+const AUDIT_RANGES = [
+  { id: "all", label: "All" },
+  { id: "today", label: "Today" },
+  { id: "7", label: "Last 7 days" },
+  { id: "30", label: "Last 30 days" },
+  { id: "custom", label: "Between" },
+];
+
 function Audit() {
-  const [action, setAction] = React.useState("");
-  const query = action === "" ? "" : `?action=${encodeURIComponent(action)}`;
-  const events = useApi<AuditRow[]>(`/audit/events${query}`, [action]);
+  const [search, setSearch] = React.useState("");
+  const [opened, setOpened] = React.useState<string | null>(null);
+  const [range, setRange] = React.useState("all");
+  const [from, setFrom] = React.useState("");
+  const [to, setTo] = React.useState("");
+
+  const bounds = React.useMemo(() => {
+    if (range === "today") return { from_date: isoDay(0), to_date: isoDay(0) };
+    if (range === "7") return { from_date: isoDay(-6), to_date: isoDay(0) };
+    if (range === "30") return { from_date: isoDay(-29), to_date: isoDay(0) };
+    if (range === "custom") {
+      return { from_date: from || undefined, to_date: to || undefined };
+    }
+    return {};
+  }, [range, from, to]);
+
+  const filter = query({ q: search.trim() || undefined, ...bounds });
+  const events = useApi<AuditRow[]>(`/audit/events${filter}`, [filter]);
   const verify = useApi<{ reconciled: boolean; message: string }>("/audit/verify");
   const rows = events.data ?? [];
 
@@ -597,35 +1381,61 @@ function Audit() {
   */
   const save = useAction(async () => {
     const stamp = new Date().toISOString().slice(0, 10);
-    await download(`/audit/events.csv${query}`, `audit-${stamp}.csv`);
+    await download(`/audit/events.csv${filter}`, `audit-${stamp}.csv`);
   });
 
   return (
     <div className="space-y-4">
       {verify.data ? (
-        <Notice tone={verify.data.reconciled ? "good" : "warn"} title="Audit chain">
-          {verify.data.message}
+        <Notice
+          tone={verify.data.reconciled ? "good" : "warn"}
+          title="The audit trail is append-only and administrators cannot alter it"
+        >
+          {verify.data.message} Every row carries the digest of the one before it, so a row
+          removed or edited breaks the chain from that point on and this check says where.
         </Notice>
       ) : null}
 
       <Card>
-        <CardHeader
-          title="Audit trail"
-          subtitle="Append-only for the retention period. Administrators cannot alter it."
-          actions={
-            <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 border-b p-3">
+          <Input
+            className="min-w-[14rem] flex-1"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search actor, action, object or detail"
+          />
+          <Select
+            className="w-auto"
+            value={range}
+            onChange={(event) => setRange(event.target.value)}
+          >
+            {AUDIT_RANGES.map((one) => (
+              <option key={one.id} value={one.id}>
+                {one.label}
+              </option>
+            ))}
+          </Select>
+          {range === "custom" ? (
+            <>
               <Input
-                value={action}
-                onChange={(event) => setAction(event.target.value)}
-                placeholder="Filter by action"
+                type="date"
+                className="w-auto"
+                value={from}
+                onChange={(event) => setFrom(event.target.value)}
               />
-              <Button size="sm" disabled={save.busy} onClick={() => void save.run()}>
-                <Icon name="archive" className="h-4 w-4" />
-                {save.busy ? "Preparing" : "Export CSV"}
-              </Button>
-            </div>
-          }
-        />
+              <Input
+                type="date"
+                className="w-auto"
+                value={to}
+                onChange={(event) => setTo(event.target.value)}
+              />
+            </>
+          ) : null}
+          <Button disabled={save.busy} onClick={() => void save.run()}>
+            <Icon name="archive" className="h-4 w-4" />
+            {save.busy ? "Preparing" : "Export CSV"}
+          </Button>
+        </div>
         {save.error ? (
           <CardBody className="border-b">
             <Refusal title="The export was refused" reason={save.error.message} />
@@ -648,27 +1458,41 @@ function Audit() {
               emptyTitle="No event matches"
             >
               {rows.map((event) => (
-                <Row key={event.id} cols={AUDIT_COLS}>
-                  <div className="text-xs text-muted-foreground">
-                    {formatDateTime(event.occurred_at)}
-                  </div>
-                  <div className="truncate text-sm">{event.actor_label}</div>
-                  <div className="min-w-0">
-                    <div className="truncate text-sm">{event.action.replaceAll("_", " ")}</div>
-                    {event.detail ? (
-                      <div className="truncate text-xs text-muted-foreground">{event.detail}</div>
-                    ) : null}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate text-xs">{event.object_type}</div>
-                    {event.object_id ? <Mono>{event.object_id}</Mono> : null}
-                  </div>
-                  <div>
-                    <Pill tone={event.result === "success" ? "neutral" : "bad"}>
-                      {titleCase(event.result)}
-                    </Pill>
-                  </div>
-                </Row>
+                <React.Fragment key={event.id}>
+                  <Row cols={AUDIT_COLS}>
+                    <button
+                      type="button"
+                      className="text-left text-xs text-muted-foreground underline-offset-2 hover:underline"
+                      title="Open the full record"
+                      onClick={() => setOpened(opened === event.id ? null : event.id)}
+                    >
+                      {formatDateTime(event.occurred_at)}
+                    </button>
+                    <div className="truncate text-sm">{event.actor_label}</div>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm">{event.action.replaceAll("_", " ")}</div>
+                      {event.detail ? (
+                        <div className="truncate text-xs text-muted-foreground">
+                          {event.detail}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-xs">{event.object_type}</div>
+                      {event.object_id ? (
+                        <Mono className="block truncate" title={event.object_id}>
+                          {event.object_id}
+                        </Mono>
+                      ) : null}
+                    </div>
+                    <div>
+                      <Pill tone={event.result === "success" ? "neutral" : "bad"}>
+                        {titleCase(event.result)}
+                      </Pill>
+                    </div>
+                  </Row>
+                  {opened === event.id ? <AuditDetail event={event} /> : null}
+                </React.Fragment>
               ))}
             </DataState>
           </div>
@@ -677,19 +1501,6 @@ function Audit() {
     </div>
   );
 }
-
-/*
-  Configuration without deployment. Every change is a new version rather than
-  an edit, so the value that applied on any past date is still recoverable, and
-  a change needs a fresh authentication.
-*/
-type ConfigRow = {
-  area: string;
-  key: string;
-  value: unknown;
-  version: number;
-  description?: string | null;
-};
 
 /*
   What an agreement names us by, held once per entity instead of typed into
@@ -842,147 +1653,6 @@ function Organisations() {
   );
 }
 
-function Configuration() {
-  const [area, setArea] = React.useState("sla");
-  const settings = useApi<ConfigRow[]>(`/config/${area}`, [area]);
-  const [editing, setEditing] = React.useState<ConfigRow | null>(null);
-  const [draft, setDraft] = React.useState("");
-  const [newKey, setNewKey] = React.useState("");
-
-  const save = useAction(async (key: string, raw: string, version: number) => {
-    let parsed: unknown = raw;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      // Not JSON, so the value is stored as the plain string that was typed.
-    }
-    await api(`/config/${area}`, {
-      method: "PATCH",
-      body: { area, key, value: parsed, version, description: editing?.description ?? null },
-    });
-    settings.reload();
-    setEditing(null);
-    setNewKey("");
-  });
-
-  const rows = settings.data ?? [];
-
-  return (
-    <div className="space-y-4">
-      <Notice tone="info" title="Configuration is versioned, not overwritten">
-        Changing a value creates a new version and retires the old one. The change needs a fresh
-        authentication and lands on the audit trail with both the before and the after.
-      </Notice>
-
-      {save.error ? (
-        <Refusal title="That change was refused" reason={save.error.message} />
-      ) : null}
-
-      <StepUpGate action="Changing platform configuration" state={save} />
-
-      <Card>
-        <CardHeader
-          title="Settings"
-          actions={
-            <>
-              <Select value={area} onChange={(event) => setArea(event.target.value)}>
-                {CONFIG_AREAS.map((value) => (
-                  <option key={value} value={value}>
-                    {titleCase(value)}
-                  </option>
-                ))}
-              </Select>
-              <Input
-                className="w-44"
-                placeholder="New key"
-                value={newKey}
-                onChange={(event) => setNewKey(event.target.value)}
-              />
-              <Button
-                disabled={!newKey.trim()}
-                onClick={() =>
-                  setEditing({ area, key: newKey.trim(), value: "", version: 0 })
-                }
-              >
-                Add a setting
-              </Button>
-            </>
-          }
-        />
-        <div className="table-scroll">
-          <div className="min-w-[50rem]">
-            <Row cols={CONFIG_COLS} head>
-              <div>Key</div>
-              <div>Value</div>
-              <div>Version</div>
-              <div>Action</div>
-            </Row>
-            <DataState
-              loading={settings.loading}
-              errorMessage={settings.error?.message}
-              isEmpty={rows.length === 0}
-              emptyTitle="Nothing is configured in this area"
-            >
-              {rows.map((row) => (
-                <Row key={`${row.area}.${row.key}`} cols={CONFIG_COLS}>
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{row.key}</div>
-                    {row.description ? (
-                      <div className="truncate text-xs text-muted-foreground">{row.description}</div>
-                    ) : null}
-                  </div>
-                  <Mono>{JSON.stringify(row.value)}</Mono>
-                  <div className="text-sm tabular-nums">{row.version}</div>
-                  <div>
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        setEditing(row);
-                        setDraft(JSON.stringify(row.value));
-                      }}
-                    >
-                      Change
-                    </Button>
-                  </div>
-                </Row>
-              ))}
-            </DataState>
-          </div>
-        </div>
-      </Card>
-
-      <Modal
-        open={editing !== null}
-        title={editing ? `${editing.area}.${editing.key}` : ""}
-        subtitle="JSON is stored as JSON. Anything else is stored as the text you type."
-        width="sm"
-        onClose={() => setEditing(null)}
-        footer={
-          <>
-            <Button onClick={() => setEditing(null)}>Cancel</Button>
-            <Button
-              variant="primary"
-              disabled={save.busy}
-              onClick={() => void save.run(editing!.key, draft, editing!.version)}
-            >
-              Save a new version
-            </Button>
-          </>
-        }
-      >
-        <Field label="Value" required>
-          <Textarea value={draft} onChange={(event) => setDraft(event.target.value)} />
-        </Field>
-      </Modal>
-    </div>
-  );
-}
-
-/*
-  Tier 1 issues without review, so a sample of what it issued is pulled every
-  month and read by a person. The point is not to catch every fault, it is to
-  know whether the automation is still safe to leave alone.
-*/
 function QualitySamples() {
   const samples = useApi<QualitySampleRow[]>("/quality-sample");
   const [reviewing, setReviewing] = React.useState<QualitySampleRow | null>(null);
@@ -1113,7 +1783,6 @@ export default function Administration() {
           { id: "connectors", label: "Connectors" },
           { id: "people", label: "People" },
           { id: "organisation", label: "Organisation" },
-          { id: "config", label: "Configuration" },
           { id: "security", label: "Your security" },
           { id: "quality", label: "Quality sample" },
           { id: "audit", label: "Audit" },
@@ -1127,7 +1796,6 @@ export default function Administration() {
       {tab === "connectors" ? <Connectors /> : null}
       {tab === "people" ? <People /> : null}
       {tab === "organisation" ? <Organisations /> : null}
-      {tab === "config" ? <Configuration /> : null}
       {tab === "security" ? <MfaEnrolment /> : null}
       {tab === "quality" ? <QualitySamples /> : null}
       {tab === "audit" ? <Audit /> : null}

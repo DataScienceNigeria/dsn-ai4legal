@@ -629,6 +629,8 @@ export type UserRow = {
   workload: number;
   workload_ceiling: number;
   active: boolean;
+  mfa_enrolled: boolean;
+  last_login: string | null;
 };
 
 export type ExposureReport = {
@@ -739,7 +741,20 @@ export type ConnectorRow = {
   permitted_data_classes: string[];
   scopes: string[];
   review_date: string | null;
+  owner: string | null;
+  calls: number;
   active: boolean;
+};
+
+export type EgressRow = {
+  id: string;
+  occurred_at: string;
+  connector_code: string;
+  purpose: string;
+  record_reference: string | null;
+  data_class: string;
+  result: string;
+  detail: string | null;
 };
 
 export type ExportRow = {
@@ -765,7 +780,9 @@ export type DeletionRow = {
 
 export type AuditRow = {
   id: string;
+  sequence: number;
   occurred_at: string;
+  actor_id: string | null;
   actor_label: string;
   entity: string | null;
   object_type: string;
@@ -773,6 +790,12 @@ export type AuditRow = {
   action: string;
   result: string;
   detail: string | null;
+  before_state: Record<string, unknown> | null;
+  after_state: Record<string, unknown> | null;
+  ip_address: string | null;
+  session_id: string | null;
+  previous_digest: string | null;
+  digest: string;
 };
 
 export type QualitySampleRow = {

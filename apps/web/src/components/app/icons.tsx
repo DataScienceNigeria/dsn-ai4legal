@@ -35,7 +35,11 @@ export type IconName =
   | "rename"
   | "bell"
   | "check"
-  | "stop";
+  | "stop"
+  | "key"
+  | "shield"
+  | "suspend"
+  | "reinstate";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   bell: (
@@ -205,6 +209,35 @@ const PATHS: Record<IconName, React.ReactNode> = {
     </>
   ),
   stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
+  key: (
+    <>
+      <circle cx="8" cy="14" r="4" />
+      <path d="m11 11 8-8" />
+      <path d="m16 6 2 2" />
+      <path d="m19 3 2 2" />
+    </>
+  ),
+  shield: (
+    <>
+      <path d="M12 3 5 6v5.5c0 4 2.9 7.7 7 9.5 4.1-1.8 7-5.5 7-9.5V6l-7-3Z" />
+      <path d="m9 12 2 2 4-4" />
+    </>
+  ),
+  suspend: (
+    <>
+      <circle cx="10" cy="8" r="3.5" />
+      <path d="M3.5 20a6.5 6.5 0 0 1 9.6-5.7" />
+      <path d="M16 17h5" />
+    </>
+  ),
+  reinstate: (
+    <>
+      <circle cx="10" cy="8" r="3.5" />
+      <path d="M3.5 20a6.5 6.5 0 0 1 9.6-5.7" />
+      <path d="M18.5 14.5v5" />
+      <path d="M16 17h5" />
+    </>
+  ),
 };
 
 export function Icon({

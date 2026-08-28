@@ -11,6 +11,7 @@ from fastapi import Depends, Header, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.core import context
 from app.core.config import settings
 from app.core.errors import Forbidden, Unauthenticated
 from app.core.security import Principal, decode_token
@@ -59,6 +60,12 @@ def _local_account(principal: Principal) -> Principal:
         )
 
 
+def _remembered(principal: Principal) -> Principal:
+    """Put the session on the request context, for the audit to pick up."""
+    context.attach_session(principal.session_id)
+    return principal
+
+
 def get_principal(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> Principal:
@@ -73,18 +80,18 @@ def get_principal(
         # every endpoint that reads only claims kept working, and the first one
         # to look the account up answered with a refusal that named the wrong
         # cause.
-        return _local_account(decode_token(credentials.credentials))
+        return _remembered(_local_account(decode_token(credentials.credentials)))
 
     from app.core import oidc
 
     try:
-        return _local_account(oidc.verify(credentials.credentials))
+        return _remembered(_local_account(oidc.verify(credentials.credentials)))
     except Unauthenticated:
         # A deployment mid-migration can accept both, but only when it has been
         # told to. Off by default, because two accepted issuers is two ways in.
         if not settings.dsnlai_oidc_allow_local_fallback:
             raise
-        return decode_token(credentials.credentials)
+        return _remembered(decode_token(credentials.credentials))
 
 def get_session(
     principal: Annotated[Principal, Depends(get_principal)],

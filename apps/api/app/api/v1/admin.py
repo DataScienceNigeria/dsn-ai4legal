@@ -7,27 +7,29 @@ import hashlib
 import io
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.core import audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Conflict, Forbidden, NotFound, ValidationFailed
+from app.core.security import hash_password
 from app.db.models.ai import Capability, EvaluationRun
 from app.db.models.evaluation import GoldenCase, GoldenSet
-from app.db.models.organisation import ConfigSetting, Organisation, User
+from app.db.models.organisation import ConfigSetting, Organisation, User, UserEntity
 from app.db.models.platform import (
     AuditEvent,
     Connector,
     DeletionRequest,
+    EgressLog,
     ExportRequest,
     RetentionPolicy,
 )
-from app.domain.enums import CapabilityState, DataClass, Role
-from app.schemas.common import AuditEventOut, ConfigValue
+from app.domain.enums import CapabilityState, DataClass, Entity, Role
+from app.schemas.common import AuditEventOut
 from app.schemas.governance import (
     AIInteractionOut,
     CapabilityGateUpdate,
@@ -43,7 +45,11 @@ from app.schemas.governance import (
     MfaReset,
     OrganisationOut,
     OrganisationUpdate,
+    PasswordSet,
     SecondApproval,
+    UserCreate,
+    UserStatus,
+    UserUpdate,
 )
 from app.services import evaluation
 
@@ -437,6 +443,57 @@ def list_interactions(
     )
 
 
+def _audit_filtered(
+    stmt,
+    *,
+    object_type: str | None = None,
+    object_id: str | None = None,
+    action: str | None = None,
+    entity: str | None = None,
+    q: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+):
+    """One filter, applied identically to the screen and to the export.
+
+    An export that does not carry the filter the reader was looking at is a
+    different document from the one they asked for, and they have no way to
+    tell. Both go through here so they cannot drift.
+
+    ``to_date`` is inclusive. A reader asking for the 14th means the whole of
+    the 14th, and an exclusive bound silently drops the day they asked about.
+    """
+    if object_type:
+        stmt = stmt.where(AuditEvent.object_type == object_type)
+    if object_id:
+        stmt = stmt.where(AuditEvent.object_id == object_id)
+    if action:
+        stmt = stmt.where(AuditEvent.action == action)
+    if entity:
+        stmt = stmt.where(AuditEvent.entity == entity)
+    if q:
+        like = f"%{q.strip().lower()}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(AuditEvent.action).like(like),
+                func.lower(AuditEvent.actor_label).like(like),
+                func.lower(AuditEvent.object_type).like(like),
+                func.lower(AuditEvent.object_id).like(like),
+                func.lower(AuditEvent.detail).like(like),
+            )
+        )
+    if from_date:
+        stmt = stmt.where(
+            AuditEvent.occurred_at >= datetime.combine(from_date, time.min, tzinfo=UTC)
+        )
+    if to_date:
+        stmt = stmt.where(
+            AuditEvent.occurred_at
+            < datetime.combine(to_date + timedelta(days=1), time.min, tzinfo=UTC)
+        )
+    return stmt
+
+
 @router.get("/audit/events", response_model=list[AuditEventOut])
 def audit_events(
     db: Db,
@@ -444,17 +501,24 @@ def audit_events(
     object_type: str | None = None,
     object_id: str | None = None,
     action: str | None = None,
+    entity: str | None = None,
+    q: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
     limit: int = Query(default=200, le=1000),
 ) -> list[AuditEvent]:
     principal.require_role(Role.ADMIN, Role.AUDITOR, Role.HEAD_OF_LEGAL)
 
-    stmt = select(AuditEvent)
-    if object_type:
-        stmt = stmt.where(AuditEvent.object_type == object_type)
-    if object_id:
-        stmt = stmt.where(AuditEvent.object_id == object_id)
-    if action:
-        stmt = stmt.where(AuditEvent.action == action)
+    stmt = _audit_filtered(
+        select(AuditEvent),
+        object_type=object_type,
+        object_id=object_id,
+        action=action,
+        entity=entity,
+        q=q,
+        from_date=from_date,
+        to_date=to_date,
+    )
     return list(
         db.execute(stmt.order_by(AuditEvent.occurred_at.desc()).limit(limit)).scalars()
     )
@@ -499,6 +563,9 @@ def audit_events_csv(
     object_id: str | None = None,
     action: str | None = None,
     entity: str | None = None,
+    q: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
     limit: int = Query(default=5000, le=50000),
 ) -> StreamingResponse:
     """The audit trail as a file, for an auditor who works outside the screen.
@@ -511,15 +578,16 @@ def audit_events_csv(
     """
     principal.require_role(Role.ADMIN, Role.AUDITOR, Role.HEAD_OF_LEGAL)
 
-    stmt = select(AuditEvent)
-    if object_type:
-        stmt = stmt.where(AuditEvent.object_type == object_type)
-    if object_id:
-        stmt = stmt.where(AuditEvent.object_id == object_id)
-    if action:
-        stmt = stmt.where(AuditEvent.action == action)
-    if entity:
-        stmt = stmt.where(AuditEvent.entity == entity)
+    stmt = _audit_filtered(
+        select(AuditEvent),
+        object_type=object_type,
+        object_id=object_id,
+        action=action,
+        entity=entity,
+        q=q,
+        from_date=from_date,
+        to_date=to_date,
+    )
 
     rows = list(
         db.execute(stmt.order_by(AuditEvent.sequence.desc()).limit(limit)).scalars()
@@ -541,6 +609,9 @@ def audit_events_csv(
                 "object_id": object_id,
                 "action": action,
                 "entity": entity,
+                "search": q,
+                "from": from_date.isoformat() if from_date else None,
+                "to": to_date.isoformat() if to_date else None,
             },
         },
     )
@@ -707,81 +778,27 @@ def update_organisation(
     return _organisation_out(record)
 
 
-@router.get("/config/{area}")
-def get_config(area: str, db: Db, principal: CurrentUser) -> list[ConfigValue]:
-    principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL)
-    return [
-        ConfigValue(
-            area=row.area,
-            key=row.key,
-            value=row.value,
-            version=row.version,
-            description=row.description,
-        )
-        for row in db.execute(
-            select(ConfigSetting).where(
-                ConfigSetting.area == area, ConfigSetting.active.is_(True)
-            )
-        ).scalars()
-    ]
-
-
-@router.patch("/config/{area}")
-def set_config(
-    area: str, payload: ConfigValue, db: Db, principal: CurrentUser
-) -> ConfigValue:
-    """Configuration without deployment. Changes are versioned and audited."""
-    principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL)
-    principal.require_step_up("change platform configuration")
-
-    existing = db.execute(
-        select(ConfigSetting)
-        .where(
-            ConfigSetting.area == area,
-            ConfigSetting.key == payload.key,
-            ConfigSetting.active.is_(True),
-        )
-        .order_by(ConfigSetting.version.desc())
-    ).scalars().first()
-
-    version = (existing.version + 1) if existing else 1
-    if existing:
-        existing.active = False
-
-    setting = ConfigSetting(
-        area=area,
-        key=payload.key,
-        version=version,
-        value=payload.value,
-        description=payload.description,
-        active=True,
-        changed_by=uuid.UUID(principal.user_id),
-    )
-    db.add(setting)
-
-    audit.record(
-        db,
-        action="configuration_changed",
-        object_type="config_setting",
-        object_id=f"{area}.{payload.key}",
-        actor_id=principal.user_id,
-        actor_label=principal.name,
-        before_state={"value": existing.value} if existing else None,
-        after_state={"value": payload.value, "version": version},
-    )
-    return ConfigValue(
-        area=area,
-        key=payload.key,
-        value=payload.value,
-        version=version,
-        description=payload.description,
-    )
-
-
 @router.get("/connectors")
 def list_connectors(db: Db, principal: CurrentUser) -> list[dict]:
-    """Every route out of the platform, registered, owned and reviewed."""
+    """Every route out of the platform, registered, owned and reviewed.
+
+    Registration is a deployment act rather than a screen: a connector is code
+    that knows how to talk to something, and a row added here would name a
+    route nothing can travel. What the register is for is the opposite
+    question, which is answerable from a screen: what routes exist, who owns
+    each one, what it may carry, and when somebody last looked at it.
+    """
     principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL, Role.AUDITOR)
+    owners = {
+        user.id: user.name for user in db.execute(select(User)).scalars()
+    }
+    counts = dict(
+        db.execute(
+            select(EgressLog.connector_code, func.count(EgressLog.id)).group_by(
+                EgressLog.connector_code
+            )
+        ).all()
+    )
     return [
         {
             "code": c.code,
@@ -791,9 +808,44 @@ def list_connectors(db: Db, principal: CurrentUser) -> list[dict]:
             "permitted_data_classes": c.permitted_data_classes,
             "scopes": c.scopes,
             "review_date": c.review_date,
+            "owner": owners.get(c.owner_id),
+            "calls": counts.get(c.code, 0),
             "active": c.active,
         }
         for c in db.execute(select(Connector).order_by(Connector.name)).scalars()
+    ]
+
+
+@router.get("/connectors/egress")
+def list_egress(
+    db: Db,
+    principal: CurrentUser,
+    connector: str | None = None,
+    limit: int = Query(default=50, le=200),
+) -> list[dict]:
+    """What actually went through the connectors.
+
+    The register says what a route is permitted to carry. This says what it
+    carried. A permitted class nothing has ever travelled under is worth
+    asking about, and so is a route with a review date in the past that is
+    still busy.
+    """
+    principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL, Role.AUDITOR)
+    statement = select(EgressLog).order_by(EgressLog.occurred_at.desc()).limit(limit)
+    if connector:
+        statement = statement.where(EgressLog.connector_code == connector)
+    return [
+        {
+            "id": str(row.id),
+            "occurred_at": row.occurred_at,
+            "connector_code": row.connector_code,
+            "purpose": row.purpose,
+            "record_reference": row.record_reference,
+            "data_class": row.data_class,
+            "result": row.result,
+            "detail": row.detail,
+        }
+        for row in db.execute(statement).scalars()
     ]
 
 
@@ -873,23 +925,280 @@ def reset_second_factor(
     }
 
 
+def _user_row(user: User) -> dict:
+    return {
+        "id": str(user.id),
+        "name": user.name,
+        "work_email": user.work_email,
+        "roles": user.roles,
+        "entities": user.entity_codes,
+        "specialisms": user.specialisms,
+        "workload": user.workload,
+        "workload_ceiling": user.workload_ceiling,
+        "active": user.active,
+        "mfa_enrolled": user.mfa_enrolled_at is not None,
+        "last_login": user.last_login,
+    }
+
+
 @router.get("/users")
 def list_users(db: Db, principal: CurrentUser) -> list[dict]:
     principal.require_role(Role.ADMIN, Role.HEAD_OF_LEGAL, Role.COUNSEL)
     return [
-        {
-            "id": str(u.id),
-            "name": u.name,
-            "work_email": u.work_email,
-            "roles": u.roles,
-            "entities": u.entity_codes,
-            "specialisms": u.specialisms,
-            "workload": u.workload,
-            "workload_ceiling": u.workload_ceiling,
-            "active": u.active,
-        }
-        for u in db.execute(select(User).order_by(User.name)).scalars()
+        _user_row(u) for u in db.execute(select(User).order_by(User.name)).scalars()
     ]
+
+
+PEOPLE_ADMINS = (Role.ADMIN, Role.HEAD_OF_LEGAL)
+
+
+def _person(db, user_id: uuid.UUID) -> User:
+    user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+    if user is None:
+        raise NotFound("There is nobody with that identifier.")
+    return user
+
+
+def _checked_roles(roles: list[str]) -> list[str]:
+    known = {role.value for role in Role}
+    unknown = sorted(set(roles) - known)
+    if unknown:
+        raise ValidationFailed(
+            "That role does not exist on this platform.",
+            {"roles": f"Unknown: {', '.join(unknown)}."},
+        )
+    return sorted(set(roles))
+
+
+def _checked_entities(entities: list[str]) -> list[str]:
+    known = {entity.value for entity in Entity}
+    unknown = sorted(set(entities) - known)
+    if unknown:
+        raise ValidationFailed(
+            "That entity does not exist on this platform.",
+            {"entities": f"Unknown: {', '.join(unknown)}. Use {', '.join(sorted(known))}."},
+        )
+    return sorted(set(entities))
+
+
+def _set_entities(db, user: User, entities: list[str]) -> None:
+    """Entity membership is the hard boundary, so it is replaced whole.
+
+    Reach is the intersection of role and entity, never the wider of them: a
+    person left on DSN alone cannot open an EAI matter whatever their role.
+    """
+    wanted = set(entities)
+    for membership in list(user.entities):
+        if membership.entity_code not in wanted:
+            db.delete(membership)
+    held = {membership.entity_code for membership in user.entities}
+    for code in wanted - held:
+        db.add(UserEntity(user_id=user.id, entity_code=code))
+
+
+def _guard_last_administrator(db, user: User, roles: list[str], active: bool) -> None:
+    """Nobody can leave the platform with no one able to run it.
+
+    An administrator who takes their own role away, or suspends the only other
+    one, locks every privileged act out of the platform for everybody. There is
+    no recovery from inside the interface for that, only a hand on the
+    database, so it is refused before it happens rather than explained after.
+    """
+    still_admin = active and Role.ADMIN.value in roles
+    if still_admin or Role.ADMIN.value not in (user.roles or []):
+        return
+    others = db.execute(
+        select(func.count(User.id)).where(
+            User.id != user.id,
+            User.active.is_(True),
+            User.roles.any(Role.ADMIN.value),
+        )
+    ).scalar_one()
+    if others == 0:
+        raise Conflict(
+            f"{user.name} is the only active administrator. Give the role to somebody "
+            "else first, or nothing on this platform can be administered again."
+        )
+
+
+@router.post("/users", status_code=201)
+def create_user(payload: UserCreate, db: Db, principal: CurrentUser) -> dict:
+    """Add a person, with the roles and entities they reach.
+
+    The password is set here and never appears again: it is hashed on the way
+    in, and the audit records that it was set rather than what it was.
+    """
+    principal.require_role(*PEOPLE_ADMINS)
+    principal.require_step_up("add a person")
+
+    email = payload.work_email.strip().lower()
+    if db.execute(select(User).where(User.work_email == email)).scalar_one_or_none():
+        raise Conflict(f"{email} already belongs to somebody on this platform.")
+
+    roles = _checked_roles(payload.roles)
+    entities = _checked_entities(payload.entities)
+
+    user = User(
+        subject=email,
+        name=payload.name.strip(),
+        work_email=email,
+        password_hash=hash_password(payload.password),
+        roles=roles,
+        specialisms=[s.strip() for s in payload.specialisms if s.strip()],
+        workload=0,
+        workload_ceiling=payload.workload_ceiling,
+        active=True,
+    )
+    db.add(user)
+    db.flush()
+    for code in entities:
+        db.add(UserEntity(user_id=user.id, entity_code=code))
+    db.flush()
+
+    audit.record(
+        db,
+        action="user_created",
+        object_type="app_user",
+        object_id=str(user.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        after_state={
+            "name": user.name,
+            "work_email": user.work_email,
+            "roles": roles,
+            "entities": entities,
+            "password_set": True,
+        },
+    )
+    return _user_row(user)
+
+
+@router.patch("/users/{user_id}")
+def update_user(
+    user_id: uuid.UUID, payload: UserUpdate, db: Db, principal: CurrentUser
+) -> dict:
+    """Change who somebody is and what they reach."""
+    principal.require_role(*PEOPLE_ADMINS)
+    principal.require_step_up("change what somebody reaches")
+    user = _person(db, user_id)
+
+    roles = _checked_roles(payload.roles) if payload.roles is not None else list(user.roles or [])
+    entities = (
+        _checked_entities(payload.entities)
+        if payload.entities is not None
+        else user.entity_codes
+    )
+    if payload.roles is not None and str(user.id) == principal.user_id:
+        if Role.ADMIN.value in (user.roles or []) and Role.ADMIN.value not in roles:
+            raise Conflict(
+                "You cannot take the administrator role away from yourself. Ask another "
+                "administrator, so the change is somebody else's decision."
+            )
+    _guard_last_administrator(db, user, roles, user.active)
+
+    before = {
+        "name": user.name,
+        "roles": list(user.roles or []),
+        "entities": user.entity_codes,
+        "specialisms": list(user.specialisms or []),
+        "workload_ceiling": user.workload_ceiling,
+    }
+
+    if payload.name is not None:
+        user.name = payload.name.strip()
+    user.roles = roles
+    if payload.entities is not None:
+        _set_entities(db, user, entities)
+    if payload.specialisms is not None:
+        user.specialisms = [s.strip() for s in payload.specialisms if s.strip()]
+    if payload.workload_ceiling is not None:
+        user.workload_ceiling = payload.workload_ceiling
+    db.flush()
+
+    audit.record(
+        db,
+        action="user_changed",
+        object_type="app_user",
+        object_id=str(user.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        before_state=before,
+        after_state={
+            "name": user.name,
+            "roles": user.roles,
+            "entities": user.entity_codes,
+            "specialisms": user.specialisms,
+            "workload_ceiling": user.workload_ceiling,
+            "reason": payload.reason,
+        },
+    )
+    return _user_row(user)
+
+
+@router.post("/users/{user_id}/password")
+def set_user_password(
+    user_id: uuid.UUID, payload: PasswordSet, db: Db, principal: CurrentUser
+) -> dict:
+    """Set somebody's password.
+
+    Whoever sets it knows it, which is why it is a reset rather than a
+    recovery: the person is expected to change it, and the act is on the audit
+    under both names. The password itself is not written anywhere but the hash.
+    """
+    principal.require_role(*PEOPLE_ADMINS)
+    principal.require_step_up("set somebody's password")
+    user = _person(db, user_id)
+
+    user.password_hash = hash_password(payload.password)
+    audit.record(
+        db,
+        action="user_password_set",
+        object_type="app_user",
+        object_id=str(user.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        after_state={
+            "subject": user.work_email,
+            "by": principal.name,
+            "reason": payload.reason,
+        },
+    )
+    return _user_row(user)
+
+
+@router.post("/users/{user_id}/status")
+def set_user_status(
+    user_id: uuid.UUID, payload: UserStatus, db: Db, principal: CurrentUser
+) -> dict:
+    """Suspend somebody, or bring them back.
+
+    Suspension bites on the next request rather than the next sign-in: the
+    active flag is read when the token is turned into a principal, so a
+    session already open stops at its next call. Nothing is deleted, because
+    the record is on decisions, approvals and the audit chain, and removing the
+    row would break attribution on work that was validly done.
+    """
+    principal.require_role(*PEOPLE_ADMINS)
+    principal.require_step_up("suspend or reinstate somebody")
+    user = _person(db, user_id)
+
+    if str(user.id) == principal.user_id and not payload.active:
+        raise Conflict("You cannot suspend yourself.")
+    _guard_last_administrator(db, user, list(user.roles or []), payload.active)
+
+    before = {"active": user.active}
+    user.active = payload.active
+    audit.record(
+        db,
+        action="user_suspended" if not payload.active else "user_reinstated",
+        object_type="app_user",
+        object_id=str(user.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        before_state=before,
+        after_state={"active": user.active, "reason": payload.reason},
+    )
+    return _user_row(user)
 
 
 EXPORT_RATE_LIMIT_PER_DAY = 5

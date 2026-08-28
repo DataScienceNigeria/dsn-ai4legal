@@ -668,6 +668,57 @@ class MfaReset(BaseModel):
     reason: str
 
 
+MINIMUM_PASSWORD = 12
+
+
+class UserCreate(BaseModel):
+    """A person, and what they reach.
+
+    Entities are the hard boundary: a person set to DSN alone cannot see an EAI
+    matter however senior their role, because reach is the intersection of the
+    two and not the wider of them.
+    """
+
+    name: str = Field(min_length=2, max_length=255)
+    work_email: str = Field(max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    roles: list[str] = Field(min_length=1)
+    entities: list[str] = Field(min_length=1)
+    specialisms: list[str] = Field(default_factory=list)
+    workload_ceiling: int = Field(default=10, ge=1, le=100)
+    password: str = Field(min_length=MINIMUM_PASSWORD, max_length=200)
+
+
+class UserUpdate(BaseModel):
+    """Everything about a person that an administrator may change."""
+
+    name: str | None = Field(default=None, min_length=2, max_length=255)
+    roles: list[str] | None = Field(default=None, min_length=1)
+    entities: list[str] | None = Field(default=None, min_length=1)
+    specialisms: list[str] | None = None
+    workload_ceiling: int | None = Field(default=None, ge=1, le=100)
+    reason: str = Field(min_length=4, max_length=500)
+
+
+class PasswordSet(BaseModel):
+    """Setting a password for somebody else.
+
+    The password is never written to the audit. That it was set, by whom, and
+    why, is.
+    """
+
+    password: str = Field(min_length=MINIMUM_PASSWORD, max_length=200)
+    reason: str = Field(min_length=4, max_length=500)
+
+
+class UserStatus(BaseModel):
+    """Suspension and reinstatement. Never deletion: the record is on
+    decisions, approvals and the audit chain, and removing the row would break
+    attribution on work that was validly done."""
+
+    active: bool
+    reason: str = Field(min_length=4, max_length=500)
+
+
 
 class OrganisationOut(ApiModel):
     """The particulars an agreement names this entity by."""

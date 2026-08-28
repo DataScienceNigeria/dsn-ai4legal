@@ -8,7 +8,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.core import context
 from app.core.config import settings
+from app.core.deps import client_ip
 from app.core.errors import PlatformError
 
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +25,26 @@ app = FastAPI(
     openapi_url="/api/v1/openapi.json",
     docs_url="/api/v1/docs",
 )
+
+@app.middleware("http")
+async def carry_the_request_context(request: Request, call_next):
+    """Hold where a request came from, so the audit does not have to be asked.
+
+    Every service that appends to the trail would otherwise need a ``Request``
+    parameter it has no other use for, and eleven of a hundred and twelve call
+    sites had one. Set here, read in ``audit.record``, reset on the way out.
+    """
+    token = context.set_context(
+        context.RequestContext(
+            ip_address=client_ip(request),
+            user_agent=(request.headers.get("user-agent") or None),
+        )
+    )
+    try:
+        return await call_next(request)
+    finally:
+        context.reset_context(token)
+
 
 @app.middleware("http")
 async def unhandled_error_to_problem(request: Request, call_next):

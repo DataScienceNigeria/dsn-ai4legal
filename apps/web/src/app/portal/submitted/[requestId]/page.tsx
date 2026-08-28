@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 import { Attachments } from "@/components/app/attachments";
 import { Button, Card, CardBody, Mono, Notice, PageTitle, Spinner } from "@/components/ui";
@@ -11,6 +11,7 @@ import { formatDate } from "@/lib/utils";
 export default function Submitted() {
   const { requestId } = useParams<{ requestId: string }>();
   const router = useRouter();
+  const refused = useSearchParams().get("refused");
   const { data, loading } = useApi<RequestStatus>(`/requests/${requestId}/status`);
 
   if (loading) return <Spinner />;
@@ -39,6 +40,18 @@ export default function Submitted() {
           </div>
         </CardBody>
       </Card>
+
+      {/*
+        A file refused on the way in is named here rather than swallowed. The
+        request itself stood, so the message says which file and leaves the
+        attachment panel below to try again.
+      */}
+      {refused ? (
+        <Notice tone="warn" title="Some files did not go up">
+          {refused}. Your request was raised without them. Every upload is scanned before it is
+          stored, and a file that fails the scan or the type check is refused. Try again below.
+        </Notice>
+      ) : null}
 
       <Attachments requestId={requestId} />
 

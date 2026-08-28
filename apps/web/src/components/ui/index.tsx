@@ -832,7 +832,7 @@ export function Notice({
   return (
     <div
       className={cn(
-        "rounded-lg border p-3.5 sm:p-4",
+        "rounded-lg border p-3 sm:p-3.5",
         tone === "warn" && "border-warning/40 bg-warning/10",
         tone === "info" && "border-info/30 bg-info/5",
         tone === "good" && "border-primary/30 bg-primary/5",
@@ -841,17 +841,22 @@ export function Notice({
         tone === "neutral" && "border-border bg-muted",
       )}
     >
-      <div className="text-sm font-semibold sm:text-base">{title}</div>
-      {children ? (
-        <div className="mt-1.5 max-w-reading text-sm leading-relaxed">{children}</div>
-      ) : null}
+      <div className="text-sm font-semibold">{title}</div>
+      {children ? <div className="mt-1 text-sm leading-relaxed">{children}</div> : null}
     </div>
   );
 }
 
-export function Mono({ children, className }: Readonly<{ children: React.ReactNode; className?: string }>) {
+export function Mono({
+  children,
+  className,
+  title,
+}: Readonly<{ children: React.ReactNode; className?: string; title?: string }>) {
   return (
-    <span className={cn("font-mono text-2xs tracking-tight text-muted-foreground", className)}>
+    <span
+      title={title}
+      className={cn("font-mono text-2xs tracking-tight text-muted-foreground", className)}
+    >
       {children}
     </span>
   );

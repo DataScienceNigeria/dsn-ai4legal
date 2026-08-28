@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.core import context
 from app.db.models.platform import AuditEvent
 
 # One fixed key, because there is one chain. Any constant would do; this one is
@@ -184,6 +185,13 @@ def record(
     """
     session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": CHAIN_LOCK})
     session.flush()
+
+    # Where the act came from, without every service taking a Request it has
+    # no other use for. An explicit argument still wins, because the two
+    # callers that pass one are recording an act on somebody else's behalf.
+    held = context.current()
+    ip_address = ip_address or held.ip_address
+    session_id = session_id or held.session_id
 
     occurred_at = datetime.now(UTC)
     previous = session.execute(

@@ -1,10 +1,19 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import * as React from "react";
 
 import { ConfirmDraft } from "@/components/app/confirm-draft";
-import { Card, CardBody, Chips, Empty, Mono, PageTitle, Spinner } from "@/components/ui";
+import {
+  Button,
+  Card,
+  CardBody,
+  Chips,
+  Empty,
+  Mono,
+  PageTitle,
+  Spinner,
+} from "@/components/ui";
 import { useApi } from "@/lib/hooks";
 import type { RequestStatus } from "@/lib/types";
 import { cn, formatDate, formatDateTime } from "@/lib/utils";
@@ -49,6 +58,7 @@ function sortRequests(rows: RequestStatus[], order: Order): RequestStatus[] {
 }
 
 export default function MyRequests() {
+  const router = useRouter();
   const { data, loading, error } = useApi<RequestStatus[]>("/requests/mine");
   const [order, setOrder] = React.useState<Order>("waiting");
 
@@ -65,9 +75,19 @@ export default function MyRequests() {
             : "Status is updated by lifecycle events, not by anyone typing it in."
         }
         actions={
-          (data ?? []).length > 1 ? (
-            <Chips options={[...ORDERS]} active={order} onChange={(id) => setOrder(id as Order)} label="Order" />
-          ) : null
+          <div className="flex flex-wrap items-center gap-3">
+            {(data ?? []).length > 1 ? (
+              <Chips
+                options={[...ORDERS]}
+                active={order}
+                onChange={(id) => setOrder(id as Order)}
+                label="Order"
+              />
+            ) : null}
+            <Button variant="primary" onClick={() => router.push("/portal")}>
+              New request
+            </Button>
+          </div>
         }
       />
 
@@ -141,9 +161,6 @@ export default function MyRequests() {
         </div>
       )}
 
-      <Link href="/portal" className="text-sm">
-        Raise another request
-      </Link>
     </div>
   );
 }

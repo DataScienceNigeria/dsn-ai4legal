@@ -19,7 +19,7 @@ import {
   Spinner,
   Textarea,
 } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, upload } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
 import type { BriefSection, FieldDefinition, RequestType } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -61,6 +61,8 @@ export default function NewRequest() {
   const [answers, setAnswers] = React.useState<Answers>({});
   const [expanded, setExpanded] = React.useState(false);
   const [abandoning, setAbandoning] = React.useState(false);
+  const [files, setFiles] = React.useState<File[]>([]);
+  const chooser = React.useRef<HTMLInputElement>(null);
   const [declaration, setDeclaration] = React.useState({
     personal_data: false,
     special_category_data: false,
@@ -83,6 +85,26 @@ export default function NewRequest() {
         answers,
       },
     });
+    /*
+      The files go up after the request exists, because each attachment hangs
+      off a request that has a reference. One at a time and in order: a refused
+      file names itself, and a batch that fails halfway leaves the request
+      standing with whatever did land rather than losing the brief as well.
+    */
+    const refused: string[] = [];
+    for (const file of files) {
+      try {
+        await upload(`/requests/${created.id}/attachments`, file);
+      } catch {
+        refused.push(file.name);
+      }
+    }
+    if (refused.length > 0) {
+      router.push(
+        `/portal/submitted/${created.id}?refused=${encodeURIComponent(refused.join(", "))}`,
+      );
+      return created;
+    }
     router.push(`/portal/submitted/${created.id}`);
     return created;
   });
@@ -104,19 +126,19 @@ export default function NewRequest() {
     heading.
   */
   const groups = React.useMemo(() => {
-    const shown = fields.filter((field) => visible(field, answers, expanded));
     const order = sections.data ?? [];
     const known = new Set(order.map((section) => section.key));
+    const owner = (field: FieldDefinition) =>
+      field.section && known.has(field.section) ? field.section : "brief";
+    const shown = fields.filter((field) => visible(field, answers, expanded));
     return order
       .map((section) => ({
         ...section,
         title: `${section.letter}. ${section.title}`,
-        fields: shown.filter((field) => {
-          const key = field.section && known.has(field.section) ? field.section : "brief";
-          return key === section.key;
-        }),
+        fields: shown.filter((field) => owner(field) === section.key),
+        held: fields.filter((field) => owner(field) === section.key).length,
       }))
-      .filter((group) => group.fields.length > 0);
+      .filter((group) => group.held > 0);
   }, [fields, answers, expanded, sections.data]);
 
   if (types.loading) return <Spinner />;
@@ -203,7 +225,15 @@ export default function NewRequest() {
         <CardHeader
           title={group.title}
           subtitle={group.intent}
+          actions={
+            group.fields.length === 0 ? (
+              <Button size="sm" variant="ghost" onClick={() => setExpanded(true)}>
+                {`Open ${group.held} questions`}
+              </Button>
+            ) : null
+          }
         />
+        {group.fields.length === 0 ? null : (
         <CardBody className="space-y-4">
           {group.fields.map((field) => (
             <Field
@@ -249,6 +279,7 @@ export default function NewRequest() {
             </Field>
           ))}
         </CardBody>
+        )}
       </Card>
       ))}
 
@@ -257,6 +288,80 @@ export default function NewRequest() {
           Add the rest of the brief
         </Button>
       ) : null}
+
+      {/*
+        Section I of the guide asks what already exists and says to attach it.
+        A brief written in Word, a term sheet the other side sent, a scope
+        document: most requests arrive with one, and until now the only way to
+        hand it over was to email it separately, which is how a request and the
+        document that explains it end up in two different places.
+      */}
+      <Card>
+        <CardHeader
+          title="Anything already written"
+          subtitle="A brief, a term sheet, their draft, a scope document. Attach as many as you have."
+        />
+        <CardBody className="space-y-3">
+          <input
+            ref={chooser}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(event) => {
+              const chosen = Array.from(event.target.files ?? []);
+              setFiles((previous) => {
+                const held = new Set(previous.map((one) => `${one.name}:${one.size}`));
+                return [
+                  ...previous,
+                  ...chosen.filter((one) => !held.has(`${one.name}:${one.size}`)),
+                ];
+              });
+              event.target.value = "";
+            }}
+          />
+          <Button size="sm" onClick={() => chooser.current?.click()}>
+            Choose files
+          </Button>
+
+          {files.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Nothing attached. A request without the document that explains it usually comes
+              back with a question.
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              {files.map((file) => (
+                <div
+                  key={`${file.name}:${file.size}`}
+                  className="flex items-center gap-3 rounded-md border px-3 py-2 text-sm"
+                >
+                  <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {Math.max(1, Math.round(file.size / 1024))} KB
+                  </span>
+                  <button
+                    type="button"
+                    className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    onClick={() =>
+                      setFiles((previous) =>
+                        previous.filter(
+                          (one) => `${one.name}:${one.size}` !== `${file.name}:${file.size}`,
+                        ),
+                      )
+                    }
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <p className="text-xs text-muted-foreground">
+                Every file is scanned before it is stored. One that fails is refused and named,
+                and the request stands with whatever else went up.
+              </p>
+            </div>
+          )}
+        </CardBody>
+      </Card>
 
       <Card>
         <CardHeader
@@ -304,7 +409,11 @@ export default function NewRequest() {
           onClick={() => void submit.run()}
           className="w-full sm:w-auto"
         >
-          {submit.busy ? "Submitting" : "Submit the request"}
+          {submit.busy
+            ? files.length > 0
+              ? "Submitting and attaching"
+              : "Submitting"
+            : "Submit the request"}
         </Button>
         <Button
           disabled={submit.busy}

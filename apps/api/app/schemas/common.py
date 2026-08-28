@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -71,8 +70,18 @@ class DecisionOut(ApiModel):
 
 
 class AuditEventOut(ApiModel):
+    """Everything the row holds.
+
+    The trail stored the position in the chain, the before and after states,
+    the address the act came from and the two digests since it was built, and
+    showed six of fourteen columns. The eight it hid are the ones that answer
+    what changed, from where, and whether the row can be trusted.
+    """
+
     id: UUID
+    sequence: int
     occurred_at: datetime
+    actor_id: UUID | None
     actor_label: str
     entity: str | None
     object_type: str
@@ -80,6 +89,12 @@ class AuditEventOut(ApiModel):
     action: str
     result: str
     detail: str | None
+    before_state: dict | None
+    after_state: dict | None
+    ip_address: str | None
+    session_id: str | None
+    previous_digest: str | None
+    digest: str
 
 
 class DateRange(BaseModel):
@@ -93,10 +108,3 @@ class ProblemDetail(BaseModel):
     field_errors: dict[str, str] = Field(default_factory=dict)
     reasons: list[str] = Field(default_factory=list)
 
-
-class ConfigValue(BaseModel):
-    area: str
-    key: str
-    value: Any
-    version: int
-    description: str | None = None
