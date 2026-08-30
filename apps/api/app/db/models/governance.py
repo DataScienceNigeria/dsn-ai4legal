@@ -68,6 +68,9 @@ class Communication(UUIDPrimaryKey, Timestamped, EntityScoped, Base):
     extracted_values: Mapped[list["ExtractedValue"]] = relationship(
         back_populates="communication", cascade="all, delete-orphan"
     )
+    attachments: Mapped[list["Attachment"]] = relationship(
+        "Attachment", cascade="all, delete-orphan"
+    )
 
 class ExtractedValue(UUIDPrimaryKey, Timestamped, Base):
     """All extracted values are suggestions until confirmed, field by field.

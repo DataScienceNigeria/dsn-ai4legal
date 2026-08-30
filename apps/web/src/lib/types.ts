@@ -424,6 +424,15 @@ export type ExtractedValue = {
   corrected_value: string | null;
 };
 
+export type MailAttachment = {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  scan_status: string;
+  created_at: string;
+};
+
 export type Communication = {
   id: string;
   entity: string;
@@ -447,7 +456,7 @@ export type Communication = {
   injection_flagged: boolean;
   quarantined: boolean;
   age_days: number;
-  extracted_values: ExtractedValue[];
+  extracted_values: ExtractedValue[];  attachments: MailAttachment[];
 };
 
 export type Source = { reference: string; kind: string; detail: string | null; quote: string | null };

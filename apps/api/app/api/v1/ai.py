@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 from sqlalchemy import func, select
 
 from app.ai import retrieval
@@ -27,6 +27,7 @@ from app.db.models.conversation import Conversation, ConversationTurn
 from app.db.models.counterparty import Counterparty
 from app.db.models.document import Document, ReviewFinding
 from app.db.models.governance import Communication, ExtractedValue
+from app.db.models.intake import Attachment
 from app.db.models.library import Clause, Playbook
 from app.db.models.matter import DecisionRecord, Matter
 from app.domain.enums import (
@@ -59,7 +60,7 @@ from app.schemas.governance import (
     SourceOut,
 )
 from app.schemas.matters import FindingOut, ObligationOut
-from app.services import notifications, redline, sequences
+from app.services import notifications, redline, sequences, storage
 
 MESSAGE_NOT_FOUND = "That message was not found."
 
@@ -667,6 +668,55 @@ def inbox(
     return out
 
 
+@router.get("/inbox/{communication_id}/attachments/{attachment_id}")
+def read_mail_attachment(
+    communication_id: uuid.UUID, attachment_id: uuid.UUID, db: Db, principal: CurrentUser
+) -> Response:
+    """The file that came in on a message.
+
+    The message is loaded first so the caller's visibility of it is what
+    decides access. An attachment carries no entity of its own, and reading it
+    by its own identifier alone would step around the separation the message
+    is subject to.
+    """
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+
+    record = db.get(Communication, communication_id)
+    if record is None:
+        raise NotFound("That message is not in your inbox.")
+
+    attachment = db.get(Attachment, attachment_id)
+    if attachment is None or attachment.communication_id != record.id:
+        raise NotFound("That attachment did not arrive on this message.")
+
+    try:
+        data = storage.store.get(attachment.storage_key)
+    except FileNotFoundError as exc:
+        raise NotFound(
+            "The record is here but the file is not in the object store. "
+            "Report this: an attachment should never outlive its bytes."
+        ) from exc
+
+    audit.record(
+        db,
+        action="attachment_read",
+        object_type="communication",
+        object_id=str(record.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=record.entity,
+        after_state={"filename": attachment.filename},
+    )
+    return Response(
+        content=data,
+        media_type=attachment.content_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{attachment.filename}"',
+            "X-Content-Hash": attachment.content_hash,
+        },
+    )
+
+
 @router.post("/classify/{communication_id}")
 def classify(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> CommunicationOut:
     """Classify one message and propose a next step, M09.
@@ -827,7 +877,7 @@ def confirm_from_inbox(
     if record.matter_id:
         raise Conflict("This message is already linked to a matter.")
 
-    from app.db.models.intake import RequestType
+    from app.db.models.intake import Attachment, RequestType
 
     request_type = db.execute(
         select(RequestType).where(RequestType.code == payload.request_type_code)

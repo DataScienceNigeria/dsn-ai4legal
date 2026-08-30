@@ -20,3 +20,35 @@ services:
     volumes:
       - ./apps/api/app:/srv/app
       - ./apps/api/alembic:/srv/alembic
+
+  # n8n calls the platform API. In the built stack that is the `api` container
+  # on the compose network; during local development the API runs on the host
+  # with reload, the container is not up, and `http://api:8000` resolves to
+  # nothing. Pointing it at the host gateway is what lets a workflow be built
+  # against the API that is actually running.
+  #
+  # `--no-deps` is how this one starts while the api container is down:
+  #   docker compose up -d --no-deps n8n
+  n8n:
+    environment:
+      DSNLAI_API_BASE_URL: http://host.docker.internal:8000
+      # The mailbox the poll reads, and the one the platform checks it against.
+      # It has to be on the approved list or every message is refused and the
+      # attempt recorded: scripts/approve_mailbox.py is how it gets there.
+      LEGAL_MAILBOX: ${LEGAL_MAILBOX:-legal@dsn.example}
+      # The signing step and the shaping step both read $env. Newer n8n blocks
+      # that in Code nodes by default, and the failure is a signature that does
+      # not verify rather than an error naming the cause.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      # Debug while the mail connector is being brought up. The IMAP node says
+      # nothing at info level, so a poll that finds nothing and a poll that
+      # never happened look identical from outside.
+      N8N_LOG_LEVEL: ${N8N_LOG_LEVEL:-debug}
+      # The signing step needs node's crypto. Code nodes run in an isolated VM
+      # with no built-ins at all unless they are named here, and the refusal is
+      # "Module 'crypto' is disallowed". Only crypto is allowed: the signature
+      # is the one thing a workflow has to compute rather than be handed.
+      NODE_FUNCTION_ALLOW_BUILTIN: crypto
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on: !reset []

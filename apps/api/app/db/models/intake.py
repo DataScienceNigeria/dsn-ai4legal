@@ -89,6 +89,16 @@ class Attachment(UUIDPrimaryKey, Timestamped, Base):
     request_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("request.id", ondelete="CASCADE")
     )
+    communication_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("communication.id", ondelete="CASCADE"), index=True
+    )
+    """An attachment that arrived on a message rather than on a request.
+
+    The same table, because the thing being held is the same: a file somebody
+    outside sent, scanned before it was stored and addressable afterwards. A
+    second table would mean a second scan path and a second retention rule for
+    no difference anybody can point at.
+    """
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(128), nullable=False)
     size_bytes: Mapped[int] = mapped_column(nullable=False)

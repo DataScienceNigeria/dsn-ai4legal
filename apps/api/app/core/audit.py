@@ -25,6 +25,9 @@ CHAIN_LOCK = 8_150_112_026
 
 logger = logging.getLogger(__name__)
 
+#: The width of ``audit_event.object_id``.
+OBJECT_ID_LENGTH = 64
+
 
 def _canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
@@ -189,6 +192,14 @@ def record(
     # Where the act came from, without every service taking a Request it has
     # no other use for. An explicit argument still wins, because the two
     # callers that pass one are recording an act on somebody else's behalf.
+    # An identifier from outside can be any length. A message id from Exchange
+    # is commonly over eighty characters and the column is sixty-four, so
+    # recording one raised on insert and took the whole request down with it.
+    # The trail must never be the reason a valid act fails: the id is cut to
+    # fit, consistently, so the digest computed over it stays reproducible.
+    if object_id is not None and len(str(object_id)) > OBJECT_ID_LENGTH:
+        object_id = str(object_id)[: OBJECT_ID_LENGTH - 1] + "\u2026"
+
     held = context.current()
     ip_address = ip_address or held.ip_address
     session_id = session_id or held.session_id

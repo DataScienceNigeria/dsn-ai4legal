@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.schemas.common import ApiModel
+from app.schemas.intake import AttachmentOut
 
 
 class ExtractedValueOut(ApiModel):
@@ -45,6 +46,7 @@ class CommunicationOut(ApiModel):
     quarantined: bool
     age_days: int = 0
     extracted_values: list[ExtractedValueOut] = Field(default_factory=list)
+    attachments: list[AttachmentOut] = Field(default_factory=list)
 
 
 class ClassifyRequest(BaseModel):

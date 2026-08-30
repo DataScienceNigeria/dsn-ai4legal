@@ -22,7 +22,7 @@ import {
   Tabs,
   Textarea,
 } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, view as openFile } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
 import type { Communication, ExtractedValue } from "@/lib/types";
 import { cn, formatDateTime, titleCase } from "@/lib/utils";
@@ -193,6 +193,12 @@ export default function Inbox() {
   const current =
     messages.data?.find((message) => message.id === selectedId) ?? messages.data?.[0] ?? null;
 
+  // Fetched rather than linked: the file is behind the same bearer token as
+  // everything else, so an href would open a 401 in a new tab.
+  const open = useAction(async (path: string) => {
+    await openFile(path);
+  });
+
   const classify = useAction(async (id: string) => {
     await api(`/ai/classify/${id}`, { method: "POST" });
     messages.reload();
@@ -314,10 +320,50 @@ export default function Inbox() {
                   </>
                 }
               />
-              <CardBody>
+              <CardBody className="space-y-3">
                 <p className="whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm leading-relaxed">
                   {current.body}
                 </p>
+
+                {/*
+                  What arrived with the message. The agreement is usually the
+                  attachment rather than the email, so a message that showed its
+                  body and nothing else was showing the covering note and hiding
+                  the thing it covered. Each file opens in place; every read is
+                  audited against the message it came in on.
+                */}
+                {current.attachments.length ? (
+                  <div className="space-y-1.5">
+                    <div className="text-xs font-medium text-muted-foreground">
+                      {current.attachments.length === 1
+                        ? "One file arrived with this message"
+                        : `${current.attachments.length} files arrived with this message`}
+                    </div>
+                    {current.attachments.map((file) => (
+                      <button
+                        key={file.id}
+                        type="button"
+                        className="flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left text-sm hover:bg-muted/40"
+                        onClick={() =>
+                          void open.run(
+                            `/ai/inbox/${current.id}/attachments/${file.id}`,
+                          )
+                        }
+                      >
+                        <span className="min-w-0 flex-1 truncate">{file.filename}</span>
+                        {file.scan_status === "clean" ? null : (
+                          <Pill tone="bad">{titleCase(file.scan_status)}</Pill>
+                        )}
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {Math.max(1, Math.round(file.size_bytes / 1024))} KB
+                        </span>
+                      </button>
+                    ))}
+                    {open.error ? (
+                      <Refusal title="That file could not be opened" reason={open.error.message} />
+                    ) : null}
+                  </div>
+                ) : null}
               </CardBody>
             </Card>
 

@@ -12,66 +12,87 @@
           ]
         }
       },
-      "id": "schedule",
+      "id": "trigger",
       "name": "Every five minutes",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
         -200,
-        0
+        300
       ]
     },
     {
       "parameters": {
+        "resource": "message",
         "operation": "getAll",
+        "returnAll": false,
+        "limit": 25,
         "filters": {
           "readStatus": "unread"
         },
-        "returnAll": false,
-        "limit": 50
+        "options": {}
       },
-      "id": "fetch",
+      "id": "read",
       "name": "Read the approved mailbox",
-      "notes": "Point this at one named mailbox with a read-only scope. Personal mailboxes and broad archives are never ingested.",
       "type": "n8n-nodes-base.microsoftOutlook",
       "typeVersion": 2,
       "position": [
-        20,
-        0
-      ]
+        40,
+        300
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.LEGAL_MAILBOX }}/messages/{{ $json.id }}/attachments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOutlookOAuth2Api",
+        "options": {}
+      },
+      "id": "attachments",
+      "name": "Fetch the attachments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        280,
+        300
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "notes": "One call per message. Addressed by mailbox rather than /me, so the same workflow reads a shared mailbox and a personal one. Graph returns contentBytes already base64, so the file is never re-encoded and n8n never holds it as a binary."
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Shape only. No decision is made here, and nothing is\n// filtered out: the platform decides what matters.\nconst messages = items.map((item) => ({\n  external_id: item.json.id,\n  mailbox: $env.LEGAL_MAILBOX,\n  sender: item.json.from?.emailAddress?.address ?? 'unknown',\n  subject: item.json.subject ?? '(no subject)',\n  body: item.json.bodyPreview ?? item.json.body?.content ?? '',\n  received_at: item.json.receivedDateTime,\n  participants: (item.json.toRecipients ?? []).map((r) => ({\n    name: r.emailAddress?.name,\n    address: r.emailAddress?.address,\n  })),\n}));\nreturn [{ json: { messages } }];"
+        "jsCode": "// Shape only. No decision is made here and nothing is filtered out on\n// legal grounds: the platform decides what matters. The only thing dropped\n// is an inline image, which is part of the body rather than a document, and\n// anything past the size ceiling, which the platform would refuse anyway.\n\nconst MAX_BYTES = 15 * 1024 * 1024;\n\nconst mail = $('Read the approved mailbox').all();\nconst fetched = $('Fetch the attachments').all();\n\nconst messages = mail.map((item, index) => {\n  const message = item.json;\n  const carried = fetched[index]?.json?.value ?? [];\n\n  const attachments = carried\n    .filter((one) => one['@odata.type'] === '#microsoft.graph.fileAttachment')\n    .filter((one) => one.isInline !== true)\n    .filter((one) => (one.size ?? 0) <= MAX_BYTES)\n    .filter((one) => typeof one.contentBytes === 'string')\n    .map((one) => ({\n      filename: one.name,\n      content_type: one.contentType || 'application/octet-stream',\n      content_base64: one.contentBytes,\n    }));\n\n  return {\n    external_id: message.id,\n    mailbox: $env.LEGAL_MAILBOX,\n    sender: message.from?.emailAddress?.address ?? 'unknown',\n    subject: message.subject ?? '(no subject)',\n    body: message.body?.content ?? message.bodyPreview ?? '',\n    received_at: message.receivedDateTime,\n    participants: (message.toRecipients ?? []).map((r) => ({\n      name: r.emailAddress?.name,\n      address: r.emailAddress?.address,\n    })),\n    attachments,\n  };\n});\n\nreturn [{ json: { messages } }];"
       },
       "id": "shape",
       "name": "Shape for the platform",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        240,
-        0
+        520,
+        300
       ]
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const crypto = require('crypto');\nconst body = JSON.stringify($json);\nconst signature = crypto\n  .createHmac('sha256', $env.DSNLAI_WEBHOOK_SECRET)\n  .update(body)\n  .digest('hex');\nreturn [{ json: { body, signature } }];"
+        "jsCode": "// The signature is over the exact bytes that will be sent, which is why the\n// body is serialised here and handed on as a string. Serialising it again in\n// the HTTP node would produce a different body and a signature that does not\n// verify.\nconst crypto = require('crypto');\nconst body = JSON.stringify($json);\nconst signature = crypto\n  .createHmac('sha256', $env.DSNLAI_WEBHOOK_SECRET)\n  .update(body)\n  .digest('hex');\nreturn [{ json: { body, signature } }];"
       },
       "id": "sign",
       "name": "Sign the payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        460,
-        0
+        760,
+        300
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "=http://api:8000/api/v1/webhooks/mail",
+        "url": "={{ $env.DSNLAI_API_BASE_URL }}/api/v1/webhooks/mail",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -97,14 +118,13 @@
           }
         }
       },
-      "id": "post",
+      "id": "handoff",
       "name": "Hand off to the platform",
-      "notes": "The API is the only write path. n8n never touches the database, and never decides what a message means.",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        680,
-        0
+        1000,
+        300
       ]
     }
   ],
@@ -121,6 +141,17 @@
       ]
     },
     "Read the approved mailbox": {
+      "main": [
+        [
+          {
+            "node": "Fetch the attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch the attachments": {
       "main": [
         [
           {
@@ -156,10 +187,5 @@
   },
   "settings": {
     "executionOrder": "v1"
-  },
-  "tags": [
-    {
-      "name": "M09"
-    }
-  ]
+  }
 }

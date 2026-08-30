@@ -1,0 +1,130 @@
+{
+  "name": "Legal mailbox poll, IMAP",
+  "nodes": [
+    {
+      "parameters": {
+        "mailbox": "INBOX",
+        "postProcessAction": "read",
+        "format": "resolved",
+        "options": {
+          "customEmailConfig": "[\"UNSEEN\", [\"SINCE\", \"28-Aug-2026\"]]",
+          "trackLastMessageId": true,
+          "forceReconnect": 60
+        }
+      },
+      "id": "imap",
+      "name": "Read the approved mailbox",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        300
+      ],
+      "notes": "A trigger rather than a schedule: IMAP pushes when unseen mail arrives, and attachments come down as binaries because the format is resolved.\n\nThe search is bounded, and has to be. A real mailbox holds tens of thousands of messages and thousands of them are unread, so a bare UNSEEN asks the node to pull every one of them with its attachments into memory at once; it never finishes and the execution dies out of memory. SINCE narrows it to a date, and Fetch Only New Emails, which needs version 2.1 or later, stops the same message being read twice."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Shape only. No decision is made here on legal grounds: the platform decides\n// what matters.\n//\n// The resolved format runs the message through mailparser, so `from` and `to`\n// are objects with a `value` array rather than strings. Reading them as\n// strings yields \"[object Object]\", which is how every forwarded message\n// arrived with a sender of \"unknown\".\n\nconst MAX_BYTES = 15 * 1024 * 1024;\n\n// Inline images have no flag by the time n8n hands them over: the resolved\n// format keeps content, filename and type and drops mailparser's\n// contentDisposition and cid. What is left is the name, and a mail client\n// names an inline image for you. A document somebody meant to send has a name\n// somebody chose.\nconst AUTO_NAMED = /^(image|shared image|inline)[-_ ]?\\d*\\.(png|jpe?g|gif|bmp|webp)$/i;\n\nfunction addressOf(field) {\n  if (!field) return 'unknown';\n  const first = field.value?.[0]?.address;\n  if (first) return String(first).toLowerCase();\n  const text = String(field.text ?? field);\n  const angled = text.match(/<([^>]+)>/);\n  if (angled) return angled[1].trim().toLowerCase();\n  const bare = text.match(/[^\\s,;<>]+@[^\\s,;<>]+/);\n  return bare ? bare[0].toLowerCase() : 'unknown';\n}\n\nfunction everyone(field) {\n  const listed = field?.value;\n  if (Array.isArray(listed)) {\n    return listed\n      .filter((one) => one.address)\n      .map((one) => ({ name: one.name || null, address: String(one.address).toLowerCase() }));\n  }\n  return String(field?.text ?? field ?? '')\n    .split(',')\n    .map((one) => one.trim())\n    .filter(Boolean)\n    .map((one) => ({\n      name: one.replace(/<[^>]+>/, '').trim() || null,\n      address: addressOf(one),\n    }));\n}\n\nconst items = $input.all();\nconst messages = [];\n\nfor (let index = 0; index < items.length; index++) {\n  const item = items[index];\n  const mail = item.json;\n  const attachments = [];\n  let skippedInline = 0;\n\n  for (const [key, meta] of Object.entries(item.binary ?? {})) {\n    const filename = meta.fileName || key;\n    if (AUTO_NAMED.test(filename)) {\n      skippedInline += 1;\n      continue;\n    }\n\n    let buffer = null;\n    try {\n      buffer = await this.helpers.getBinaryDataBuffer(index, key);\n    } catch (error) {\n      buffer = meta.data ? Buffer.from(meta.data, 'base64') : null;\n    }\n    if (!buffer || buffer.length === 0 || buffer.length > MAX_BYTES) continue;\n\n    attachments.push({\n      filename,\n      content_type: meta.mimeType || 'application/octet-stream',\n      content_base64: buffer.toString('base64'),\n    });\n  }\n\n  const body = mail.textPlain || mail.text || mail.textHtml || mail.html || '';\n\n  messages.push({\n    external_id: mail.messageId || `${mail.date}-${addressOf(mail.from)}-${mail.subject}`,\n    mailbox: $env.LEGAL_MAILBOX,\n    sender: addressOf(mail.from),\n    subject: mail.subject || '(no subject)',\n    body: skippedInline\n      ? `${body}\\n\\n[${skippedInline} inline image(s) from the signature were not stored.]`\n      : body,\n    received_at: new Date(mail.date).toISOString(),\n    participants: everyone(mail.to),\n    attachments,\n  });\n}\n\nreturn [{ json: { messages } }];\n"
+      },
+      "id": "shape",
+      "name": "Shape for the platform",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// The signature is over the exact bytes that will be sent, which is why the\n// body is serialised here and handed on as a string. Serialising it again in\n// the HTTP node would produce a different body and a signature that does not\n// verify.\nconst crypto = require('crypto');\nconst body = JSON.stringify($json);\nconst signature = crypto\n  .createHmac('sha256', $env.DSNLAI_WEBHOOK_SECRET)\n  .update(body)\n  .digest('hex');\nreturn [{ json: { body, signature } }];\n"
+      },
+      "id": "sign",
+      "name": "Sign the payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DSNLAI_API_BASE_URL }}/api/v1/webhooks/mail",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Signature",
+              "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "handoff",
+      "name": "Hand off to the platform",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Read the approved mailbox": {
+      "main": [
+        [
+          {
+            "node": "Shape for the platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape for the platform": {
+      "main": [
+        [
+          {
+            "node": "Sign the payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign the payload": {
+      "main": [
+        [
+          {
+            "node": "Hand off to the platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
