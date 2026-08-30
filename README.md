@@ -1,7 +1,6 @@
 # DSN Legal AI
 
-The legal operations platform for Data Science Nigeria and EqualyzAI, built to
-the Product Requirements Document in `PRD - AI for Legal Workflows.pdf`.
+The legal operations platform for Data Science Nigeria and EqualyzAI.
 
 One rule sits above every other requirement, and it is enforced in code rather
 than asked for in a prompt: **AI may recommend, an authorised human must
@@ -76,8 +75,7 @@ screen is exercisable with no external call and no spend. That refusal is the
 correct behaviour, not a degraded one: an output without sources is a failed
 call.
 
-Routing is by data class (PRD section 13.4). Restricted content never reaches a
-commercial provider; it goes to a self-hosted model or nowhere.
+Restricted content never reaches a commercial provider; it goes to a self-hosted model or nowhere.
 
 ## Controls you can verify
 
