@@ -44,3 +44,5 @@ sonar-project.properties
 PRD - AI for Legal Workflows.pdf
 templates/
 akin/
+# Source document, kept locally, never committed.
+EqualyzAI VoiceAgents - DP Assessment DSN_DPIA.docx
