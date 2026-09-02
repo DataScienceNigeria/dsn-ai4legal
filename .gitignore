@@ -37,7 +37,10 @@ uploads/
 # the scanner configuration and the source specification.
 CLAUDE.md
 docs/
-scripts/
+# Anchored. A bare `scripts/` matches a directory of that name at any depth, so
+# it also swallowed apps/web/scripts, which holds the SuperDoc worker sync that
+# `prebuild` runs. The build then failed on a clone with a missing module and
+# nothing to say where it went.
 backups/
 _design_ref/
 sonar-project.properties
@@ -46,3 +49,6 @@ templates/
 akin/
 # Source document, kept locally, never committed.
 EqualyzAI VoiceAgents - DP Assessment DSN_DPIA.docx
+
+# Development logs from scripts/dev.sh.
+.dev/

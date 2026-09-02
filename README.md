@@ -36,27 +36,45 @@ different roles.
 so it has to be an address the browser can reach, not a container name. Change
 it and rebuild the web image rather than restarting it.
 
-To work on the code directly instead, run the two applications on the host
-against the containerised infrastructure:
+To work on the code directly instead, the infrastructure runs in containers and
+the two applications run on the host with reload, which is the only arrangement
+where a change shows up without a rebuild.
 
 ```bash
-docker compose up -d db redis minio
+scripts/dev.sh
+```
 
+That starts the containers, migrates, seeds if the database is empty, and
+brings up the API, the Celery worker and the interface. It prints every address
+and writes a log per process to `.dev/`. `scripts/dev.sh stop` stops the host
+processes and leaves the containers running; `scripts/dev.sh infra` brings up
+only the containers.
+
+The first run needs the two toolchains installed:
+
+```bash
 cd apps/api
 uv venv --python 3.12 .venv
 uv pip install -e ".[dev]"
 cp ../../.env .env
-.venv/bin/alembic upgrade head
-.venv/bin/python -m app.seed
-.venv/bin/uvicorn app.main:app --reload
 
 cd ../web
 npm install
-npm run dev
 ```
 
-Do not run both at once. A host `next start` holding port 3000 stops the web
-container from publishing it, and the two serve different builds.
+Three things about this arrangement are worth knowing.
+
+The **API container stays down**. It would hold port 8000 against the host
+process, and the two serve different builds. The same applies to the web
+container and port 3000: do not run both.
+
+**n8n starts with `--no-deps`**, because its compose dependency is the API
+container that is deliberately not running. `docker-compose.override.yml`
+points it at `host.docker.internal:8000` so a workflow reaches the API that is
+actually up.
+
+The **worker is not optional** for anything on a schedule: the inbox watch,
+obligation reminders, the evaluation sweep and the outbox all live there.
 
 ## Backup and restore
 
