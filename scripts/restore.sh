@@ -55,17 +55,45 @@ ${COMPOSE} exec -T db pg_restore --username "${POSTGRES_USER}" \
   --dbname "${POSTGRES_DB}" --clean --if-exists --no-owner --no-privileges \
   < "${WORK}/records.dump" || echo "  pg_restore reported errors; see above."
 
+audit_trigger() {
+  ${COMPOSE} exec -T db psql --username "${POSTGRES_USER}" --dbname "${POSTGRES_DB}" \
+    -q -c "ALTER TABLE audit_event $1 TRIGGER audit_event_append_only" >/dev/null
+}
+
 if [ "${WITH_AUDIT}" = "yes" ]; then
   echo "Restoring the audit store"
-  # The trigger refuses everything but INSERT, and a restore is inserts, so it
-  # passes. The table is emptied first as the owner, which is the only role
-  # that may, and the reason this is not the default.
+  # The trigger refuses UPDATE, DELETE and TRUNCATE from every role, the owner
+  # included, which is the whole point of it and is what makes clearing the
+  # table a deliberate act rather than a side effect of a restore.
+  #
+  # So it is turned off for exactly as long as the restore takes, and the trap
+  # turns it back on whether that succeeds or fails. Leaving an append-only
+  # store writable is far worse than a restore that did not finish, and a
+  # script that only re-enables on the happy path is a script that leaves it
+  # off on the day something goes wrong.
+  trap 'audit_trigger ENABLE; rm -rf "${WORK}"' EXIT
+  audit_trigger DISABLE
   ${COMPOSE} exec -T db psql --username "${POSTGRES_USER}" \
-    --dbname "${POSTGRES_DB}" -c "TRUNCATE audit_event" >/dev/null
+    --dbname "${POSTGRES_DB}" -q -c "TRUNCATE audit_event" >/dev/null
   ${COMPOSE} exec -T db pg_restore --username "${POSTGRES_USER}" \
     --dbname "${POSTGRES_DB}" --data-only --no-owner --no-privileges \
     --table audit_event < "${WORK}/audit.dump" \
     || echo "  the audit restore reported errors; see above."
+  audit_trigger ENABLE
+  trap 'rm -rf "${WORK}"' EXIT
+
+  # Said out loud rather than assumed. An append-only store that is only
+  # append-only because nobody checked is not a control.
+  state=$(${COMPOSE} exec -T db psql --username "${POSTGRES_USER}" \
+    --dbname "${POSTGRES_DB}" -At -c \
+    "select tgenabled from pg_trigger where tgname = 'audit_event_append_only'")
+  if [ "${state}" = "O" ]; then
+    echo "  the append-only trigger is back on."
+  else
+    echo "  THE APPEND-ONLY TRIGGER IS NOT ON. Put it back before using this" >&2
+    echo "  deployment:  ALTER TABLE audit_event ENABLE TRIGGER audit_event_append_only" >&2
+    exit 1
+  fi
 else
   echo "Leaving the audit store alone. Pass --with-audit to replace it."
 fi
