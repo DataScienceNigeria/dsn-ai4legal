@@ -1,13 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import * as React from "react";
 
 import { useSession } from "@/components/app/session";
 import { SlaPill, StatusPill, TierPill } from "@/components/app/status";
 import { Card, CardHeader, Chips, Empty, Notice, PageTitle, Row, Spinner } from "@/components/ui";
-import { useApi } from "@/lib/hooks";
+import { useApi, useQueryParams } from "@/lib/hooks";
 import type { Matter } from "@/lib/types";
 import { titleCase } from "@/lib/utils";
 
@@ -58,7 +57,7 @@ function narrowedTo(ownerName: string | null, tier: string | null): string {
 
 export default function Matters() {
   const { entity, me } = useSession();
-  const params = useSearchParams();
+  const params = useQueryParams();
   const requested = params.get("filter") ?? "all";
   const owner = params.get("owner");
   const ownerName = params.get("owner_name");

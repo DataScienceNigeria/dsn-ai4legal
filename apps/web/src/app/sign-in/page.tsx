@@ -1,11 +1,12 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import * as React from "react";
 
 import { Button, Card, CardBody, Field, Input, Notice, PasswordInput } from "@/components/ui";
 import { ApiError, login } from "@/lib/api";
+import { useQueryParams } from "@/lib/hooks";
 
 const DEMO_ACCOUNTS = [
   { email: "adaeze.okafor@dsn.example", role: "Legal lead, sees both entities" },
@@ -26,7 +27,7 @@ export default function SignIn() {
   // Arriving here because a session lapsed is not the same as choosing to
   // sign in, and saying so is the difference between an explanation and a
   // form that appeared for no reason.
-  const expired = useSearchParams().get("expired") === "1";
+  const expired = useQueryParams().get("expired") === "1";
   const [email, setEmail] = React.useState("adaeze.okafor@dsn.example");
   const [password, setPassword] = React.useState("Lop-Demo-2026");
   const [code, setCode] = React.useState("");

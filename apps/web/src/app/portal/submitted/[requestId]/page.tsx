@@ -1,17 +1,17 @@
 "use client";
 
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 import { Attachments } from "@/components/app/attachments";
 import { Button, Card, CardBody, Mono, Notice, PageTitle, Spinner } from "@/components/ui";
-import { useApi } from "@/lib/hooks";
+import { useApi, useQueryParams } from "@/lib/hooks";
 import type { RequestStatus } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
 export default function Submitted() {
   const { requestId } = useParams<{ requestId: string }>();
   const router = useRouter();
-  const refused = useSearchParams().get("refused");
+  const refused = useQueryParams().get("refused");
   const { data, loading } = useApi<RequestStatus>(`/requests/${requestId}/status`);
 
   if (loading) return <Spinner />;

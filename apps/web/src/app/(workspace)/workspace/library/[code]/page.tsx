@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import * as React from "react";
 
 import { Icon } from "@/components/app/icons";
@@ -30,7 +30,7 @@ import {
   Textarea,
 } from "@/components/ui";
 import { api, download, upload } from "@/lib/api";
-import { useAction, useApi } from "@/lib/hooks";
+import { useAction, useApi, useQueryParams } from "@/lib/hooks";
 import type { Template, TemplateVersion } from "@/lib/types";
 import { formatDate, titleCase } from "@/lib/utils";
 
@@ -188,7 +188,7 @@ function StartDraftDialog({
 export default function TemplatePage() {
   const { code } = useParams<{ code: string }>();
   const router = useRouter();
-  const params = useSearchParams();
+  const params = useQueryParams();
   const { me } = useSession();
   const { has } = useRoles();
 

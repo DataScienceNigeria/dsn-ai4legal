@@ -51,6 +51,29 @@ export function useApi<T>(path: string | null, deps: unknown[] = []): State<T> &
 }
 
 /*
+  The query string, without a Suspense boundary.
+
+  `useSearchParams` opts the page out of static prerendering unless it sits
+  inside Suspense, and the build does not warn: it fails at export with
+  "should be wrapped in a suspense boundary", on a page that worked all the
+  way through development because `next dev` never prerenders. Five pages read
+  a parameter and none of them wants a loading state for it.
+
+  Read on the client after mount, so the first render matches what the server
+  produced and nothing hydrates twice. The initial value is null, which every
+  caller already handles: these parameters carry a deep link, not the page.
+*/
+export function useQueryParams(): URLSearchParams {
+  const [params, setParams] = React.useState(() => new URLSearchParams());
+
+  React.useEffect(() => {
+    setParams(new URLSearchParams(globalThis.location.search));
+  }, []);
+
+  return params;
+}
+
+/*
   A refusal for want of a fresh authentication is not a failure, it is a
   question. Every privileged action goes through this hook, so it is answered
   once here: the arguments are held, the caller raises the step-up dialog, and
