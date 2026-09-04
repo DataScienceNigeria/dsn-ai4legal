@@ -10,7 +10,7 @@
     "test": "vitest run",
     "sync:superdoc": "node scripts/sync-superdoc-workers.mjs",
     "predev": "npm run sync:superdoc",
-    "prebuild": "npm run sync:superdoc"
+    "prebuild": ""
   },
   "dependencies": {
     "next": "15.1.6",
