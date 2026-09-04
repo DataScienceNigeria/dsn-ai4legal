@@ -318,6 +318,32 @@ class ContractIssue(UUIDPrimaryKey, Timestamped, EntityScoped, Base):
     scope is often resolved by varying the scope, and the two records should say
     so to each other rather than being reconstructed later from dates."""
 
+    outcome: Mapped[str | None] = mapped_column(String(24), index=True)
+    """What the issue turned into.
+
+    An issue used to end at a paragraph, which recorded that something went
+    wrong and not what was done about it. The four things a contract problem
+    actually becomes are a variation, a matter, a termination or a duty on the
+    other side; the fifth honest answer is that it was settled between the
+    parties and needed none of them.
+    """
+
+    outcome_matter_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("matter.id", ondelete="SET NULL"), index=True
+    )
+    """Where the answer was advice or a dispute, the matter that was reopened
+    to run it. The matter behind the agreement rather than a new one: a dispute
+    about performance is about the paper that was negotiated, the positions
+    taken while negotiating it and the executed copy, and a fresh matter opens
+    with none of that. A variation is the exception and still opens its own,
+    because an amendment is new paper with its own approvals and signature."""
+
+    outcome_obligation_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("obligation.id", ondelete="SET NULL"), index=True
+    )
+    """Where the answer was that they owe us something by a date, the duty
+    itself, so the reminder sweep carries it rather than a person remembering."""
+
     contract: Mapped[Contract] = relationship(back_populates="issues")
     raised_by: Mapped["User | None"] = relationship(  # noqa: F821
         "User", foreign_keys=[raised_by_id], lazy="joined", viewonly=True

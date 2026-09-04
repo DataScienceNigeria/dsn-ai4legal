@@ -937,6 +937,15 @@ export type ContractIssue = {
   resolution: string | null;
   resolved_at: string | null;
   change_request_id: string | null;
+  outcome: string | null;
+  outcome_matter_id: string | null;
+  outcome_obligation_id: string | null;
+  led_to: {
+    kind: string;
+    label: string;
+    reference: string | null;
+    href: string | null;
+  } | null;
   settled: boolean;
   created_at: string;
   contract_reference: string | null;
@@ -1005,6 +1014,7 @@ export type Vocabulary = {
   agreement_types: Term[];
   issue_types: Term[];
   issue_statuses: Term[];
+  issue_outcomes: Term[];
   change_types: Term[];
   instruments: Term[];
   change_decisions: Term[];

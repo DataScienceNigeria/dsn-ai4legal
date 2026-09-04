@@ -2,9 +2,9 @@
 
 import * as React from "react";
 
-import { Button, Notice, Spinner } from "@/components/ui";
+import { Button, Refusal, Spinner } from "@/components/ui";
 import { cn } from "@/lib/utils";
-import { getToken } from "@/lib/api";
+import { download, getToken } from "@/lib/api";
 
 export type DocumentMode = "viewing" | "suggesting" | "editing";
 
@@ -179,6 +179,27 @@ export function SuperDocEditor({
         if (!response.ok) throw new Error(`The document could not be fetched (${response.status}).`);
 
         const blob = await response.blob();
+
+        /*
+          SuperDoc edits Word files and nothing else. A signed copy is commonly
+          a PDF and their paper sometimes is, and both used to arrive here
+          labelled as a DOCX, so the editor tried to unzip a PDF and failed
+          with a message about a source it could not prepare. Checked here and
+          named, because "could not be prepared" tells the reader nothing they
+          can act on.
+        */
+        const header = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
+        const isZip =
+          header[0] === 0x50 && header[1] === 0x4b && header[2] === 0x03 && header[3] === 0x04;
+        if (!isZip) {
+          const isPdf = String.fromCharCode(...header.slice(0, 5)) === "%PDF-";
+          throw new Error(
+            isPdf
+              ? "This is a PDF. The editor works on Word files, so there is nothing here to edit."
+              : "This file is not a Word document, so the editor cannot open it.",
+          );
+        }
+
         const file = new File([blob], `${documentName}.docx`, { type: blob.type });
 
         const [{ SuperDoc }] = await Promise.all([
@@ -199,6 +220,24 @@ export function SuperDocEditor({
           user: { name: user.name, email: user.email },
           onReady: () => {
             if (!cancelled) setState("ready");
+          },
+          /*
+            SuperDoc fails asynchronously, after the constructor has returned,
+            so the try around it never saw the failure: the spinner span for
+            ever and the only trace was a console line in the corner of a
+            development overlay. This is the callback the library provides for
+            exactly that, and not wiring it was the reason a broken document
+            looked like a slow one.
+          */
+          onException: (payload: { error?: unknown } | undefined) => {
+            if (cancelled) return;
+            const reported =
+              payload?.error instanceof Error ? payload.error.message : null;
+            setState("failed");
+            setMessage(
+              reported ??
+                "The document could not be prepared for editing. It may be damaged, or it may not be a Word file.",
+            );
           },
         }) as never;
 
@@ -280,17 +319,39 @@ export function SuperDocEditor({
         ) : null}
       </div>
 
+      {/*
+        A failure is stated where the document was going to be, at the size of
+        the thing that failed. It used to be a line in a console: the surface
+        showed a spinner that never resolved, so a broken document and a slow
+        one looked identical.
+      */}
       {state === "failed" ? (
-        <Notice tone="warn" title="The editor could not be started">
-          {message} The document itself is unaffected. Download the .docx and work in Word or
-          Google Docs, which is the documented manual path for this surface.
-        </Notice>
+        <Refusal
+          title="This document cannot be opened in the editor"
+          reason={message ?? "The editor could not be started."}
+          reasons={[
+            "The document itself is unaffected, and nothing has been changed.",
+            "Download it and open it in Word or Google Docs, which is the documented manual path.",
+          ]}
+        />
+      ) : null}
+
+      {state === "failed" ? (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="primary"
+            onClick={() => void download(source, documentName)}
+          >
+            Download it
+          </Button>
+        </div>
       ) : null}
 
       {state === "loading" ? <Spinner label="Opening the document" /> : null}
 
       <div
         ref={mountRef}
+        hidden={state === "failed"}
         style={{ height: fullscreen ? "calc(100vh - 5.5rem)" : height }}
         className="superdoc-surface min-h-[22rem] overflow-auto rounded-lg border"
         aria-label="Document editor"

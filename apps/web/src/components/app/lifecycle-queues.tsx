@@ -172,22 +172,110 @@ export function Triage({
   is the spreadsheet this replaced, and the next person to ask about the
   contract would have nothing to read.
 */
+/*
+  Settling an issue, and saying what it turned into.
+
+  The outcome is the half that was missing. An issue used to end at a
+  paragraph, which recorded that something had gone wrong and not what was
+  done about it: "raise a change request about this", written into a
+  resolution, is exactly the round trip the platform exists to remove. Each
+  outcome here makes the record it names, so the chain is followable instead of
+  reconstructed later from dates.
+*/
+const NEEDS_DETAIL = new Set(["change_request", "matter", "obligation"]);
+
+const WILL_MAKE: Record<string, string> = {
+  none: "Record the resolution",
+  change_request: "Settle it and raise the change",
+  matter: "Settle it and reopen the matter",
+  termination: "Settle it and start closing",
+  obligation: "Settle it and set the duty",
+};
+
+const WILL_HAPPEN: Record<string, string> = {
+  change_request:
+    "A change request is raised on this agreement, carrying this issue as its reason, and waits in Changes for a determination.",
+  matter:
+    "The matter behind this agreement reopens for review, with its documents and decisions intact, and this issue is written into its record as the reason.",
+  termination:
+    "The agreement moves to in closure and the checklist opens. Nothing closes until every line is settled.",
+  obligation:
+    "A dated duty is set on this agreement, and the reminder sweep carries it from then on.",
+};
+
+const DETAIL_LABEL: Record<string, string> = {
+  change_request: "What specifically should change",
+  matter: "Why it is being reopened",
+  obligation: "What they have to do",
+};
+
 export function Resolve({
   issue,
+  vocabulary,
   onDone,
-}: Readonly<{ issue: ContractIssue; onDone: () => void }>) {
+}: Readonly<{
+  issue: ContractIssue;
+  vocabulary?: Vocabulary | null;
+  onDone: () => void;
+}>) {
   const [open, setOpen] = React.useState(false);
   const [status, setStatus] = React.useState("resolved");
   const [resolution, setResolution] = React.useState("");
+  // Unchosen, deliberately. A default of "nothing further" is the dead end
+  // this field exists to remove: it lets somebody settle an issue without ever
+  // reading the question, and the commonest outcome silently becomes the one
+  // that creates nothing.
+  const [outcome, setOutcome] = React.useState("");
+  const [detail, setDetail] = React.useState("");
+  const [changeType, setChangeType] = React.useState("scope_change");
+  const [dueDate, setDueDate] = React.useState("");
+  const [financial, setFinancial] = React.useState("none");
+  const [valueDelta, setValueDelta] = React.useState("");
+  const [timeline, setTimeline] = React.useState("none");
+  const [endDate, setEndDate] = React.useState("");
+  const [made, setMade] = React.useState<ContractIssue["led_to"] | null>(null);
 
   const save = useAction(async () => {
-    await api(`/issues/${issue.id}/resolve`, {
+    const settled = await api<ContractIssue>(`/issues/${issue.id}/resolve`, {
       method: "POST",
-      body: { status, resolution },
+      body: {
+        status,
+        resolution,
+        outcome,
+        outcome_detail: NEEDS_DETAIL.has(outcome) ? detail.trim() : null,
+        outcome_change_type: outcome === "change_request" ? changeType : null,
+        outcome_due_date: outcome === "obligation" ? dueDate || null : null,
+        ...(outcome === "change_request"
+          ? {
+              outcome_financial_effect: financial,
+              outcome_value_delta: valueDelta ? Number(valueDelta) : null,
+              outcome_timeline_effect: timeline,
+              outcome_end_date: endDate || null,
+            }
+          : {}),
+      },
     });
-    setOpen(false);
+    // Held open when something was made, so the reader is told what and can
+    // go to it. Closing on success said nothing and left them to find out.
+    setMade(settled.led_to ?? null);
     onDone();
+    if (!settled.led_to) close();
   });
+
+  function close() {
+    setOpen(false);
+    setMade(null);
+    setDetail("");
+    setResolution("");
+    setOutcome("");
+    setDueDate("");
+  }
+
+  const ready =
+    outcome !== "" &&
+    resolution.trim().length >= 15 &&
+    (!NEEDS_DETAIL.has(outcome) || detail.trim().length > 0) &&
+    (outcome !== "obligation" || dueDate !== "");
 
   return (
     <>
@@ -196,22 +284,45 @@ export function Resolve({
       </Button>
       <Modal
         open={open}
-        title="Settle this issue"
+        title={made ? "Settled, and here is what it made" : "Settle this issue"}
         subtitle={`${issue.reference}. ${issue.title}`}
-        onClose={() => setOpen(false)}
+        onClose={close}
         footer={
-          <>
-            <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button
-              variant="primary"
-              disabled={resolution.trim().length < 15 || save.busy}
-              onClick={() => void save.run()}
-            >
-              Record the resolution
+          made ? (
+            <Button variant="primary" onClick={close}>
+              Done
             </Button>
-          </>
+          ) : (
+            <>
+              <Button onClick={close}>Cancel</Button>
+              <Button
+                variant="primary"
+                disabled={!ready || save.busy}
+                onClick={() => void save.run()}
+              >
+                {save.busy ? "Recording" : WILL_MAKE[outcome] ?? "Record the resolution"}
+              </Button>
+            </>
+          )
         }
       >
+        {made ? (
+          <Notice tone="good" title={made.label}>
+            <span className="flex flex-wrap items-center gap-2">
+              <span>{issue.reference} is settled and this now exists:</span>
+              {made.href && made.reference ? (
+                <Link href={made.href} className="font-medium underline-offset-2 hover:underline">
+                  {made.reference}
+                </Link>
+              ) : (
+                <Mono>{made.reference ?? ""}</Mono>
+              )}
+            </span>
+          </Notice>
+        ) : null}
+
+        {made ? null : (
+        <>
         {save.error ? (
           <Refusal
             title="That was not recorded"
@@ -220,7 +331,7 @@ export function Resolve({
           />
         ) : null}
 
-        <Field label="Outcome" required>
+        <Field label="How it was settled" required>
           <Select value={status} onChange={(event) => setStatus(event.target.value)}>
             <option value="resolved">Resolved</option>
             <option value="closed_no_action">Closed, no action needed</option>
@@ -238,6 +349,113 @@ export function Resolve({
             className="min-h-[6rem] leading-relaxed"
           />
         </Field>
+
+        <Field
+          label="What did this lead to?"
+          required
+          hint="Made here, not asked for later. Everything but the first answer creates a record and takes you to it."
+        >
+          <Select value={outcome} onChange={(event) => setOutcome(event.target.value)}>
+            <option value="">Choose what happens next</option>
+            {(vocabulary?.issue_outcomes ?? [{ key: "none", label: "Nothing further" }]).map(
+              (term) => (
+                <option key={term.key} value={term.key}>
+                  {term.label}
+                </option>
+              ),
+            )}
+          </Select>
+        </Field>
+
+        {/* Said before it happens, at the point of choosing. A control that
+            creates a record without saying so is the same surprise whether it
+            creates too much or nothing at all. */}
+        {WILL_HAPPEN[outcome] ? (
+          <Notice tone="info" title="What this will do">
+            {WILL_HAPPEN[outcome]}
+          </Notice>
+        ) : null}
+
+        {outcome === "change_request" ? (
+          <Field label="Which kind of change" required>
+            <Select value={changeType} onChange={(event) => setChangeType(event.target.value)}>
+              {(vocabulary?.change_types ?? []).map((term) => (
+                <option key={term.key} value={term.key}>
+                  {term.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : null}
+
+        {/* The same questions the department's own form asks. A change raised
+            on their behalf used to arrive with none of them answered, so the
+            determination picked an instrument without knowing whether the
+            money moved. */}
+        {outcome === "change_request" ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Effect on the money">
+              <Select value={financial} onChange={(event) => setFinancial(event.target.value)}>
+                <option value="none">No change</option>
+                <option value="increase">It costs more</option>
+                <option value="decrease">It costs less</option>
+                <option value="unknown">Not known yet</option>
+              </Select>
+            </Field>
+            <Field label="How much, if known">
+              <Input
+                type="number"
+                min={0}
+                value={valueDelta}
+                onChange={(event) => setValueDelta(event.target.value)}
+              />
+            </Field>
+            <Field label="Effect on the dates">
+              <Select value={timeline} onChange={(event) => setTimeline(event.target.value)}>
+                <option value="none">No change</option>
+                <option value="extends">It runs longer</option>
+                <option value="shortens">It ends sooner</option>
+                <option value="unknown">Not known yet</option>
+              </Select>
+            </Field>
+            <Field label="Proposed end date">
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(event) => setEndDate(event.target.value)}
+              />
+            </Field>
+          </div>
+        ) : null}
+
+        {NEEDS_DETAIL.has(outcome) ? (
+          <Field label={DETAIL_LABEL[outcome]} required>
+            <Textarea
+              value={detail}
+              onChange={(event) => setDetail(event.target.value)}
+              className="min-h-[4rem] leading-relaxed"
+            />
+          </Field>
+        ) : null}
+
+        {outcome === "obligation" ? (
+          <Field label="Due by" required hint="A duty with no date is a duty nobody is reminded of.">
+            <Input
+              type="date"
+              value={dueDate}
+              onChange={(event) => setDueDate(event.target.value)}
+            />
+          </Field>
+        ) : null}
+
+        {outcome === "termination" ? (
+          <Notice tone="warn" title="This opens the closure checklist">
+            The agreement moves to in closure and this issue becomes the recorded reason. Nothing
+            is closed until every line of the checklist is settled.
+          </Notice>
+        ) : null}
+        </>
+        )}
       </Modal>
     </>
   );
@@ -323,6 +541,18 @@ export function Issues({ entity }: Readonly<{ entity: string }>) {
                     {issue.assignee_name ?? <span className="text-warning">Nobody</span>}
                   </div>
                   <div className="flex items-center justify-end gap-2">
+                    {/* A settled issue says what it produced, not just that it
+                        is settled: the queue is where somebody asks what came
+                        of a problem months later. */}
+                    {issue.settled && issue.led_to?.href && issue.led_to.reference ? (
+                      <Link
+                        href={issue.led_to.href}
+                        title={issue.led_to.label}
+                        className="text-xs underline-offset-2 hover:underline"
+                      >
+                        {issue.led_to.reference}
+                      </Link>
+                    ) : null}
                     {issue.settled || !canAct ? (
                       <Pill tone={issue.settled ? "good" : "warn"}>
                         {say(vocabulary.data?.issue_statuses, issue.status)}
@@ -330,7 +560,7 @@ export function Issues({ entity }: Readonly<{ entity: string }>) {
                     ) : (
                       <>
                         <Triage issue={issue} onDone={issues.reload} />
-                        <Resolve issue={issue} onDone={issues.reload} />
+                        <Resolve issue={issue} vocabulary={vocabulary.data} onDone={issues.reload} />
                       </>
                     )}
                   </div>

@@ -113,6 +113,25 @@ COUNTERPARTY_DISCLAIMER = (
 )
 
 
+PDF_MAGIC = b"%PDF-"
+ZIP_MAGIC = b"PK\x03\x04"
+
+
+def _served_as(data: bytes) -> tuple[str, str]:
+    """The media type these bytes really are.
+
+    A DOCX is a zip and a PDF says so in its first five bytes, which is enough
+    to stop the two being confused. Anything else is served as a download
+    rather than guessed at: a wrong type is worse than an unknown one, because
+    the reader's browser acts on it.
+    """
+    if data.startswith(PDF_MAGIC):
+        return "application/pdf", ".pdf"
+    if data.startswith(ZIP_MAGIC):
+        return DOCX_MEDIA_TYPE, ".docx"
+    return "application/octet-stream", ""
+
+
 def _store_counterparty_paper(
     db,
     principal,
@@ -616,13 +635,18 @@ def download(document_id: uuid.UUID, db: Db, principal: CurrentUser) -> Response
         actor_label=principal.name,
         entity=document.entity,
     )
+    # What it actually is, not what we would like it to be. A signed copy is
+    # commonly a PDF and their paper is sometimes one; both were served under
+    # the DOCX type, so the editor was handed a file it could not unzip and
+    # failed with a message about a source it could not prepare. The sniff is
+    # on the bytes rather than the filename because the object store holds
+    # whatever was uploaded.
+    media_type, extension = _served_as(data)
     return Response(
         content=data,
-        media_type=(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ),
+        media_type=media_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{document.name}.docx"',
+            "Content-Disposition": f'attachment; filename="{document.name}{extension}"',
             "X-Content-Hash": document.content_hash,
         },
     )

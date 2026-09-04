@@ -21,6 +21,11 @@ import {
   Textarea,
 } from "@/components/ui";
 import { api } from "@/lib/api";
+import {
+  EvidenceField,
+  NO_EVIDENCE,
+  type Evidence,
+} from "@/components/app/evidence-field";
 import { useAction, useApi } from "@/lib/hooks";
 import type {
   ChangeRequest,
@@ -66,7 +71,7 @@ function RaiseIssue({
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [occurredOn, setOccurredOn] = React.useState("");
-  const [evidenceNote, setEvidenceNote] = React.useState("");
+  const [evidence, setEvidence] = React.useState<Evidence>(NO_EVIDENCE);
 
   const raise = useAction(async () => {
     await api(`/contracts/${contract.id}/issues`, {
@@ -77,12 +82,13 @@ function RaiseIssue({
         title: title.trim(),
         description: description.trim(),
         occurred_on: occurredOn || null,
-        evidence_note: evidenceNote.trim() || null,
+        evidence_note: evidence.reference.trim() || null,
+        evidence_document_id: evidence.documentId,
       },
     });
     setTitle("");
     setDescription("");
-    setEvidenceNote("");
+    setEvidence(NO_EVIDENCE);
     setOpen(false);
     onDone();
   });
@@ -169,13 +175,11 @@ function RaiseIssue({
               onChange={(event) => setOccurredOn(event.target.value)}
             />
           </Field>
-          <Field label="Evidence" hint="Where the proof is. Legal will ask for the file.">
-            <Input
-              value={evidenceNote}
-              onChange={(event) => setEvidenceNote(event.target.value)}
-              placeholder="Email thread of 3 August"
-            />
-          </Field>
+          <EvidenceField
+            contractId={contract.id}
+            value={evidence}
+            onChange={setEvidence}
+          />
         </div>
       </Modal>
     </>
@@ -460,11 +464,6 @@ export default function PortalContracts() {
                 }
               />
               <CardBody className="space-y-3">
-                {contract.termination_deadline ? (
-                  <Notice tone="info" title="If you want to end this, say so by">
-                    {`${formatDate(contract.termination_deadline)}. After that date the agreement runs to its end.`}
-                  </Notice>
-                ) : null}
                 {contract.key_deliverables ? (
                   <div>
                     <div className="text-xs text-muted-foreground">What it requires</div>

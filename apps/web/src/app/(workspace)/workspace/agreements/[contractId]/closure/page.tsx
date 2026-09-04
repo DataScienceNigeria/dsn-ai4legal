@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import * as React from "react";
 
+import {
+  EvidenceField,
+  type Evidence,
+} from "@/components/app/evidence-field";
 import { useRoles } from "@/components/app/session";
 import { StepUpGate } from "@/components/app/step-up";
 import {
@@ -49,13 +53,21 @@ const STATUS_LABEL: Record<string, string> = {
 */
 function Confirm({
   item,
+  contractId,
   onSaved,
-}: Readonly<{ item: ClosureItem; onSaved: (closure: Closure) => void }>) {
+}: Readonly<{
+  item: ClosureItem;
+  contractId: string;
+  onSaved: (closure: Closure) => void;
+}>) {
   const [open, setOpen] = React.useState(false);
   const [status, setStatus] = React.useState(
     item.status === "outstanding" ? "confirmed" : item.status,
   );
-  const [evidence, setEvidence] = React.useState(item.evidence_reference ?? "");
+  const [evidence, setEvidence] = React.useState<Evidence>({
+    documentId: item.evidence_document_id ?? null,
+    reference: item.evidence_reference ?? "",
+  });
   const [note, setNote] = React.useState(item.note ?? "");
 
   const save = useAction(async () => {
@@ -63,7 +75,8 @@ function Confirm({
       method: "POST",
       body: {
         status,
-        evidence_reference: evidence.trim() || null,
+        evidence_reference: evidence.reference.trim() || null,
+        evidence_document_id: evidence.documentId,
         note: note.trim() || null,
       },
     });
@@ -71,10 +84,10 @@ function Confirm({
     onSaved(closure);
   });
 
-  const needsEvidence = status === "confirmed" && item.evidence_required;
-  const ready =
-    (!needsEvidence || evidence.trim().length > 0) &&
-    (status !== "not_applicable" || note.trim().length > 0);
+  // Evidence is asked for, not demanded. The field took any string at all, so
+  // refusing without it stopped nothing except an honest confirmation whose
+  // paper lives in another system.
+  const ready = status !== "not_applicable" || note.trim().length > 0;
 
   return (
     <>
@@ -118,21 +131,16 @@ function Confirm({
         </Field>
 
         {status === "confirmed" ? (
-          <Field
-            label="Evidence"
-            required={item.evidence_required}
+          <EvidenceField
+            contractId={contractId}
+            value={evidence}
+            onChange={setEvidence}
             hint={
               item.evidence_required
-                ? "The certificate, receipt, ticket or email that proves it. This is what gets shown."
-                : "Optional on this line."
+                ? "The certificate, receipt, ticket or email that proves it. Attach it, or say where it is."
+                : "Optional on this line. Attach a file or say where the proof is."
             }
-          >
-            <Input
-              value={evidence}
-              onChange={(event) => setEvidence(event.target.value)}
-              placeholder="Link or reference"
-            />
-          </Field>
+          />
         ) : null}
 
         <Field
@@ -370,7 +378,7 @@ export default function ContractClosure() {
                       {STATUS_LABEL[item.status] ?? item.status}
                     </Pill>
                     {canAct && !current.closed_at ? (
-                      <Confirm item={item} onSaved={setData} />
+                      <Confirm item={item} contractId={id} onSaved={setData} />
                     ) : null}
                   </div>
                 ))}

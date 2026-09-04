@@ -65,10 +65,19 @@ type RequestOptions = {
   wrong password or a wrong six-digit code. Treating any of those as a dead
   session signed people out at the exact moment they were proving who they
   were, which made both enrolment and step-up impossible to finish.
+
+  `/auth/me` is the exception to the exception. It is the probe the session
+  provider makes on load, and a 401 there means precisely that the token is
+  finished: excluding it along with the rest of `/auth/` left the dead token
+  in storage and the workspace spinning on "Opening the workspace" for ever,
+  because nothing cleared it and nothing sent the reader anywhere.
 */
+const SESSION_PROBE = "/auth/me";
+
 function endsTheSession(status: number, code: string, path: string): boolean {
   if (status !== 401) return false;
   if (code === "step_up_required") return false;
+  if (path === SESSION_PROBE) return true;
   return !path.startsWith("/auth/");
 }
 
@@ -112,7 +121,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     const problem = await readProblem(response);
     if (endsTheSession(response.status, problem.code, path)) {
       setToken(null);
-      if (token) redirectToSignIn();
+      redirectToSignIn();
     }
     throw new ApiError(response.status, problem);
   }

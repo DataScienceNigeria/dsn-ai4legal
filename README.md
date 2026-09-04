@@ -21,11 +21,11 @@ docker compose up -d --build
 
 | Service    | Address               | What it is                                   |
 | ---------- | --------------------- | -------------------------------------------- |
-| `web`    | http://localhost:3000 | The interface                                |
+| `web`    | http://localhost:3004 | The interface                                |
 | `api`    | http://localhost:8000 | FastAPI, OpenAPI at`/api/v1/docs`          |
 | `worker` | no port               | Celery worker and beat, the scheduled sweeps |
 | `n8n`    | http://localhost:5678 | Plumbing only, mailbox polling               |
-| `db`     | localhost:5433        | PostgreSQL 18 with pgvector                  |
+| `db`     | localhost:5434        | PostgreSQL 18 with pgvector                  |
 | `minio`  | http://localhost:9101 | Object store console                         |
 
 Sign in as `adaeze.okafor@dsn.example` with the password `Lop-Demo-2026`. Other
@@ -66,7 +66,7 @@ Three things about this arrangement are worth knowing.
 
 The **API container stays down**. It would hold port 8000 against the host
 process, and the two serve different builds. The same applies to the web
-container and port 3000: do not run both.
+container and port 3004: do not run both.
 
 **n8n starts with `--no-deps`**, because its compose dependency is the API
 container that is deliberately not running. `docker-compose.override.yml`

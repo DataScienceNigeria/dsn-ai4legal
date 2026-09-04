@@ -17,23 +17,27 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, File, UploadFile
 from sqlalchemy import select
 
 from app.core import audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Conflict, Forbidden, NotFound, Refused, ValidationFailed
 from app.db.models.contract import (
+    Obligation,
     Contract,
     ContractChangeRequest,
     ContractClosureItem,
     ContractIssue,
 )
+from app.db.models.document import Document
 from app.db.models.matter import Matter
 from app.db.models.organisation import User
 from app.domain import agreements
 from app.domain import lifecycle as vocab
-from app.domain.enums import MatterState, RiskTier, Role, Severity
+from app.domain.enums import DocumentType, MatterState, RiskTier, Role, Severity
 from app.schemas.lifecycle import (
     ChangeDetermination,
     ChangeRequestCreate,
@@ -43,15 +47,18 @@ from app.schemas.lifecycle import (
     ClosureItemOut,
     ClosureItemUpdate,
     ClosureOut,
+    EvidenceOut,
     IssueCreate,
     IssueOut,
+    IssueOutcomeOut,
     IssueResolve,
     IssueTriage,
     RegisterUpdate,
     VocabularyOut,
 )
 from app.services import lifecycle as service
-from app.services import notifications, sequences
+from app.services import notifications, sequences, storage
+from app.services.hashing import file_hash
 
 router = APIRouter(tags=["lifecycle"])
 
@@ -84,6 +91,7 @@ def vocabulary(principal: CurrentUser) -> VocabularyOut:
         agreement_types=_terms(agreements.AGREEMENT_TYPES),
         issue_types=_terms(vocab.ISSUE_TYPES),
         issue_statuses=_terms(vocab.ISSUE_STATUSES),
+        issue_outcomes=_terms(vocab.ISSUE_OUTCOMES),
         change_types=_terms(vocab.CHANGE_TYPES),
         instruments=_terms(vocab.INSTRUMENTS),
         change_decisions=_terms(vocab.CHANGE_DECISIONS),
@@ -115,7 +123,139 @@ def _mine_or_legal(contract: Contract, principal) -> None:
     raise Forbidden("That agreement is not one of yours.")
 
 
-def _decorate_issue(issue: ContractIssue) -> IssueOut:
+@router.post("/contracts/{contract_id}/evidence", status_code=201)
+def add_evidence(
+    contract_id: uuid.UUID,
+    db: Db,
+    principal: CurrentUser,
+    file: Annotated[UploadFile, File()],
+) -> EvidenceOut:
+    """Store a file that proves something about this agreement.
+
+    Kept as a document rather than an attachment so it inherits the retention
+    schedule, the legal hold and the access rules of the agreement it belongs
+    to. An issue or a closure line then points at it, and the same file can
+    stand behind more than one of them without being uploaded twice.
+
+    Whoever may open the agreement may add evidence to it, which is the
+    department running it as well as legal: they are the ones who hold the
+    delivery note.
+    """
+    contract = _contract(db, contract_id)
+    _mine_or_legal(contract, principal)
+
+    data = file.file.read()
+    content_type = file.content_type or "application/octet-stream"
+    storage.validate_upload(file.filename or "", content_type, data)
+
+    clean, scan_detail = storage.scan_upload(data)
+    if not clean:
+        # On its own connection: the refusal below rolls this transaction back,
+        # and a quarantined upload that leaves no trace is the one upload
+        # anybody would want a record of.
+        audit.record_refusal(
+            action="upload_quarantined",
+            object_type="contract",
+            object_id=contract.reference,
+            actor_id=principal.user_id,
+            actor_label=principal.name,
+            entity=contract.entity,
+            detail=scan_detail,
+        )
+        raise ValidationFailed(
+            "This file was refused and has been quarantined.", {"file": scan_detail}
+        )
+
+    digest = file_hash(data)
+    # The same file offered twice is the same evidence. Returning what is
+    # already there keeps one document behind both the issue and the closure
+    # line it proves, rather than two copies nobody can tell apart.
+    existing = db.execute(
+        select(Document).where(
+            Document.contract_id == contract.id,
+            Document.content_hash == digest,
+            Document.document_type == DocumentType.EVIDENCE.value,
+        )
+    ).scalars().first()
+    if existing is not None:
+        return EvidenceOut(
+            id=existing.id, name=existing.name, size_bytes=len(data), reused=True
+        )
+
+    name = file.filename or "evidence"
+    key = f"contracts/{contract.reference}/evidence/{digest[:12]}-{name}"
+    storage.store.put(key, data, content_type)
+
+    document = Document(
+        entity=contract.entity,
+        matter_id=contract.matter_id,
+        contract_id=contract.id,
+        name=name,
+        document_type=DocumentType.EVIDENCE.value,
+        content_hash=digest,
+        storage_key=key,
+        generated_by_id=uuid.UUID(principal.user_id),
+        generated_at=datetime.now(UTC),
+    )
+    db.add(document)
+    db.flush()
+
+    audit.record(
+        db,
+        action="evidence_added",
+        object_type="contract",
+        object_id=contract.reference,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=contract.entity,
+        after_state={"document": name, "bytes": len(data), "hash": digest},
+    )
+    return EvidenceOut(id=document.id, name=name, size_bytes=len(data), reused=False)
+
+
+def _led_to(issue: ContractIssue, db) -> IssueOutcomeOut | None:
+    """What the issue produced, with somewhere to go and read it.
+
+    An outcome that names a record nobody can open is the same dead end in
+    nicer words, so each carries its reference and its address.
+    """
+    kind = issue.outcome
+    if not kind or kind == "none":
+        return None
+    label = vocab.ISSUE_OUTCOMES.get(kind, kind)
+    contract_id = issue.contract_id
+
+    if kind == "change_request" and issue.change_request_id:
+        change = db.get(ContractChangeRequest, issue.change_request_id)
+        return IssueOutcomeOut(
+            kind=kind, label=label,
+            reference=change.reference if change else None,
+            href=f"/workspace/agreements/{contract_id}/changes",
+        )
+    if kind == "matter" and issue.outcome_matter_id:
+        matter = db.get(Matter, issue.outcome_matter_id)
+        return IssueOutcomeOut(
+            kind=kind, label=label,
+            reference=matter.number if matter else None,
+            href=f"/workspace/matters/{issue.outcome_matter_id}",
+        )
+    if kind == "obligation" and issue.outcome_obligation_id:
+        obligation = db.get(Obligation, issue.outcome_obligation_id)
+        return IssueOutcomeOut(
+            kind=kind, label=label,
+            reference=obligation.reference if obligation else None,
+            href=f"/workspace/agreements/{contract_id}/obligations",
+        )
+    if kind == "termination":
+        return IssueOutcomeOut(
+            kind=kind, label=label,
+            reference=issue.contract.reference if issue.contract else None,
+            href=f"/workspace/agreements/{contract_id}/closure",
+        )
+    return IssueOutcomeOut(kind=kind, label=label)
+
+
+def _decorate_issue(issue: ContractIssue, db=None) -> IssueOut:
     model = IssueOut.model_validate(issue)
     contract = issue.contract
     if contract is not None:
@@ -123,6 +263,8 @@ def _decorate_issue(issue: ContractIssue) -> IssueOut:
         model.counterparty_name = (
             contract.counterparty.legal_name if contract.counterparty else None
         )
+    if db is not None:
+        model.led_to = _led_to(issue, db)
     return model
 
 
@@ -217,7 +359,7 @@ def raise_issue(
             "title": payload.title,
         },
     )
-    return _decorate_issue(issue)
+    return _decorate_issue(issue, db)
 
 
 @router.get("/issues", response_model=list[IssueOut])
@@ -238,7 +380,7 @@ def list_issues(
     if contract_id:
         stmt = stmt.where(ContractIssue.contract_id == contract_id)
     rows = db.execute(stmt.order_by(ContractIssue.created_at.desc())).scalars()
-    return [_decorate_issue(issue) for issue in rows]
+    return [_decorate_issue(issue, db) for issue in rows]
 
 
 @router.get("/contracts/{contract_id}/issues", response_model=list[IssueOut])
@@ -252,7 +394,7 @@ def contract_issues(
         .where(ContractIssue.contract_id == contract_id)
         .order_by(ContractIssue.created_at.desc())
     ).scalars()
-    return [_decorate_issue(issue) for issue in rows]
+    return [_decorate_issue(issue, db) for issue in rows]
 
 
 @router.post("/issues/{issue_id}/triage", response_model=IssueOut)
@@ -303,7 +445,7 @@ def triage_issue(
         after_state={"assignee": str(issue.assignee_id), "severity": issue.severity,
                      "status": issue.status},
     )
-    return _decorate_issue(issue)
+    return _decorate_issue(issue, db)
 
 
 @router.post("/issues/{issue_id}/resolve", response_model=IssueOut)
@@ -325,10 +467,80 @@ def resolve_issue(
     if not allowed:
         raise ValidationFailed(reason, {"resolution": reason})
 
+    ready, why = service.outcome_needs(
+        payload.outcome,
+        payload.outcome_detail,
+        payload.outcome_due_date,
+        payload.outcome_change_type,
+    )
+    if not ready:
+        raise ValidationFailed("That outcome cannot be recorded yet.", {"outcome": why})
+
+    contract = issue.contract
+    if payload.outcome != "none" and contract.status in {"closed", "terminated", "lapsed"}:
+        state = vocab.CONTRACT_STATUSES.get(contract.status, contract.status).lower()
+        raise Conflict(
+            f"{contract.reference} is {state}. An issue on a finished agreement can be "
+            "settled but cannot produce work on it."
+        )
+
     issue.status = payload.status
     issue.resolution = payload.resolution
     issue.resolved_at = datetime.now(UTC)
     issue.resolved_by_id = uuid.UUID(principal.user_id)
+    issue.outcome = payload.outcome
+
+    # What the issue turned into. Made here rather than left to the reader,
+    # because "raise a change request about this" written in a resolution is
+    # the round trip the platform exists to remove.
+    produced: str | None = None
+    detail = (payload.outcome_detail or "").strip()
+
+    if payload.outcome == "change_request":
+        change = service.issue_change_request(
+            db, issue, contract,
+            change_type=payload.outcome_change_type or "other",
+            detail=detail,
+            financial_effect=payload.outcome_financial_effect,
+            value_delta=payload.outcome_value_delta,
+            timeline_effect=payload.outcome_timeline_effect,
+            end_date=payload.outcome_end_date,
+        )
+        issue.change_request_id = change.id
+        produced = change.reference
+    elif payload.outcome == "matter":
+        matter = service.reopen_matter(
+            db, issue, contract, detail=detail,
+            responsible_lawyer_id=payload.outcome_owner_id or uuid.UUID(principal.user_id),
+        )
+        if matter is None:
+            raise Conflict(
+                f"{contract.reference} has no matter behind it, so there is nothing to "
+                "reopen. Raise the work as a request instead."
+            )
+        issue.outcome_matter_id = matter.id
+        produced = matter.number
+    elif payload.outcome == "obligation":
+        obligation = service.issue_obligation(
+            db, issue, contract, detail=detail,
+            due_date=payload.outcome_due_date,
+            owner_id=payload.outcome_owner_id or issue.assignee_id,
+        )
+        issue.outcome_obligation_id = obligation.id
+        produced = obligation.reference
+    elif payload.outcome == "termination":
+        # The checklist is the termination. Opening it here is what makes the
+        # issue the recorded reason for it rather than an unexplained closure.
+        service.materialise_checklist(db, contract)
+        if contract.closure_opened_at is None:
+            contract.closure_opened_at = datetime.now(UTC)
+        contract.status = "in_closure"
+        contract.closure_note = (
+            f"Closing after {issue.reference}, {issue.title}. {payload.resolution}"
+        )
+        produced = contract.reference
+
+    db.flush()
 
     if issue.raised_by_id and str(issue.raised_by_id) != principal.user_id:
         notifications.raise_in_app(
@@ -350,9 +562,14 @@ def resolve_issue(
         actor_id=principal.user_id,
         actor_label=principal.name,
         entity=issue.entity,
-        after_state={"status": payload.status, "resolution": payload.resolution},
+        after_state={
+            "status": payload.status,
+            "resolution": payload.resolution,
+            "outcome": payload.outcome,
+            "produced": produced,
+        },
     )
-    return _decorate_issue(issue)
+    return _decorate_issue(issue, db)
 
 
 # =================================================== section 16, changes
@@ -508,6 +725,8 @@ def determine_change(
     change.decided_at = datetime.now(UTC)
 
     created_matter: Matter | None = None
+    carried: Document | None = None
+    seeded: Document | None = None
     if payload.decision == "approved":
         created_matter = Matter(
             entity=contract.entity,
@@ -533,6 +752,25 @@ def determine_change(
         db.flush()
         change.resulting_matter_id = created_matter.id
         contract.status = "active"
+        # The agreement being varied, in the matter that varies it. Without it
+        # the drafter opens an empty list and starts from a template, which is
+        # how an amendment ends up not matching the clause numbering of the
+        # thing it amends.
+        # What the variation matter opens with, and it is one document or the
+        # other rather than both: a matter may not hold the same bytes twice,
+        # and a draft seeded from the executed copy is those same bytes until
+        # somebody edits it.
+        #
+        # A restatement rewrites the whole agreement, so it gets the editable
+        # copy. Every other instrument is a short document written against the
+        # original, so it gets the original, read only, and editing it is
+        # exactly what must not happen.
+        if change.instrument == "restatement":
+            seeded = service.seed_restatement_draft(db, contract, created_matter)
+            if seeded is not None:
+                created_matter.next_action = "Restate the agreement from the seeded draft"
+        else:
+            carried = service.carry_executed_copy(db, contract, created_matter)
 
     if change.requested_by_id:
         notifications.raise_in_app(
@@ -559,6 +797,8 @@ def determine_change(
             "instrument": change.instrument,
             "reason": payload.reason,
             "matter": created_matter.number if created_matter else None,
+            "carried": carried.name if payload.decision == "approved" and carried else None,
+            "seeded": seeded.name if seeded else None,
         },
     )
     return _decorate_change(change, db)

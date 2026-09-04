@@ -31,8 +31,38 @@ class IssueTriage(BaseModel):
 
 
 class IssueResolve(BaseModel):
+    """Settling an issue, and saying what it turned into.
+
+    The outcome is what stops the record ending at a paragraph. Everything
+    except ``none`` creates something somebody else picks up, so each of those
+    carries the little it needs to be worth picking up.
+    """
+
     status: str
     resolution: str = Field(min_length=15)
+    outcome: str = "none"
+    outcome_detail: str | None = None
+    outcome_change_type: str | None = None
+    outcome_due_date: date | None = None
+    outcome_owner_id: UUID | None = None
+
+    # A change raised from an issue used to arrive with no commercial effect at
+    # all, so the determination chose an instrument without knowing whether the
+    # money moved. The department's own form has always asked; this asks the
+    # same questions of whoever raises it on their behalf.
+    outcome_financial_effect: str | None = None
+    outcome_value_delta: float | None = None
+    outcome_timeline_effect: str | None = None
+    outcome_end_date: date | None = None
+
+
+class IssueOutcomeOut(BaseModel):
+    """What the issue produced, named so a reader can follow it."""
+
+    kind: str
+    label: str
+    reference: str | None = None
+    href: str | None = None
 
 
 class IssueOut(ApiModel):
@@ -54,11 +84,15 @@ class IssueOut(ApiModel):
     resolution: str | None
     resolved_at: datetime | None
     change_request_id: UUID | None
+    outcome: str | None = None
+    outcome_matter_id: UUID | None = None
+    outcome_obligation_id: UUID | None = None
     settled: bool = False
     created_at: datetime
 
     contract_reference: str | None = None
     counterparty_name: str | None = None
+    led_to: IssueOutcomeOut | None = None
 
 
 # ----------------------------------------------------------- change requests
@@ -187,6 +221,7 @@ class VocabularyOut(BaseModel):
     agreement_types: list[dict]
     issue_types: list[dict]
     issue_statuses: list[dict]
+    issue_outcomes: list[dict]
     change_types: list[dict]
     instruments: list[dict]
     change_decisions: list[dict]
@@ -241,3 +276,15 @@ class ConsultantReviewOut(ApiModel):
     matter_number: str | None = None
     matter_title: str | None = None
     document_name: str | None = None
+
+class EvidenceOut(ApiModel):
+    """A stored file an issue or a closure line can point at.
+
+    ``reused`` says the same bytes were already held against this agreement, so
+    the caller knows it is linking to an existing document rather than a copy.
+    """
+
+    id: UUID
+    name: str
+    size_bytes: int
+    reused: bool = False

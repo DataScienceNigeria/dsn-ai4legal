@@ -46,6 +46,24 @@ ISSUE_SETTLED = frozenset({"resolved", "closed_no_action"})
 
 #: A resolution has to say what was done. Anything shorter than this is a tick
 #: rather than a record, and a tick is what the register already has.
+#: What an issue turned into. Section 15 says the department reports and Legal
+#: decides; it does not say what a decision produces, and an issue that ends at
+#: a paragraph is a record of a problem rather than an account of what was done
+#: about it. These are the four things a contract problem actually becomes,
+#: plus the honest fifth.
+ISSUE_OUTCOMES: dict[str, str] = {
+    "none": "Nothing further, settled between the parties",
+    "change_request": "A change to the paper",
+    "matter": "Reopen the matter behind this agreement",
+    "termination": "Termination of the agreement",
+    "obligation": "A dated obligation on the other side",
+}
+
+#: Outcomes that need something more than a sentence before they can be made.
+OUTCOMES_NEEDING_DETAIL: frozenset[str] = frozenset(
+    {"change_request", "matter", "obligation"}
+)
+
 MIN_RESOLUTION = 15
 
 

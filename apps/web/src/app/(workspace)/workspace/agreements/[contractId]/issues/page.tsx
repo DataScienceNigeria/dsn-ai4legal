@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import * as React from "react";
 
@@ -108,10 +109,29 @@ export default function AgreementIssues() {
                 </div>
               ) : null}
 
+              {/*
+                What the issue produced, with somewhere to go and read it. An
+                outcome naming a record nobody can open is the same dead end in
+                nicer words.
+              */}
+              {issue.led_to ? (
+                <div className="flex flex-wrap items-center gap-2 rounded-md border border-brand/40 bg-brand/5 p-3 text-sm">
+                  <span className="text-xs text-muted-foreground">Led to</span>
+                  <span>{issue.led_to.label}</span>
+                  {issue.led_to.href && issue.led_to.reference ? (
+                    <Link href={issue.led_to.href} className="font-medium underline-offset-2 hover:underline">
+                      {issue.led_to.reference}
+                    </Link>
+                  ) : (
+                    <Mono>{issue.led_to.reference ?? ""}</Mono>
+                  )}
+                </div>
+              ) : null}
+
               {canAct && !issue.settled ? (
                 <div className="flex flex-wrap gap-2 border-t pt-3">
                   <Triage issue={issue} onDone={issues.reload} />
-                  <Resolve issue={issue} onDone={issues.reload} />
+                  <Resolve issue={issue} vocabulary={vocabulary.data} onDone={issues.reload} />
                 </div>
               ) : null}
             </CardBody>
