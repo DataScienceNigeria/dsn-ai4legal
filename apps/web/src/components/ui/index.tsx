@@ -373,26 +373,52 @@ export function More({
   label = "More",
 }: Readonly<{ children: React.ReactNode; label?: string }>) {
   const [open, setOpen] = React.useState(false);
-  const [at, setAt] = React.useState<{ top: number; right: number; up: boolean } | null>(null);
+  const [at, setAt] = React.useState<{
+    top: number;
+    left: number;
+    room: number;
+    up: boolean;
+  } | null>(null);
   const trigger = React.useRef<HTMLButtonElement>(null);
   const menu = React.useRef<HTMLDivElement>(null);
 
+  /*
+    The menu wants its right edge under the button's, but a button near the
+    left of a narrow screen would put the menu's left edge off it, which read
+    as truncated labels rather than as a menu in the wrong place. The width is
+    measured rather than assumed, because the panel sizes to its longest item.
+  */
   const place = React.useCallback(() => {
     const button = trigger.current;
     if (!button) return;
     const rect = button.getBoundingClientRect();
     const below = globalThis.innerHeight - rect.bottom;
     const up = below < 220 && rect.top > below;
+    const margin = 8;
+    const room = globalThis.innerWidth - margin * 2;
+    const width = Math.min(menu.current?.getBoundingClientRect().width || room, room);
     setAt({
       top: up ? rect.top - 6 : rect.bottom + 6,
-      right: globalThis.innerWidth - rect.right,
+      left: Math.min(
+        Math.max(margin, rect.right - width),
+        globalThis.innerWidth - margin - width,
+      ),
+      room,
       up,
     });
   }, []);
 
-  React.useEffect(() => {
+  /*
+    Laid out before the paint, and from inside the portal, so the first frame
+    is already in the right place: the panel has to exist to be measured.
+  */
+  React.useLayoutEffect(() => {
     if (!open) return;
     place();
+  }, [open, place]);
+
+  React.useEffect(() => {
+    if (!open) return;
     function away(event: MouseEvent) {
       const target = event.target as Node;
       if (!trigger.current?.contains(target) && !menu.current?.contains(target)) setOpen(false);
@@ -425,16 +451,18 @@ export function More({
           &#9662;
         </span>
       </Button>
-      {open && at
+      {open
         ? createPortal(
             <div
               ref={menu}
               role="menu"
               onClick={() => setOpen(false)}
               style={{
-                top: at.top,
-                right: at.right,
-                transform: at.up ? "translateY(-100%)" : undefined,
+                top: at ? at.top : 0,
+                left: at ? at.left : 0,
+                maxWidth: at ? at.room : undefined,
+                visibility: at ? undefined : "hidden",
+                transform: at?.up ? "translateY(-100%)" : undefined,
               }}
               /*
                 Children are laid out as menu rows whatever they are, so a
@@ -469,7 +497,7 @@ export function MenuItem({
   children: React.ReactNode;
 }>) {
   const style = cn(
-    "flex w-full items-center gap-2 whitespace-nowrap rounded-md px-2.5 py-2 text-left text-sm no-underline transition-colors",
+    "flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm no-underline transition-colors",
     tone === "destructive"
       ? "text-destructive hover:bg-destructive/10"
       : "text-foreground hover:bg-muted",

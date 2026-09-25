@@ -496,7 +496,13 @@ function SidebarNav({
 }
 
 function SidebarFooter({ me, collapsed }: Readonly<{ me: Me; collapsed: boolean }>) {
+  const router = useRouter();
   const role = primaryRole(me.roles);
+
+  const signOut = () => {
+    logout();
+    router.replace("/sign-in");
+  };
 
   return (
     <div className={cn("border-t py-3", collapsed ? "px-2" : "px-3")}>
@@ -511,7 +517,7 @@ function SidebarFooter({ me, collapsed }: Readonly<{ me: Me; collapsed: boolean 
           "Open the requester portal"
         )}
       </Link>
-      <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
+      <div className={cn("flex items-center gap-2", collapsed && "flex-col justify-center")}>
         <span
           title={collapsed ? `${me.name}, ${role}` : undefined}
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-sm font-semibold text-brand-foreground"
@@ -524,6 +530,16 @@ function SidebarFooter({ me, collapsed }: Readonly<{ me: Me; collapsed: boolean 
             <div className="truncate text-xs text-muted-foreground">{role}</div>
           </div>
         )}
+        <Button
+          variant="ghost"
+          size="sm"
+          title="Sign out"
+          aria-label="Sign out"
+          className="h-9 w-9 shrink-0 px-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          onClick={signOut}
+        >
+          <Icon name="signout" className="h-4 w-4" />
+        </Button>
       </div>
     </div>
   );
@@ -770,18 +786,6 @@ export function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
             </span>
             <Notifications entity={entity} />
             <ThemeToggle />
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={() => {
-                logout();
-                router.replace("/sign-in");
-              }}
-            >
-              <Icon name="signout" className="h-4 w-4" />
-              <span className="hidden sm:inline">Sign out</span>
-              <span className="sr-only sm:hidden">Sign out</span>
-            </Button>
           </div>
         </header>
         <main id="workspace-content" className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8">
