@@ -10,6 +10,24 @@ push to main ──▶ Actions builds api + web ──▶ GHCR ──▶ ssh ─
 
 Everything below is done once. After that a deploy is a push to `main`.
 
+**Who starts what.** You never run `docker compose up` by hand. The workflow
+does it: it pulls the images, runs the migrations and starts every container.
+Steps 1 to 4 only prepare the ground, and nothing should be running on the
+server until step 5.
+
+That matters for the database in particular. PostgreSQL reads
+`POSTGRES_PASSWORD` **only when it first creates its volume**, so a container
+started before `.env` was finished keeps the password it saw then, and every
+later connection fails to authenticate against a value that looks right in the
+file.
+
+| Step | What runs | Who |
+| --- | --- | --- |
+| 1 to 4 | Nothing. Azure, the checkout, `.env`, nginx, GitHub settings | You |
+| 5 | Every container, migrations included | The workflow |
+| 6 | One bootstrap command, once ever | You |
+| After | Every container, migrations included | The workflow, on each push |
+
 ---
 
 ## 1. Azure Blob Storage
@@ -163,10 +181,30 @@ Push to `main`. This has to happen before the next step: the images do not
 exist until the workflow builds them, and the server cannot pull what was never
 pushed.
 
-The workflow builds both images, tags them with the commit, pushes to GHCR, and
-the server pulls, migrates and restarts. It then asks the
-public address for `/api/v1/health` until it answers, and says so if the answer
-shows the deployment is not on Azure storage.
+The workflow builds both images, tags them with the commit, pushes to GHCR,
+then on the server pulls them, starts the database, runs the migrations and
+brings everything up. It then asks the public address for `/api/v1/health`
+until it answers, and says so if the answer shows the deployment is not on
+Azure storage.
+
+Watch it finish before going on:
+
+```bash
+gh run watch          # or the Actions tab
+```
+
+**If anything was started on the server before this**, and the database was
+created against a different `.env`, clear it while it is still empty:
+
+```bash
+cd /home/azureuser/ai4legal
+COMPOSE="docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml"
+$COMPOSE down
+docker volume rm dsn-lai_db_data
+```
+
+Then re-run the workflow. Only safe before the first real matter exists:
+after that, the volume is the platform's records.
 
 **Rolling back** is the same workflow run by hand: Actions, Deploy, Run
 workflow, and give an earlier commit SHA as `image_tag`. The build is skipped
@@ -175,9 +213,9 @@ across one needs the migration considered on its own.
 
 ## 6. First run
 
-The deploy ran the migrations, but a fresh database has no organisations, no
-request types and nobody to sign in as. Bootstrap it once, on the server, after
-the first deploy has finished:
+The deploy created the schema, but a fresh database has no organisations, no
+request types and nobody to sign in as. This is the one command you run by
+hand, once, after step 5 has finished green:
 
 ```bash
 cd /home/azureuser/ai4legal

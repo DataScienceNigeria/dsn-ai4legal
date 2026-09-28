@@ -105,7 +105,6 @@ jobs:
           # Passed as environment rather than written into the script, so the
           # token never reaches the command line or the shell history.
           envs: IMAGE_TAG,GHCR_USER,GHCR_TOKEN
-          script_stop: true
           script: |
             set -euo pipefail
             cd ${{ secrets.DEPLOY_PATH }}
@@ -122,10 +121,14 @@ jobs:
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             $COMPOSE pull api worker web
 
+            # The database first, and healthy, because the migration cannot
+            # run against something still starting.
+            $COMPOSE up -d db redis
+
             # Migrations run against the new image before anything serves it,
             # so a container never comes up expecting a schema that is not
             # there. The API runs them on start too, and they are idempotent.
-            $COMPOSE run --rm --no-deps api alembic upgrade head
+            $COMPOSE run --rm api alembic upgrade head
 
             $COMPOSE up -d --remove-orphans
             docker logout ghcr.io
