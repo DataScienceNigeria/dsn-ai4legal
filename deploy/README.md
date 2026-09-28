@@ -38,13 +38,22 @@ reach the container.
 
 ## 2. The server
 
-Needs Docker with Compose v2, nginx, and a user in the `docker` group.
+Needs Docker with Compose v2, nginx, and the deploy user in the `docker` group.
+This deployment is `azureuser` on `dsn-AI4legal`, with the checkout at
+`/home/azureuser/ai4legal`.
 
 ```bash
-sudo mkdir -p /srv/dsn-ai4legal && sudo chown "$USER" /srv/dsn-ai4legal
-git clone https://github.com/DataScienceNigeria/dsn-ai4legal.git /srv/dsn-ai4legal
-cd /srv/dsn-ai4legal
+git clone https://github.com/DataScienceNigeria/dsn-ai4legal.git ~/ai4legal
+cd ~/ai4legal
 cp deploy/.env.production.example .env
+chmod 600 .env
+```
+
+Where the checkout already exists, confirm it is the right one and current,
+because the workflow pulls images but reads the compose files from here:
+
+```bash
+cd ~/ai4legal && git remote -v && git pull
 ```
 
 Then edit `.env` and replace every value marked `CHANGE`. Generate each secret
@@ -54,7 +63,13 @@ separately:
 openssl rand -base64 48
 ```
 
-Three of them stop the platform rather than degrading it, which is deliberate:
+`AZURE_STORAGE_CONTAINER` is `ai4legal`. Put the account key in
+`AZURE_STORAGE_CONNECTION_STRING` and leave `AZURE_STORAGE_ACCOUNT_URL` empty,
+or the other way round where the server has a managed identity, which is worth
+moving to before real agreements land: an account key is full control over the
+storage account and has to be rotated by hand.
+
+Three settings stop the platform rather than degrading it, deliberately:
 
 | Setting | What happens if it is wrong |
 | --- | --- |
@@ -62,15 +77,8 @@ Three of them stop the platform rather than degrading it, which is deliberate:
 | `DSNLAI_STORAGE_BACKEND=azure` | Refuses to start if the container cannot be reached, rather than accepting uploads it cannot keep |
 | `DSNLAI_BACKUP_PASSPHRASE` | `scripts/backup.sh` refuses to run. Keep it somewhere other than this server |
 
-`DSNLAI_ALLOWED_ORIGINS` stays **empty** with the nginx configuration below,
-because one address serves both the interface and the API and there is no
-cross-origin request to allow.
-
-Lock the file down, since it holds every secret the platform has:
-
-```bash
-chmod 600 .env
-```
+`DSNLAI_ALLOWED_ORIGINS` stays **empty**: `legal.dsnsandbox.com` serves both
+the interface and the API, so there is no cross-origin request to allow.
 
 ## 3. nginx and TLS
 
@@ -78,9 +86,31 @@ chmod 600 .env
 everything else to the interface on 3000. Change `server_name` if the address
 differs.
 
+**Check first whether nginx already serves this domain.** Certbot rewrites the
+file it manages to add the TLS block, so copying this one in beside it gives two
+server blocks for one name, and nginx ignores the second with a warning rather
+than failing:
+
 ```bash
-sudo cp deploy/nginx/legal.dsnsandbox.com.conf /etc/nginx/sites-available/legal.conf
-sudo ln -s /etc/nginx/sites-available/legal.conf /etc/nginx/sites-enabled/
+grep -rn "server_name legal.dsnsandbox.com" /etc/nginx/
+```
+
+If that finds a file, do not add another. Patch the one certbot manages, which
+needs only the upload limit and the two upload timeouts:
+
+```bash
+CONF=/etc/nginx/sites-available/legal.dsnsandbox.com
+sudo cp "$CONF"{,.bak}
+sudo sed -i '0,/server_name legal.dsnsandbox.com;/s//server_name legal.dsnsandbox.com;\n\n    client_max_body_size 64m;/' "$CONF"
+sudo sed -i 's|proxy_pass http://127.0.0.1:8000;|proxy_pass http://127.0.0.1:8000;\n        proxy_read_timeout 300s;\n        proxy_send_timeout 300s;|' "$CONF"
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+If it finds nothing, install this one and let certbot add TLS to it:
+
+```bash
+sudo cp deploy/nginx/legal.dsnsandbox.com.conf /etc/nginx/sites-available/legal.dsnsandbox.com
+sudo ln -s /etc/nginx/sites-available/legal.dsnsandbox.com /etc/nginx/sites-enabled/
 sudo mkdir -p /var/www/certbot
 sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d legal.dsnsandbox.com
@@ -114,7 +144,7 @@ work for nobody but somebody sitting on the server.
 | `DEPLOY_HOST` | The server's address |
 | `DEPLOY_USER` | The deploy user |
 | `DEPLOY_SSH_KEY` | Its private key, whole file including the header line |
-| `DEPLOY_PATH` | `/srv/dsn-ai4legal` |
+| `DEPLOY_PATH` | `/home/azureuser/ai4legal` |
 
 Make the key for this and nothing else:
 
@@ -127,13 +157,30 @@ rm deploy_key deploy_key.pub
 Create an environment named `production` (Settings, Environments) and add
 required reviewers if you want a deploy to wait for a person.
 
-## 5. First run
+## 5. The first deploy
 
-The workflow runs migrations, but a fresh database has no organisations, no
-request types and nobody to sign in as. Bootstrap it once, on the server:
+Push to `main`. This has to happen before the next step: the images do not
+exist until the workflow builds them, and the server cannot pull what was never
+pushed.
+
+The workflow builds both images, tags them with the commit, pushes to GHCR, and
+the server pulls, migrates and restarts. It then asks the
+public address for `/api/v1/health` until it answers, and says so if the answer
+shows the deployment is not on Azure storage.
+
+**Rolling back** is the same workflow run by hand: Actions, Deploy, Run
+workflow, and give an earlier commit SHA as `image_tag`. The build is skipped
+and the server pulls that pair. A migration is not undone by this, so a rollback
+across one needs the migration considered on its own.
+
+## 6. First run
+
+The deploy ran the migrations, but a fresh database has no organisations, no
+request types and nobody to sign in as. Bootstrap it once, on the server, after
+the first deploy has finished:
 
 ```bash
-cd /srv/dsn-ai4legal
+cd /home/azureuser/ai4legal
 COMPOSE="docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml"
 
 read -rsp "First administrator password: " ADMIN_PASSWORD; echo
@@ -156,18 +203,6 @@ the legal lead among them.
 Then sign in, enrol a second factor under Administration, and add the legal
 team from the People tab.
 
-## 6. Deploying
-
-Push to `main`. The workflow builds both images, tags them with the commit,
-pushes to GHCR, and the server pulls, migrates and restarts. It then asks the
-public address for `/api/v1/health` until it answers, and says so if the answer
-shows the deployment is not on Azure storage.
-
-**Rolling back** is the same workflow run by hand: Actions, Deploy, Run
-workflow, and give an earlier commit SHA as `image_tag`. The build is skipped
-and the server pulls that pair. A migration is not undone by this, so a rollback
-across one needs the migration considered on its own.
-
 ## 7. Afterwards
 
 **Check the backup before you need it.** `scripts/backup.sh` writes an
@@ -182,9 +217,11 @@ and run the drill quarterly, which is itself a compliance item in the platform.
 - `DSNLAI_NOTIFY_TRANSPORT=log` writes notifications to the log and reports
   them as written to the log rather than as sent. Obligation reminders will not
   reach anybody until this is `smtp`.
-- `OPENSIGN_SMTP_*` must point at a real relay. Signature links are emailed to
-  people outside the organisation, and Mailpit, the mailbox that goes nowhere,
-  is excluded from this deployment for that reason.
+- **Signature is off** until `OPENSIGN_EMAIL` and `OPENSIGN_PASSWORD` are set.
+  Until then the platform issues a reference internally and says nothing left
+  it. Turning it on needs a mail relay, public `SERVER_URL` and `PUBLIC_URL` in
+  `docker-compose.yml` instead of localhost, and `OPENSIGN_PFX_BASE64`. Wet-ink
+  execution is recorded either way.
 
 **Before real matters:** the platform's own DPIA and a penetration test are
 both gates in the PRD, section 21, and neither has been done.

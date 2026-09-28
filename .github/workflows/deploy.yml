@@ -25,8 +25,10 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  API_IMAGE: ghcr.io/${{ github.repository_owner }}/dsn-ai4legal-api
-  WEB_IMAGE: ghcr.io/${{ github.repository_owner }}/dsn-ai4legal-web
+  # Lowercased: the owner is DataScienceNigeria and GHCR rejects an image
+  # reference carrying a capital.
+  API_IMAGE: ghcr.io/datasciencenigeria/dsn-ai4legal-api
+  WEB_IMAGE: ghcr.io/datasciencenigeria/dsn-ai4legal-web
 
 jobs:
   build:
