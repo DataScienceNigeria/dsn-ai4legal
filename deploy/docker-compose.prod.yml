@@ -1,0 +1,36 @@
+# Production overlay. Run it explicitly, which also leaves the development
+# override out:
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d
+#
+# The only thing it changes is where the images come from. They are built in
+# GitHub Actions and pulled here, so the server needs no toolchain, no source
+# and no build: a deploy is a pull and a restart.
+#
+# IMAGE_TAG is written by the workflow and pins both images to one commit, so a
+# rollback is that variable set to an earlier tag.
+
+services:
+  api:
+    image: ghcr.io/datasciencenigeria/dsn-ai4legal-api:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  worker:
+    image: ghcr.io/datasciencenigeria/dsn-ai4legal-api:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  web:
+    image: ghcr.io/datasciencenigeria/dsn-ai4legal-web:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  # Mailpit is a mailbox that goes nowhere, which is the right answer in
+  # development and the wrong one here: signature links are emailed to people
+  # outside the organisation. Production points OpenSign at a real relay
+  # through OPENSIGN_SMTP_HOST, so this never starts and OpenSign no longer
+  # waits on it.
+  mail:
+    profiles: ["never"]
+
+  opensign:
+    depends_on: !override
+      opensign-mongo: {condition: service_healthy}

@@ -116,14 +116,28 @@ class AzureStore:
                 "DSNLAI_STORAGE_BACKEND is azure but no account URL or connection string is set."
             )
         try:
-            if not self._client().exists():
+            container = self._client()
+            if not container.exists():
                 raise StorageUnavailable(
                     f"The container {settings.azure_storage_container} does not exist."
                 )
+            properties = container.get_container_properties()
         except StorageUnavailable:
             raise
         except Exception as exc:
             raise StorageUnavailable(f"Azure Blob Storage is not reachable: {exc}") from exc
+
+        # Said here rather than discovered at the first signed agreement. The
+        # container capability can only be set when the container is created,
+        # so learning about it late means making the container again.
+        if not properties.immutable_storage_with_versioning_enabled:
+            logger.warning(
+                "%s does not have version-level immutability, so an executed copy "
+                "cannot be written write-once and filing one will fail. It can only "
+                "be enabled on a new container, with blob versioning on for the "
+                "account first.",
+                settings.azure_storage_container,
+            )
 
     def put(self, key: str, data: bytes, content_type: str) -> str:
         from azure.storage.blob import ContentSettings

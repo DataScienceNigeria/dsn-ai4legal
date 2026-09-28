@@ -13,6 +13,7 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import func, select, text
 
 from app.ai.retrieval import embed
+from app.core.config import settings
 from app.core.security import hash_password
 from app.db.models.ai import Baseline, Capability
 from app.db.models.contract import Contract, Obligation
@@ -1997,8 +1998,19 @@ CAPABILITIES = [
 ]
 
 
-def seed_capabilities(session, users) -> None:
-    admin = users["Emeka Obi"]
+def seed_capabilities(session, owner) -> None:
+    """The register, written over whatever is already there.
+
+    ``0020`` inserts the conversation-title capability so an existing
+    deployment gains it, and on an empty database that row lands with no owner
+    and a confirming role that has since been withdrawn. Correcting the row is
+    right where skipping it would leave the register wrong and inserting it
+    again would collide on the unique code.
+    """
+    held = {
+        capability.code: capability
+        for capability in session.execute(select(Capability)).scalars()
+    }
     for (
         code,
         name,
@@ -2013,13 +2025,29 @@ def seed_capabilities(session, users) -> None:
         golden_set,
         enforced,
     ) in CAPABILITIES:
+        existing = held.get(code)
+        if existing is not None:
+            existing.name = name
+            existing.module = module
+            existing.owner_id = owner.id
+            existing.max_data_class = data_class.value
+            existing.tier_ceiling = tier
+            existing.purpose = requirement
+            existing.human_requirement = requirement
+            existing.confirming_role = role
+            existing.metric_name = metric
+            existing.gate_expression = gate_text
+            existing.gate_threshold = threshold
+            existing.golden_set = golden_set
+            existing.gate_enforced = enforced
+            continue
         session.add(
             Capability(
                 code=code,
                 name=name,
                 module=module,
                 purpose=requirement,
-                owner_id=admin.id,
+                owner_id=owner.id,
                 max_data_class=data_class.value,
                 tier_ceiling=tier,
                 human_requirement=requirement,
@@ -2432,8 +2460,12 @@ KPIS = [
 ]
 
 
-def seed_kpis(session) -> None:
+def seed_kpis(session, with_baselines: bool = True) -> None:
+    """The measures. A baseline is a reading somebody took on a day, so a fresh
+    deployment gets the definitions and records its own."""
     for code, name, unit, method, baseline, phase1, phase3, direction in KPIS:
+        if not with_baselines:
+            baseline = None
         session.add(
             Baseline(
                 kpi_code=code,
@@ -2450,8 +2482,8 @@ def seed_kpis(session) -> None:
     session.flush()
 
 
-def seed_platform_config(session, users) -> None:
-    admin = users["Emeka Obi"]
+def seed_platform_config(session, owner, mailbox: str = "legal@dsn.example") -> None:
+    admin = owner
     session.add_all(
         [
             Connector(
@@ -2460,7 +2492,7 @@ def seed_platform_config(session, users) -> None:
                 purpose="Acknowledgments and status notices. No substantive content.",
                 direction="outbound",
                 permitted_data_classes=[DataClass.PUBLIC.value, DataClass.INTERNAL.value],
-                scopes=["Mail.Send on legal@dsn.example"],
+                scopes=[f"Mail.Send on {mailbox}"],
                 owner_id=admin.id,
                 review_date=NOW + timedelta(days=90),
             ),
@@ -2484,7 +2516,7 @@ def seed_platform_config(session, users) -> None:
                 purpose="Read named mailboxes only. Personal mailboxes are never ingested.",
                 direction="inbound",
                 permitted_data_classes=[DataClass.CONFIDENTIAL.value],
-                scopes=["Mail.Read on legal@dsn.example"],
+                scopes=[f"Mail.Read on {mailbox}"],
                 owner_id=admin.id,
                 review_date=NOW + timedelta(days=90),
             ),
@@ -2857,7 +2889,21 @@ def seed_requests(session, users, types, counterparties) -> None:
     session.flush()
 
 
-def run(if_empty: bool = False) -> None:
+def run(if_empty: bool = False, force: bool = False) -> None:
+    """Demo data. Development only.
+
+    Every account here shares one password that is in the repository, and two
+    of them are the administrator and the legal lead. A deployment that is not
+    development gets ``app.bootstrap`` instead, which writes the reference data
+    and one administrator whose password the deployer sets.
+    """
+    if settings.dsnlai_env != "development" and not force:
+        raise SystemExit(
+            f"Refusing to seed demo data into a {settings.dsnlai_env} deployment. "
+            "Every seeded account shares a password that is in the repository. "
+            "Run python -m app.bootstrap instead, or pass --force if this really "
+            "is a throwaway environment."
+        )
     with owner_session() as session:
         existing = session.execute(select(func.count()).select_from(Organisation)).scalar_one()
         if existing and if_empty:
@@ -2872,8 +2918,8 @@ def run(if_empty: bool = False) -> None:
         clauses = seed_library(session, users)
         templates = seed_templates(session, users)
         counterparties = seed_counterparties(session, users)
-        seed_platform_config(session, users)
-        seed_capabilities(session, users)
+        seed_platform_config(session, users["Emeka Obi"])
+        seed_capabilities(session, users["Emeka Obi"])
         seed_golden_sets(session, users)
         seed_kpis(session)
         matters = seed_matters(session, users, counterparties, types, templates, clauses)
@@ -2895,4 +2941,4 @@ def run(if_empty: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    run(if_empty="--if-empty" in sys.argv)
+    run(if_empty="--if-empty" in sys.argv, force="--force" in sys.argv)

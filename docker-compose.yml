@@ -2,6 +2,7 @@ name: dsn-lai
 
 services:
   db:
+    restart: unless-stopped
     # PostgreSQL 18 with pgvector, per PRD section 10.1. One database holds
     # records and embeddings, which keeps permission filtering in one place.
     image: pgvector/pgvector:pg18
@@ -22,6 +23,7 @@ services:
       retries: 20
 
   redis:
+    restart: unless-stopped
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     ports:
@@ -35,6 +37,7 @@ services:
       retries: 20
 
   api:
+    restart: unless-stopped
     image: dsn-lai-api:latest
     build:
       context: ./apps/api
@@ -65,6 +68,7 @@ services:
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   worker:
+    restart: unless-stopped
     image: dsn-lai-api:latest
     build:
       context: ./apps/api
@@ -91,6 +95,7 @@ services:
       retries: 5
 
   web:
+    restart: unless-stopped
     image: dsn-lai-web:latest
     build:
       context: ./apps/web
@@ -104,6 +109,7 @@ services:
       api: {condition: service_healthy}
 
   opensign-mongo:
+    restart: unless-stopped
     # OpenSign is Parse Server on Mongo. The platform's own records stay in
     # Postgres; this holds the signature service's state and nothing else.
     image: mongo:7
@@ -117,6 +123,7 @@ services:
       retries: 20
 
   opensign:
+    restart: unless-stopped
     # Signature, self-hosted and unrestricted.
     #
     # DocuSeal was here first and could not do the job in its free edition:
@@ -177,6 +184,7 @@ services:
       retries: 10
 
   opensign-client:
+    restart: unless-stopped
     # The signing surface a counterparty opens. The platform never renders it;
     # it hands over a link.
     image: opensign/opensign:main
@@ -191,6 +199,7 @@ services:
       - opensign
 
   n8n:
+    restart: unless-stopped
     # Plumbing, not the platform. n8n polls approved mailboxes, fans out
     # notifications, writes calendar events and moves files. Legal decision
     # logic, tier assignment, approval routing, model calls and direct database

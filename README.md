@@ -85,6 +85,37 @@ reports the elapsed time against the four-hour recovery objective. Both need
 `DSNLAI_BACKUP_PASSPHRASE` in the environment. The drill is quarterly and is
 tracked as a compliance item.
 
+## Deploying it fresh
+
+Migrations run on start. Nothing else does, so a new deployment is empty until
+it is bootstrapped:
+
+```bash
+docker compose -f docker-compose.yml up -d
+DSNLAI_ADMIN_PASSWORD='...' docker compose -f docker-compose.yml run --rm api \
+  python -m app.bootstrap --email legal.admin@your.org --name "Legal Administrator"
+```
+
+That writes the two organisations, the request types, the capability register
+with every capability unmeasured, the retention policies, the connector
+register and the KPI definitions, plus one administrator. It writes no clause
+library and no templates, because house position is published by the legal lead
+rather than inherited from a seed. Running it again adds only what is missing.
+
+`python -m app.seed` is demo data and development only. Every account it
+creates shares one password that is in this repository, the administrator and
+the legal lead among them, so it refuses to run anywhere that is not
+`DSNLAI_ENV=development`.
+
+Three settings have to be right before the platform will serve a real
+deployment, and it says so rather than starting anyway:
+
+| Setting | Why |
+| --- | --- |
+| `DSNLAI_SECRET_KEY` | Signs every token. Outside development the platform refuses to start while it is the key in this repository, because anybody holding it could sign a token for any role |
+| `DSNLAI_ALLOWED_ORIGINS` | The addresses the interface is served from. Outside development an empty list means no browser may call the API, and the log says so on startup |
+| `DSNLAI_STORAGE_BACKEND` | `azure` in production. The platform will not start if the container cannot be reached |
+
 ## Where documents live
 
 `DSNLAI_STORAGE_BACKEND` chooses, and there is no fallback between the two.

@@ -24,6 +24,15 @@ _REPO_ROOT_ENV = next(
     Path(".env"),
 )
 
+#: The repository root, from this file rather than from the working directory,
+#: so the default document folder does not move with wherever the API was
+#: started from.
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+
+#: The key the platform ships with. Anything holding it can sign a token for
+#: any role, so a deployment that is not development refuses to start on it.
+DEVELOPMENT_SECRET_KEY = "development-secret-key-do-not-use-in-production"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -31,7 +40,13 @@ class Settings(BaseSettings):
     )
 
     dsnlai_env: str = "development"
-    dsnlai_secret_key: str = "development-secret-key-do-not-use-in-production"
+    dsnlai_secret_key: str = DEVELOPMENT_SECRET_KEY
+
+    # Where the interface is served from. Empty in development, which allows
+    # any origin. Outside development this is the list, and an empty one means
+    # the interface cannot sign in, so it is reported on startup rather than
+    # left to read as a CORS error in somebody's console.
+    dsnlai_allowed_origins: str = ""
     dsnlai_access_token_minutes: int = 60
     dsnlai_step_up_window_minutes: int = 5
 
@@ -48,10 +63,10 @@ class Settings(BaseSettings):
     # Blob Storage, for production, reached by managed identity unless a
     # connection string is set. There is no fallback from one to the other.
     dsnlai_storage_backend: str = "local"
-    dsnlai_storage_path: str = str(_REPO_ROOT_ENV.parent / "storage")
+    dsnlai_storage_path: str = str(_REPO_ROOT / "storage")
     azure_storage_account_url: str = ""
     azure_storage_connection_string: str = ""
-    azure_storage_container: str = "dsn-lai-documents"
+    azure_storage_container: str = "ai4legal"
 
     # local issues its own token. oidc verifies one issued by Keycloak,
     # Entra ID or Google Workspace against the issuer's published keys.
@@ -152,6 +167,14 @@ class Settings(BaseSettings):
             f"postgresql+psycopg://{self.dsnlai_app_db_user}:{self.dsnlai_app_db_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+
+    @property
+    def is_development(self) -> bool:
+        return self.dsnlai_env == "development"
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        return [o.strip().rstrip("/") for o in self.dsnlai_allowed_origins.split(",") if o.strip()]
 
     @property
     def allowed_upload_types(self) -> list[str]:

@@ -1,0 +1,152 @@
+name: Deploy
+
+# Build here, pull there. The server never builds: it has no toolchain, no
+# source and no node_modules, and building on it was slow enough to be the
+# thing that made a deploy hurt.
+#
+# Both images are tagged with the commit, so a deploy pins a known pair and a
+# rollback is the same workflow run again with an earlier tag.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Deploy an existing tag instead of building. Use a commit SHA to roll back."
+        required: false
+        type: string
+
+concurrency:
+  # One deploy at a time, and never cancel one halfway: a run interrupted
+  # between the migration and the restart leaves a schema nothing is serving.
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  API_IMAGE: ghcr.io/${{ github.repository_owner }}/dsn-ai4legal-api
+  WEB_IMAGE: ghcr.io/${{ github.repository_owner }}/dsn-ai4legal-web
+
+jobs:
+  build:
+    # Skipped when rolling back to an image that already exists.
+    if: ${{ !inputs.image_tag }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Refuse to build an interface pointed at localhost
+        run: |
+          if [ -z "${{ vars.NEXT_PUBLIC_API_BASE_URL }}" ]; then
+            echo "The repository variable NEXT_PUBLIC_API_BASE_URL is not set, so the" >&2
+            echo "interface would be built calling http://localhost:8000 and would work" >&2
+            echo "for nobody but somebody sitting on the server." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the API
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/api
+          push: true
+          tags: |
+            ${{ env.API_IMAGE }}:${{ github.sha }}
+            ${{ env.API_IMAGE }}:latest
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: Build and push the interface
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/web
+          push: true
+          # Next inlines this into the bundle at build time, so the address the
+          # browser calls is decided here and a change to it needs a rebuild
+          # rather than a restart.
+          build-args: |
+            NEXT_PUBLIC_API_BASE_URL=${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+          tags: |
+            ${{ env.WEB_IMAGE }}:${{ github.sha }}
+            ${{ env.WEB_IMAGE }}:latest
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+  deploy:
+    needs: [build]
+    # Runs on a rollback too, where the build job is skipped rather than failed.
+    if: ${{ always() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # Passed as environment rather than written into the script, so the
+          # token never reaches the command line or the shell history.
+          envs: IMAGE_TAG,GHCR_USER,GHCR_TOKEN
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd ${{ secrets.DEPLOY_PATH }}
+
+            COMPOSE="docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml"
+
+            # The overlay reads IMAGE_TAG, and so does anything run by hand
+            # afterwards, so it is written to the environment file rather than
+            # exported into one shell.
+            grep -v '^IMAGE_TAG=' .env > .env.next || true
+            echo "IMAGE_TAG=${IMAGE_TAG}" >> .env.next
+            mv .env.next .env
+
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            $COMPOSE pull api worker web
+
+            # Migrations run against the new image before anything serves it,
+            # so a container never comes up expecting a schema that is not
+            # there. The API runs them on start too, and they are idempotent.
+            $COMPOSE run --rm --no-deps api alembic upgrade head
+
+            $COMPOSE up -d --remove-orphans
+            docker logout ghcr.io
+            docker image prune -f --filter "until=168h"
+
+  verify:
+    needs: [deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for the platform to answer
+        run: |
+          for attempt in $(seq 1 30); do
+            body="$(curl -fsS "${{ vars.PUBLIC_URL }}/api/v1/health" || true)"
+            case "$body" in
+              *'"status":"ok"'*)
+                echo "$body"
+                case "$body" in
+                  *'"storage":"azure"'*) echo "Documents are in Azure." ;;
+                  *) echo "WARNING: this deployment is not using Azure storage." ;;
+                esac
+                exit 0 ;;
+            esac
+            sleep 5
+          done
+          echo "The platform did not answer within 150 seconds." >&2
+          exit 1
