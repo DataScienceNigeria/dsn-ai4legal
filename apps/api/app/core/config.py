@@ -37,11 +37,14 @@ class Settings(BaseSettings):
     dsnlai_app_db_password: str = "dsnlai_app_dev_password"
 
     redis_url: str = "redis://localhost:6379/0"
-    minio_endpoint: str = "localhost:9000"
-    minio_access_key: str = "dsn-lai-minio-access"
-    minio_secret_key: str = "dsn-lai-minio-secret-dev"
-    minio_bucket: str = "dsn-lai-documents"
-    minio_secure: bool = False
+    # Where documents live. local is a folder, for development. azure is Azure
+    # Blob Storage, for production, reached by managed identity unless a
+    # connection string is set. There is no fallback from one to the other.
+    dsnlai_storage_backend: str = "local"
+    dsnlai_storage_path: str = str(_REPO_ROOT_ENV.parent / "storage")
+    azure_storage_account_url: str = ""
+    azure_storage_connection_string: str = ""
+    azure_storage_container: str = "dsn-lai-documents"
 
     # local issues its own token. oidc verifies one issued by Keycloak,
     # Entra ID or Google Workspace against the issuer's published keys.

@@ -31,7 +31,12 @@ ARCHIVE="${1:?Give the path to a .tar.gz.enc archive}"
 POSTGRES_DB="${POSTGRES_DB:-dsn_lai}"
 POSTGRES_USER="${POSTGRES_USER:-dsnlai_owner}"
 COMPOSE="${COMPOSE:-docker compose}"
-BUCKET="${MINIO_BUCKET:-dsn-lai-documents}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+setting() { grep -E "^$1=" "${ROOT}/.env" 2>/dev/null | tail -1 | cut -d= -f2-; }
+BACKEND="${DSNLAI_STORAGE_BACKEND:-$(setting DSNLAI_STORAGE_BACKEND)}"
+BACKEND="${BACKEND:-local}"
+HOST_PATH="${DSNLAI_STORAGE_PATH:-$(setting DSNLAI_STORAGE_PATH)}"
+HOST_PATH="${HOST_PATH:-${ROOT}/storage}"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
@@ -98,18 +103,20 @@ else
   echo "Leaving the audit store alone. Pass --with-audit to replace it."
 fi
 
-echo "Restoring the object store"
+echo "Restoring the documents"
 tar -xf "${WORK}/objects.tar" -C "${WORK}"
-${COMPOSE} exec -T minio mc alias set local http://localhost:9000 \
-  "${MINIO_ACCESS_KEY:-dsn-lai-minio-access}" \
-  "${MINIO_SECRET_KEY:-dsn-lai-minio-secret-dev}" >/dev/null
-${COMPOSE} exec -T minio mc mb --ignore-existing "local/${BUCKET}" >/dev/null
-${COMPOSE} exec -T minio rm -rf /tmp/restore >/dev/null 2>&1 || true
-${COMPOSE} exec -T minio mkdir -p /tmp/restore
-${COMPOSE} cp "${WORK}/objects/." minio:/tmp/restore/ >/dev/null
-${COMPOSE} exec -T minio mc mirror --quiet --overwrite \
-  /tmp/restore "local/${BUCKET}" >/dev/null
-${COMPOSE} exec -T minio rm -rf /tmp/restore >/dev/null 2>&1 || true
+if [ "${BACKEND}" = "azure" ]; then
+  # Keys are kept and every file is hashed on the way back, so a restored
+  # document is the one the database points at. Executed copies go back under
+  # the immutability policy they were first written with.
+  "${ROOT}/apps/api/.venv/bin/python" "${ROOT}/scripts/move_documents.py" \
+    --to azure --source "${WORK}/objects"
+elif [ -n "$(${COMPOSE} ps -q api 2>/dev/null)" ]; then
+  ${COMPOSE} cp "${WORK}/objects/." api:/var/lib/dsn-lai/storage/ >/dev/null
+else
+  mkdir -p "${HOST_PATH}"
+  cp -a "${WORK}/objects/." "${HOST_PATH}/"
+fi
 
 echo "Checking the audit chain"
 ${COMPOSE} exec -T db psql --username "${POSTGRES_USER}" --dbname "${POSTGRES_DB}" \

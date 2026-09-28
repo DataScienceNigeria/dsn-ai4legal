@@ -519,14 +519,18 @@ def rebuild_memory() -> dict:
     from app.db.models.library import Clause, ClauseVersion
     from app.db.models.matter import DecisionRecord, Matter
     from app.domain.enums import VersionStatus
-    from app.services import memory
+    from app.services import historical, memory
 
     written = {"contracts": 0, "decisions": 0, "findings": 0, "clauses": 0}
     with owner_session() as session:
         for contract in session.execute(
             select(Contract).where(Contract.authoritative.is_(True))
         ).scalars():
-            matter = session.get(Matter, contract.matter_id)
+            if contract.origin == "migrated":
+                written["contracts"] += 1
+                written["clauses"] += historical.reindex(session, contract)
+                continue
+            matter = session.get(Matter, contract.matter_id) if contract.matter_id else None
             memory.index_contract(
                 session,
                 contract,

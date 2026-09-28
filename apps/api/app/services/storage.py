@@ -1,100 +1,215 @@
 """Object storage.
 
-Documents live in MinIO with versioning and object lock, so an executed copy is
-write-once for its retention period (PRD section 10.1 and LOP-M08-US-01). When
-the object store is unreachable the platform falls back to a local directory,
-so a development environment needs no infrastructure.
+Where documents live is a setting, not a guess. ``local`` keeps them in a
+folder, which is what development uses. ``azure`` keeps them in Azure Blob
+Storage, where an executed copy is written under a version-level immutability
+policy for its retention period (PRD section 10 and LOP-M08-US-01).
+
+There is no fallback between the two. The store used to drop to a local folder
+whenever the object store could not be reached, and in production that would
+put signed agreements on the server's own disk, with no lock and no backup,
+while every screen looked normal. An unreachable store now fails the request
+that needed it and, for Azure, stops the platform starting at all.
 """
 
 from __future__ import annotations
 
-import io
 import logging
 import pathlib
+from datetime import UTC, datetime, timedelta
 
 from app.core.config import settings
-from app.core.errors import ValidationFailed
+from app.core.errors import PlatformError, ValidationFailed
 from app.services.hashing import file_hash
 
 logger = logging.getLogger(__name__)
 
-LOCAL_ROOT = pathlib.Path(".storage")
+
+class StorageUnavailable(PlatformError):
+    code = "storage_unavailable"
+
+    def __init__(self, detail: str):
+        super().__init__(detail, 503)
 
 
-class ObjectStore:
-    def __init__(self) -> None:
-        self._client = None
-        self._checked = False
+class LocalStore:
+    """A folder. Development only: a folder cannot refuse to be edited, so the
+    immutability of an executed copy rests on the database constraint here."""
 
-    def _get_client(self):
-        if self._checked:
-            return self._client
-        self._checked = True
-        try:
-            from minio import Minio
+    name = "local"
 
-            client = Minio(
-                settings.minio_endpoint,
-                access_key=settings.minio_access_key,
-                secret_key=settings.minio_secret_key,
-                secure=settings.minio_secure,
-            )
-            if not client.bucket_exists(settings.minio_bucket):
-                client.make_bucket(settings.minio_bucket, object_lock=True)
-            self._client = client
-        except Exception as exc:
-            logger.warning("Object store unavailable, using the local fallback: %s", exc)
-            self._client = None
-        return self._client
+    def __init__(self, root: pathlib.Path) -> None:
+        self.root = root
+
+    def _path(self, key: str) -> pathlib.Path:
+        path = (self.root / key).resolve()
+        if self.root.resolve() not in path.parents:
+            raise ValidationFailed("That storage key is not allowed.", {"key": key})
+        return path
+
+    def verify(self) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
 
     def put(self, key: str, data: bytes, content_type: str) -> str:
-        client = self._get_client()
-        if client is None:
-            path = LOCAL_ROOT / key
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
-            return key
-        client.put_object(
-            settings.minio_bucket,
-            key,
-            io.BytesIO(data),
-            length=len(data),
-            content_type=content_type,
+        path = self._path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return key
+
+    def put_immutable(self, key: str, data: bytes, content_type: str, retain_years: int) -> str:
+        return self.put(key, data, content_type)
+
+    def get(self, key: str) -> bytes:
+        try:
+            return self._path(key).read_bytes()
+        except FileNotFoundError as exc:
+            raise StorageUnavailable(f"{key} is not in the document store.") from exc
+
+    def keys(self) -> list[str]:
+        if not self.root.exists():
+            return []
+        return sorted(
+            str(path.relative_to(self.root)) for path in self.root.rglob("*") if path.is_file()
         )
+
+
+class AzureStore:
+    """Azure Blob Storage.
+
+    Managed identity where the platform runs in Azure, so there is no account
+    key to leak; a connection string only where one is configured, which is
+    staging. The container must have version-level immutability enabled, or
+    Azure refuses the policy an executed copy is written under, and that
+    refusal is the correct outcome rather than something to work around.
+    """
+
+    name = "azure"
+
+    def __init__(self) -> None:
+        self._container = None
+
+    def _client(self):
+        if self._container is not None:
+            return self._container
+        try:
+            from azure.storage.blob import BlobServiceClient
+
+            if settings.azure_storage_connection_string:
+                service = BlobServiceClient.from_connection_string(
+                    settings.azure_storage_connection_string
+                )
+            else:
+                from azure.identity import DefaultAzureCredential
+
+                service = BlobServiceClient(
+                    account_url=settings.azure_storage_account_url,
+                    credential=DefaultAzureCredential(),
+                )
+            self._container = service.get_container_client(settings.azure_storage_container)
+        except Exception as exc:
+            raise StorageUnavailable(f"Azure Blob Storage is not reachable: {exc}") from exc
+        return self._container
+
+    def verify(self) -> None:
+        if not (settings.azure_storage_connection_string or settings.azure_storage_account_url):
+            raise StorageUnavailable(
+                "DSNLAI_STORAGE_BACKEND is azure but no account URL or connection string is set."
+            )
+        try:
+            if not self._client().exists():
+                raise StorageUnavailable(
+                    f"The container {settings.azure_storage_container} does not exist."
+                )
+        except StorageUnavailable:
+            raise
+        except Exception as exc:
+            raise StorageUnavailable(f"Azure Blob Storage is not reachable: {exc}") from exc
+
+    def put(self, key: str, data: bytes, content_type: str) -> str:
+        from azure.storage.blob import ContentSettings
+
+        try:
+            self._client().upload_blob(
+                key,
+                data,
+                overwrite=True,
+                content_settings=ContentSettings(content_type=content_type),
+            )
+        except StorageUnavailable:
+            raise
+        except Exception as exc:
+            raise StorageUnavailable(f"The document could not be stored: {exc}") from exc
+        return key
+
+    def put_immutable(self, key: str, data: bytes, content_type: str, retain_years: int) -> str:
+        from azure.storage.blob import (
+            BlobImmutabilityPolicyMode,
+            ContentSettings,
+            ImmutabilityPolicy,
+        )
+
+        policy = ImmutabilityPolicy(
+            expiry_time=datetime.now(UTC) + timedelta(days=365 * retain_years),
+            policy_mode=BlobImmutabilityPolicyMode.UNLOCKED,
+        )
+        try:
+            self._client().upload_blob(
+                key,
+                data,
+                overwrite=False,
+                content_settings=ContentSettings(content_type=content_type),
+                immutability_policy=policy,
+            )
+        except StorageUnavailable:
+            raise
+        except Exception as exc:
+            raise StorageUnavailable(f"The executed copy could not be stored: {exc}") from exc
         return key
 
     def get(self, key: str) -> bytes:
-        client = self._get_client()
-        if client is None:
-            return (LOCAL_ROOT / key).read_bytes()
-        response = client.get_object(settings.minio_bucket, key)
         try:
-            return response.read()
-        finally:
-            response.close()
-            response.release_conn()
+            return self._client().download_blob(key).readall()
+        except StorageUnavailable:
+            raise
+        except Exception as exc:
+            raise StorageUnavailable(f"{key} could not be read from the document store.") from exc
+
+    def keys(self) -> list[str]:
+        return sorted(blob.name for blob in self._client().list_blobs())
+
+
+class ObjectStore:
+    """The configured backend, and nothing else."""
+
+    def __init__(self) -> None:
+        self._backend: LocalStore | AzureStore | None = None
+
+    @property
+    def backend(self) -> LocalStore | AzureStore:
+        if self._backend is None:
+            self._backend = build(settings.dsnlai_storage_backend)
+        return self._backend
+
+    def verify(self) -> None:
+        self.backend.verify()
+
+    def put(self, key: str, data: bytes, content_type: str) -> str:
+        return self.backend.put(key, data, content_type)
 
     def put_immutable(self, key: str, data: bytes, content_type: str, retain_years: int = 7) -> str:
-        """Store an executed copy under object lock."""
-        from datetime import UTC, datetime, timedelta
+        """Store an executed copy so it cannot be changed for its retention period."""
+        return self.backend.put_immutable(key, data, content_type, retain_years)
 
-        client = self._get_client()
-        if client is None:
-            return self.put(key, data, content_type)
-        from minio.commonconfig import GOVERNANCE
-        from minio.retention import Retention
+    def get(self, key: str) -> bytes:
+        return self.backend.get(key)
 
-        client.put_object(
-            settings.minio_bucket,
-            key,
-            io.BytesIO(data),
-            length=len(data),
-            content_type=content_type,
-            retention=Retention(
-                GOVERNANCE, datetime.now(UTC) + timedelta(days=365 * retain_years)
-            ),
-        )
-        return key
+
+def build(backend: str) -> LocalStore | AzureStore:
+    if backend == "local":
+        return LocalStore(pathlib.Path(settings.dsnlai_storage_path))
+    if backend == "azure":
+        return AzureStore()
+    raise ValueError(f"DSNLAI_STORAGE_BACKEND must be local or azure, not {backend!r}.")
 
 
 store = ObjectStore()

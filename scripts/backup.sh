@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Encrypted backup of the database, the object store and the audit store,
+# Encrypted backup of the database, the documents and the audit store,
 # LOP-M15-US-07 and PRD section 15.
 #
 # The audit store is dumped separately from the rest of the database. It is
@@ -22,9 +22,12 @@ trap 'rm -rf "${WORK}"' EXIT
 POSTGRES_DB="${POSTGRES_DB:-dsn_lai}"
 POSTGRES_USER="${POSTGRES_USER:-dsnlai_owner}"
 COMPOSE="${COMPOSE:-docker compose}"
-# The default has to match app/core/config.py. It did not, and every backup
-# run without MINIO_BUCKET set failed on a bucket that does not exist.
-BUCKET="${MINIO_BUCKET:-dsn-lai-documents}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+setting() { grep -E "^$1=" "${ROOT}/.env" 2>/dev/null | tail -1 | cut -d= -f2-; }
+BACKEND="${DSNLAI_STORAGE_BACKEND:-$(setting DSNLAI_STORAGE_BACKEND)}"
+BACKEND="${BACKEND:-local}"
+HOST_PATH="${DSNLAI_STORAGE_PATH:-$(setting DSNLAI_STORAGE_PATH)}"
+HOST_PATH="${HOST_PATH:-${ROOT}/storage}"
 
 mkdir -p "${DESTINATION}"
 
@@ -44,21 +47,22 @@ ${COMPOSE} exec -T db pg_dump \
   --table 'audit_event' \
   > "${WORK}/audit.dump"
 
-echo "Mirroring the object store"
-${COMPOSE} exec -T minio mc alias set local http://localhost:9000 \
-  "${MINIO_ACCESS_KEY:-dsn-lai-minio-access}" \
-  "${MINIO_SECRET_KEY:-dsn-lai-minio-secret-dev}" >/dev/null
-# The directory is created first. An empty bucket is a legitimate state, and
-# without this the mirror leaves nothing behind on a deployment that simply
-# has no documents yet.
-#
-# The archive is built on the host rather than in the container. The MinIO
-# image carries no tar, so doing it there failed with a command-not-found that
-# the pipeline reported as an empty archive.
-${COMPOSE} exec -T minio mkdir -p /tmp/backup
-${COMPOSE} exec -T minio mc mirror --quiet --overwrite "local/${BUCKET}" /tmp/backup >/dev/null
 mkdir -p "${WORK}/objects"
-${COMPOSE} cp minio:/tmp/backup/. "${WORK}/objects/" >/dev/null 2>&1 || true
+if [ "${BACKEND}" = "azure" ]; then
+  # Azure keeps its own recovery position: blob versioning, soft delete and the
+  # immutability policy on every executed copy. Copying the container into
+  # this archive would duplicate that under weaker protection, so the archive
+  # carries the records and the audit store and says so.
+  echo "Documents are in Azure Blob Storage and are not copied into this archive."
+  echo "Their recovery rests on the container's versioning, soft delete and immutability."
+elif [ -n "$(${COMPOSE} ps -q api 2>/dev/null)" ]; then
+  echo "Copying the documents out of the api container"
+  ${COMPOSE} cp api:/var/lib/dsn-lai/storage/. "${WORK}/objects/" >/dev/null
+else
+  echo "Copying the documents from ${HOST_PATH}"
+  [ -d "${HOST_PATH}" ] && cp -a "${HOST_PATH}/." "${WORK}/objects/"
+fi
+echo "$(find "${WORK}/objects" -type f | wc -l | tr -d ' ') documents in the archive"
 tar -cf "${WORK}/objects.tar" -C "${WORK}" objects
 
 ARCHIVE="${DESTINATION}/dsn-lai-${STAMP}.tar.gz"

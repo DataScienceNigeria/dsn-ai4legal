@@ -611,6 +611,8 @@ def _unusual_liability(db, entities: list[str]) -> list[tuple]:
         db.execute(select(Contract).where(Contract.entity.in_(entities))).scalars()
     )
     for contract in contracts:
+        if contract.matter_id is None:
+            continue
         findings = list(
             db.execute(
                 select(ReviewFinding).where(

@@ -313,7 +313,8 @@ export type Obligation = {
 export type Contract = {
   id: string;
   reference: string;
-  matter_id: string;
+  matter_id: string | null;
+  origin: "platform" | "migrated";
   entity: string;
   agreement_type: string;
   effective_date: string | null;
@@ -1041,4 +1042,32 @@ export type ConsultantReview = {
   matter_number: string | null;
   matter_title: string | null;
   document_name: string | null;
+};
+
+export type Suggested = { value: string; source: string } | null;
+
+export type HistoricalReading = {
+  filename: string;
+  size_bytes: number;
+  hash: string;
+  already_archived: string | null;
+  readable: boolean;
+  kind: string;
+  unreadable_reason: string | null;
+  passages: number;
+  suggested: {
+    counterparty: Suggested;
+    agreement_type: Suggested;
+    effective_date: Suggested;
+    year: Suggested;
+  };
+  counterparty_matches: { id: string; reference: string; legal_name: string }[];
+};
+
+export type HistoricalFiled = {
+  id: string;
+  reference: string;
+  searchable: boolean;
+  passages: number;
+  unreadable_reason: string | null;
 };

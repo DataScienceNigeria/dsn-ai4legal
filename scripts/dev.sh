@@ -40,7 +40,7 @@ export DSNLAI_WEB_PORT="$WEB_PORT"
 
 # n8n is started with --no-deps because its compose dependency is the API
 # container, which is deliberately not running here.
-INFRA=(db redis minio mail opensign-mongo opensign opensign-client)
+INFRA=(db redis mail opensign-mongo opensign opensign-client)
 
 mkdir -p "$LOGS"
 
@@ -122,7 +122,7 @@ case "${1:-all}" in
   Interface     http://localhost:${WEB_PORT}
   API docs      http://localhost:${API_PORT}/api/v1/docs
   Mail          http://localhost:$(port_for DSNLAI_MAIL_UI_PORT 8025)
-  Object store  http://localhost:$(port_for DSNLAI_MINIO_CONSOLE_PORT 9101)
+  Documents     ${ROOT}/storage
   Signing       http://localhost:$(port_for DSNLAI_OPENSIGN_CLIENT_PORT 3200)
   n8n           http://localhost:$(port_for DSNLAI_N8N_PORT 5678)
 

@@ -34,12 +34,18 @@ class Contract(UUIDPrimaryKey, Timestamped, EntityScoped, Base):
     __tablename__ = "contract"
 
     reference: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
-    matter_id: Mapped[uuid.UUID] = mapped_column(
+    matter_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("matter.id", ondelete="CASCADE"),
-        nullable=False,
         index=True,
     )
+    """Empty for an agreement signed before the platform existed, which was
+    never legal work here and is not given an invented matter to fill the gap."""
+
+    origin: Mapped[str] = mapped_column(String(16), default="platform", nullable=False)
+    """``platform`` or ``migrated``. Every surface showing a migrated agreement
+    says so, because an empty approvals record reads as a fault otherwise."""
+
     counterparty_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("counterparty.id", ondelete="SET NULL"), index=True
     )
@@ -110,7 +116,7 @@ class Contract(UUIDPrimaryKey, Timestamped, EntityScoped, Base):
     # matter and its counterparty, and neither is edited from this side. The
     # renewal task already assumed contract.matter existed and raised an
     # AttributeError on every contract instead.
-    matter: Mapped["Matter"] = relationship("Matter", viewonly=True)
+    matter: Mapped["Matter | None"] = relationship("Matter", viewonly=True)
     counterparty: Mapped["Counterparty | None"] = relationship("Counterparty", viewonly=True)
     contract_owner: Mapped["User | None"] = relationship(  # noqa: F821
         "User", foreign_keys=[contract_owner_id], lazy="joined", viewonly=True

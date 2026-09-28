@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as React from "react";
 
+import { HistoricalImport } from "@/components/app/historical-import";
 import { Changes, Issues } from "@/components/app/lifecycle-queues";
 import { useRoles, useSession } from "@/components/app/session";
 import {
@@ -27,7 +28,7 @@ import {
   Spinner,
   Tabs,
 } from "@/components/ui";
-import { api, query as queryString } from "@/lib/api";
+import { api, query as queryString, view } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
 import type { Contract, Obligation } from "@/lib/types";
 import { cn, formatDate, titleCase } from "@/lib/utils";
@@ -60,12 +61,21 @@ function ContractPanel({
       width="lg"
       onClose={onClose}
     >
-      <p className="text-xs text-muted-foreground">
-        Executed {formatDate(contract.executed_at)} under matter{" "}
-        <Link href={`/workspace/matters/${contract.matter_id}`}>
-          {contract.matter_number ?? "linked"}
-        </Link>
-      </p>
+      {contract.origin === "migrated" ? (
+        <Notice title="Signed before the platform existed">
+          This agreement was filed from the archive. There is no matter, approval chain or
+          signature record behind it, because it was never legal work here.
+        </Notice>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Executed {formatDate(contract.executed_at)} under matter{" "}
+          <Link href={`/workspace/matters/${contract.matter_id}`}>
+            {contract.matter_number ?? "linked"}
+          </Link>
+        </p>
+      )}
+
+      <SignedFile contractId={contract.id} />
 
       <Card>
         <CardHeader
@@ -118,6 +128,23 @@ function ContractPanel({
         </CardBody>
       </Card>
     </Modal>
+  );
+}
+
+/*
+  The file the parties signed, exactly as it is held. Opened rather than
+  rendered, because the point of an executed copy is that nothing between the
+  archive and the reader has reshaped it.
+*/
+function SignedFile({ contractId }: Readonly<{ contractId: string }>) {
+  const open = useAction(async () => view(`/contracts/${contractId}/original`));
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Button size="sm" disabled={open.busy} onClick={() => void open.run()}>
+        {open.busy ? "Opening" : "Open the signed file"}
+      </Button>
+      {open.error ? <span className="text-xs text-destructive">{open.error.message}</span> : null}
+    </div>
   );
 }
 
@@ -189,7 +216,7 @@ const SORT_LABEL: Record<Sortable, string> = {
 function sortValue(contract: Contract, key: Sortable): string | number {
   if (key === "counterparty") return (contract.counterparty?.legal_name ?? "").toLowerCase();
   if (key === "agreement_type") return contract.agreement_type.toLowerCase();
-  if (key === "executed_at") return contract.executed_at ?? "";
+  if (key === "executed_at") return contract.executed_at ?? contract.effective_date ?? "";
   if (key === "end_date") return contract.end_date ?? "";
   return contract.reference.toLowerCase();
 }
@@ -276,12 +303,14 @@ export default function Agreements() {
   }, [query]);
 
   const path = debounced ? `/contracts?q=${encodeURIComponent(debounced)}` : "/contracts";
-  const { data, loading, error } = useApi<Contract[]>(path, [entity, debounced]);
+  const { data, loading, error, reload } = useApi<Contract[]>(path, [entity, debounced]);
+  const [filing, setFiling] = React.useState(false);
   const [open, setOpen] = React.useState<Contract | null>(null);
   const [renewing, setRenewing] = React.useState<Contract | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const { has } = useRoles();
   const canAct = has("counsel", "head_of_legal", "admin");
+  const canFile = has("counsel", "head_of_legal");
   const router = useRouter();
 
   // Newest first, because the question a register is usually opened with is
@@ -351,12 +380,19 @@ export default function Agreements() {
         }
         actions={
           active === "register" ? (
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search counterparty, reference or clause text"
-              className="w-full sm:w-72 lg:w-80"
-            />
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search counterparty, reference or clause text"
+                className="w-full sm:w-72 lg:w-80"
+              />
+              {canFile ? (
+                <Button variant="primary" onClick={() => setFiling(true)}>
+                  File signed agreements
+                </Button>
+              ) : null}
+            </div>
           ) : undefined
         }
       />
@@ -442,7 +478,18 @@ export default function Agreements() {
                     {contract.counterparty?.legal_name ?? "Not linked"}
                   </div>
                   <div className="text-xs">{titleCase(contract.agreement_type)}</div>
-                  <div className="text-xs">{formatDate(contract.executed_at)}</div>
+                  <div className="text-xs">
+                    {contract.executed_at ? (
+                      formatDate(contract.executed_at)
+                    ) : contract.effective_date ? (
+                      <>
+                        {formatDate(contract.effective_date)}
+                        <div className="text-muted-foreground">Effective</div>
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">Not recorded</span>
+                    )}
+                  </div>
                   {/*
                     When it ends, and whether the last day to give notice has
                     gone. The register is read to answer "what is ending
@@ -478,6 +525,9 @@ export default function Agreements() {
                       <Pill tone="neutral">Not the original</Pill>
                     )}
                     {contract.executed_outside_platform ? <Pill tone="warn">Wet ink</Pill> : null}
+                    {contract.origin === "migrated" ? (
+                      <Pill tone="neutral">Before the platform</Pill>
+                    ) : null}
                   </div>
                   {/*
                     Everything that happens to this agreement, each on its own
@@ -522,6 +572,10 @@ export default function Agreements() {
       </Card>
 
       {open ? <ContractPanel contract={open} onClose={() => setOpen(null)} /> : null}
+
+      {filing ? (
+        <HistoricalImport onClose={() => setFiling(false)} onFiled={reload} />
+      ) : null}
 
       {renewing ? (
         <RenewalDialog

@@ -20,7 +20,8 @@ RUN pip install --no-cache-dir -e .
 # The application runs unprivileged. It reaches the database as dsnlai_app,
 # which row-level security applies to, so neither layer relies on the other.
 RUN useradd --create-home --uid 10001 platform \
-    && chown -R platform:platform /srv
+    && mkdir -p /var/lib/dsn-lai/storage \
+    && chown -R platform:platform /srv /var/lib/dsn-lai
 USER platform
 
 EXPOSE 8000

@@ -34,25 +34,6 @@ services:
       timeout: 3s
       retries: 20
 
-  minio:
-    # Object storage for documents. Versioning and object lock back the
-    # immutable executed archive (M08).
-    image: minio/minio:latest
-    command: ["server", "/data", "--console-address", ":9001"]
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-dsn-lai-minio-access}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-dsn-lai-minio-secret-dev}
-    ports:
-      - "${DSNLAI_MINIO_PORT:-9100}:9000"
-      - "${DSNLAI_MINIO_CONSOLE_PORT:-9101}:9001"
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
   api:
     image: dsn-lai-api:latest
     build:
@@ -62,17 +43,22 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
-      MINIO_ENDPOINT: minio:9000
+      DSNLAI_STORAGE_BACKEND: ${DSNLAI_STORAGE_BACKEND:-local}
+      DSNLAI_STORAGE_PATH: /var/lib/dsn-lai/storage
       # By service name from inside the network. The .env value is the
       # published port, which is what the host process needs and what a
       # container would fail to resolve.
       OPENSIGN_BASE_URL: http://opensign:8080/app
     ports:
       - "${DSNLAI_API_PORT:-8000}:8000"
+    volumes:
+      # The local backend's documents. Unused when DSNLAI_STORAGE_BACKEND is
+      # azure, and harmless there. Signed agreements live here otherwise, so
+      # it is never removed with the containers.
+      - document_store:/var/lib/dsn-lai/storage
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
-      minio: {condition: service_healthy}
       opensign: {condition: service_started}
     command: >
       sh -c "alembic upgrade head && python -m app.seed --if-empty &&
@@ -87,8 +73,11 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
-      MINIO_ENDPOINT: minio:9000
+      DSNLAI_STORAGE_BACKEND: ${DSNLAI_STORAGE_BACKEND:-local}
+      DSNLAI_STORAGE_PATH: /var/lib/dsn-lai/storage
       OPENSIGN_BASE_URL: http://opensign:8080/app
+    volumes:
+      - document_store:/var/lib/dsn-lai/storage
     depends_on:
       api: {condition: service_healthy}
     command: ["celery", "-A", "app.worker.celery_app", "worker", "--beat", "--loglevel=info"]
@@ -232,7 +221,7 @@ services:
 volumes:
   db_data:
   redis_data:
-  minio_data:
+  document_store:
   opensign_mongo:
   opensign_files:
   n8n_data:

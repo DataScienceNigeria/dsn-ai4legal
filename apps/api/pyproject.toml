@@ -17,7 +17,8 @@ dependencies = [
     "httpx>=0.28",
     "celery[redis]>=5.4",
     "redis>=5.2",
-    "minio>=7.2",
+    "azure-storage-blob>=12.19",
+    "azure-identity>=1.15",
     "python-docx>=1.1",
     "docxtpl>=0.19",
     "openai>=1.60",
@@ -25,6 +26,9 @@ dependencies = [
     # Pure Python, no transitive dependencies. The enrolment QR is drawn on
     # the server so the secret is encoded once, by the same code that issued it.
     "segno>=1.6",
+    # Reads the text layer of a signed PDF for search. Pure Python. A scan with
+    # no text layer yields nothing and is archived without being searchable.
+    "pypdf>=5.0",
 ]
 
 [project.optional-dependencies]

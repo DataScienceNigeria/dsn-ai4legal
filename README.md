@@ -11,8 +11,7 @@ communication.
 ## Running it
 
 Everything runs as a container. One command brings up the database, cache,
-object store, API, worker, interface and n8n, migrating and seeding on first
-start:
+API, worker, interface and n8n, migrating and seeding on first start:
 
 ```bash
 cp .env.example .env
@@ -26,7 +25,6 @@ docker compose up -d --build
 | `worker` | no port               | Celery worker and beat, the scheduled sweeps |
 | `n8n`    | http://localhost:5678 | Plumbing only, mailbox polling               |
 | `db`     | localhost:5434        | PostgreSQL 18 with pgvector                  |
-| `minio`  | http://localhost:9101 | Object store console                         |
 
 Sign in as `adaeze.okafor@dsn.example` with the password `Lop-Demo-2026`. Other
 seeded accounts are listed on the sign-in page and show the same platform under
@@ -79,11 +77,38 @@ obligation reminders, the evaluation sweep and the outbox all live there.
 ## Backup and restore
 
 `scripts/backup.sh` writes an encrypted archive of the database, the audit
-store and the object store. `scripts/restore-drill.sh` restores the most recent
+store and, on the local backend, the documents. On Azure the documents' recovery
+rests on the container's versioning, soft delete and immutability, and the
+archive says so rather than copying them. `scripts/restore-drill.sh` restores the most recent
 archive into a scratch database, checks the row counts and the audit chain, and
 reports the elapsed time against the four-hour recovery objective. Both need
 `DSNLAI_BACKUP_PASSPHRASE` in the environment. The drill is quarterly and is
 tracked as a compliance item.
+
+## Where documents live
+
+`DSNLAI_STORAGE_BACKEND` chooses, and there is no fallback between the two.
+
+| Backend | Where | For |
+| --- | --- | --- |
+| `local` | `storage/` at the repository root, or the `document_store` volume in compose | Development. Gitignored |
+| `azure` | Azure Blob Storage, `AZURE_STORAGE_CONTAINER` | Production. Executed copies are written under a version-level immutability policy, so the container must have it enabled |
+
+With `azure` set the platform refuses to start if the container cannot be
+reached, rather than accepting uploads it cannot keep. Azure is reached by
+managed identity from `AZURE_STORAGE_ACCOUNT_URL`; a connection string is for
+staging only.
+
+Moving documents keeps their keys, so every record still resolves:
+
+```bash
+scripts/export_minio.sh                                          # out of an old MinIO, into storage/
+apps/api/.venv/bin/python scripts/move_documents.py --to azure   # from the folder into Azure
+```
+
+`move_documents.py` hashes every file on the way back, writes executed copies
+under the immutability policy, skips what is already there, and deletes nothing
+from the source.
 
 ## The AI layer
 

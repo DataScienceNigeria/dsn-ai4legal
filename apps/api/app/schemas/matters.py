@@ -336,7 +336,8 @@ class WetInkExecution(BaseModel):
 class ContractOut(ApiModel):
     id: UUID
     reference: str
-    matter_id: UUID
+    matter_id: UUID | None
+    origin: str = "platform"
     entity: str
     agreement_type: str
     effective_date: date | None

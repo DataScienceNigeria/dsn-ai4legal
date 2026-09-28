@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +16,24 @@ from app.core.errors import PlatformError
 
 logging.basicConfig(level=logging.INFO)
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Refuse to start without somewhere to keep documents.
+
+    A platform that comes up with its document store unreachable accepts
+    uploads it cannot keep, so a missing or misconfigured store stops it here
+    rather than at the first signed agreement.
+    """
+    from app.services.storage import store
+
+    store.verify()
+    logging.getLogger(__name__).info("Documents are kept in the %s store.", store.backend.name)
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Legal Operations Platform",
     version="1.0.0",
     description=(
@@ -84,7 +102,11 @@ def platform_error_handler(request: Request, exc: PlatformError) -> JSONResponse
 
 @app.get("/health", tags=["platform"])
 def health() -> dict[str, str]:
-    return {"status": "ok", "environment": settings.dsnlai_env}
+    return {
+        "status": "ok",
+        "environment": settings.dsnlai_env,
+        "storage": settings.dsnlai_storage_backend,
+    }
 
 
 def register_routers() -> None:

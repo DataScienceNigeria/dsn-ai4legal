@@ -146,6 +146,8 @@ def index_contract(session: Session, contract, matter=None, counterparty=None) -
         lines.append(f"Renewal is {contract.renewal_type.replace('_', ' ')}.")
     if contract.executed_outside_platform:
         lines.append("Executed on paper and recorded here afterwards.")
+    if getattr(contract, "origin", "platform") == "migrated":
+        lines.append("Signed before the platform existed and archived here afterwards.")
     if matter is not None:
         lines.append(f"Reached under matter {matter.number}, {matter.title}.")
 
