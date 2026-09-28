@@ -39,14 +39,39 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Refuse to build an interface pointed at localhost
+      - name: Check the address the interface will be built against
+        # Validated and cleaned here rather than trusted, because a value
+        # pasted into the GitHub settings page can carry a byte-order mark or a
+        # zero-width space. It looks perfect in the browser and in a log, and
+        # it makes the built-in address unusable: the browser reads the URL as
+        # relative, asks the interface for it, and the answer is a 404 that
+        # points at nothing.
+        id: base
+        env:
+          RAW: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
         run: |
-          if [ -z "${{ vars.NEXT_PUBLIC_API_BASE_URL }}" ]; then
+          clean="$(printf '%s' "$RAW" | tr -d '[:space:]' | tr -cd '[:print:]')"
+          clean="${clean%/}"
+          if [ -z "$clean" ]; then
             echo "The repository variable NEXT_PUBLIC_API_BASE_URL is not set, so the" >&2
             echo "interface would be built calling http://localhost:8000 and would work" >&2
             echo "for nobody but somebody sitting on the server." >&2
             exit 1
           fi
+          case "$clean" in
+            https://*|http://*) ;;
+            *)
+              echo "NEXT_PUBLIC_API_BASE_URL must start with https://. After cleaning it" >&2
+              echo "reads: $clean" >&2
+              exit 1 ;;
+          esac
+          if [ "$clean" != "$RAW" ]; then
+            echo "::warning::NEXT_PUBLIC_API_BASE_URL carried characters that were removed."
+            printf 'stored : ' ; printf '%s' "$RAW"   | od -c | head -3
+            printf 'used   : ' ; printf '%s' "$clean" | od -c | head -3
+          fi
+          echo "url=$clean" >> "$GITHUB_OUTPUT"
+          echo "Building the interface against $clean"
 
       - uses: actions/checkout@v4
 
@@ -78,7 +103,7 @@ jobs:
           # browser calls is decided here and a change to it needs a rebuild
           # rather than a restart.
           build-args: |
-            NEXT_PUBLIC_API_BASE_URL=${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+            NEXT_PUBLIC_API_BASE_URL=${{ steps.base.outputs.url }}
           tags: |
             ${{ env.WEB_IMAGE }}:${{ github.sha }}
             ${{ env.WEB_IMAGE }}:latest
@@ -145,12 +170,15 @@ jobs:
         env:
           PUBLIC_URL: ${{ vars.PUBLIC_URL }}
         run: |
-          url="$(printf '%s' "$PUBLIC_URL" | tr -d '[:space:]')"
+          url="$(printf '%s' "$PUBLIC_URL" | tr -d '[:space:]' | tr -cd '[:print:]')"
           url="${url%/}"
           case "$url" in
             https://*|http://*) ;;
             "") echo "The repository variable PUBLIC_URL is not set." >&2; exit 1 ;;
-            *) echo "PUBLIC_URL must start with https://, got: $url" >&2; exit 1 ;;
+            *)
+              echo "PUBLIC_URL must start with https://. After cleaning it reads:" >&2
+              printf '%s' "$url" | od -c >&2
+              exit 1 ;;
           esac
 
           echo "Asking $url/api/v1/health"
