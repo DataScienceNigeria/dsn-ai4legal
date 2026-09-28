@@ -1,0 +1,216 @@
+{
+  "name": "Legal shared mailbox poll (Gmail API)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule",
+      "name": "Every five minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 25,
+        "simple": false,
+        "filters": {
+          "q": "is:unread in:inbox"
+        },
+        "options": {
+          "downloadAttachments": true,
+          "dataPropertyAttachmentsPrefixName": "attachment_"
+        }
+      },
+      "id": "read",
+      "name": "Read the shared mailbox",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Shape only. No decision is made here on legal grounds: the platform\n// decides what matters.\n//\n// Gmail hands a message over in more than one shape depending on the node\n// version and whether simplify is on, so the headers are read from either the\n// simplified object or the raw payload array rather than assumed.\n\nconst MAX_BYTES = 15 * 1024 * 1024;\n\nfunction headers(message) {\n  if (message.headers && !Array.isArray(message.headers)) {\n    return Object.fromEntries(\n      Object.entries(message.headers).map(([key, value]) => [key.toLowerCase(), value]),\n    );\n  }\n  const raw = message.payload?.headers ?? [];\n  return Object.fromEntries(raw.map((one) => [String(one.name).toLowerCase(), one.value]));\n}\n\nfunction address(value) {\n  if (!value) return '';\n  const match = String(value).match(/<([^>]+)>/);\n  return (match ? match[1] : String(value)).trim();\n}\n\nfunction people(value) {\n  if (!value) return [];\n  return String(value)\n    .split(',')\n    .map((one) => one.trim())\n    .filter(Boolean)\n    .map((one) => ({ name: one.replace(/<[^>]*>/, '').trim(), address: address(one) }));\n}\n\nconst messages = $input.all().map((item) => {\n  const message = item.json;\n  const head = headers(message);\n\n  // Attachments arrive as binary properties, base64 in `.data`. This is true\n  // in the default binary mode; with N8N_DEFAULT_BINARY_DATA_MODE=filesystem\n  // n8n stores them on disk and `.data` is absent, which is why anything\n  // without it is skipped rather than sent as undefined.\n  const attachments = Object.values(item.binary ?? {})\n    .filter((one) => typeof one.data === 'string')\n    .filter((one) => one.fileName)\n    .filter((one) => Buffer.from(one.data, 'base64').length <= MAX_BYTES)\n    .map((one) => ({\n      filename: one.fileName,\n      content_type: one.mimeType || 'application/octet-stream',\n      content_base64: one.data,\n    }));\n\n  const received = message.internalDate\n    ? new Date(Number(message.internalDate)).toISOString()\n    : new Date(head.date ?? Date.now()).toISOString();\n\n  return {\n    external_id: message.id,\n    mailbox: $env.LEGAL_MAILBOX,\n    sender: address(head.from) || 'unknown',\n    subject: head.subject ?? message.subject ?? '(no subject)',\n    body: message.text ?? message.textPlain ?? message.html ?? message.snippet ?? '',\n    received_at: received,\n    participants: [...people(head.to), ...people(head.cc)],\n    attachments,\n  };\n});\n\nif (!messages.length) return [];\nreturn [{ json: { messages } }];"
+      },
+      "id": "shape",
+      "name": "Shape for the platform",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// The signature is over the exact bytes that will be sent, which is why the\n// body is serialised here and handed on as a string. Serialising it again in\n// the HTTP node would produce a different body and a signature that does not\n// verify.\nconst crypto = require('crypto');\nconst body = JSON.stringify($json);\nconst signature = crypto\n  .createHmac('sha256', $env.DSNLAI_WEBHOOK_SECRET)\n  .update(body)\n  .digest('hex');\nreturn [{ json: { body, signature } }];"
+      },
+      "id": "sign",
+      "name": "Sign the payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DSNLAI_API_BASE_URL }}/api/v1/webhooks/mail",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Signature",
+              "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "handoff",
+      "name": "Hand off to the platform",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Only reached when the hand-off did not throw, so a message is marked read\n// after the platform holds it and never before. A failed pass leaves\n// everything unread and the next one picks it up again; the platform drops a\n// repeat by external_id, so a double delivery costs nothing.\nreturn $('Read the shared mailbox').all().map((item) => ({ json: { id: item.json.id } }));"
+      },
+      "id": "ids",
+      "name": "The messages that landed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "markAsRead",
+        "messageId": "={{ $json.id }}"
+      },
+      "id": "markread",
+      "name": "Mark it read",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Every five minutes": {
+      "main": [
+        [
+          {
+            "node": "Read the shared mailbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read the shared mailbox": {
+      "main": [
+        [
+          {
+            "node": "Shape for the platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape for the platform": {
+      "main": [
+        [
+          {
+            "node": "Sign the payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign the payload": {
+      "main": [
+        [
+          {
+            "node": "Hand off to the platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hand off to the platform": {
+      "main": [
+        [
+          {
+            "node": "The messages that landed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "The messages that landed": {
+      "main": [
+        [
+          {
+            "node": "Mark it read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

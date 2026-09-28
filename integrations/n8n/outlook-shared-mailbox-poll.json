@@ -1,0 +1,286 @@
+{
+  "name": "Legal shared mailbox poll (app-only)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule",
+      "name": "Every five minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.LEGAL_MAILBOX }}/mailFolders/Inbox/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$filter",
+              "value": "isRead eq false"
+            },
+            {
+              "name": "$top",
+              "value": "25"
+            },
+            {
+              "name": "$orderby",
+              "value": "receivedDateTime asc"
+            },
+            {
+              "name": "$select",
+              "value": "id,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "list",
+      "name": "List unread in the shared mailbox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "value",
+        "options": {}
+      },
+      "id": "split",
+      "name": "One item per message",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.LEGAL_MAILBOX }}/messages/{{ $json.id }}/attachments",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "id": "attachments",
+      "name": "Fetch the attachments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Shape only. No decision is made here and nothing is filtered out on\n// legal grounds: the platform decides what matters. The only things dropped\n// are an inline image, which is part of the body rather than a document, and\n// anything past the size ceiling, which the platform would refuse anyway.\n\nconst MAX_BYTES = 15 * 1024 * 1024;\n\nconst mail = $('One item per message').all();\nconst fetched = $('Fetch the attachments').all();\n\nconst messages = mail.map((item, index) => {\n  const message = item.json;\n  const carried = fetched[index]?.json?.value ?? [];\n\n  const attachments = carried\n    .filter((one) => one['@odata.type'] === '#microsoft.graph.fileAttachment')\n    .filter((one) => one.isInline !== true)\n    .filter((one) => (one.size ?? 0) <= MAX_BYTES)\n    .filter((one) => typeof one.contentBytes === 'string')\n    .map((one) => ({\n      filename: one.name,\n      content_type: one.contentType || 'application/octet-stream',\n      content_base64: one.contentBytes,\n    }));\n\n  const participants = [...(message.toRecipients ?? []), ...(message.ccRecipients ?? [])].map(\n    (one) => ({ name: one.emailAddress?.name ?? '', address: one.emailAddress?.address ?? '' }),\n  );\n\n  return {\n    external_id: message.id,\n    mailbox: $env.LEGAL_MAILBOX,\n    sender: message.from?.emailAddress?.address ?? 'unknown',\n    subject: message.subject ?? '(no subject)',\n    body: message.body?.content ?? message.bodyPreview ?? '',\n    received_at: message.receivedDateTime,\n    participants,\n    attachments,\n  };\n});\n\nif (!messages.length) return [];\nreturn [{ json: { messages } }];"
+      },
+      "id": "shape",
+      "name": "Shape for the platform",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// The signature is over the exact bytes that will be sent, which is why the\n// body is serialised here and handed on as a string. Serialising it again in\n// the HTTP node would produce a different body and a signature that does not\n// verify.\nconst crypto = require('crypto');\nconst body = JSON.stringify($json);\nconst signature = crypto\n  .createHmac('sha256', $env.DSNLAI_WEBHOOK_SECRET)\n  .update(body)\n  .digest('hex');\nreturn [{ json: { body, signature } }];"
+      },
+      "id": "sign",
+      "name": "Sign the payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DSNLAI_API_BASE_URL }}/api/v1/webhooks/mail",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Signature",
+              "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "handoff",
+      "name": "Hand off to the platform",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Only reached when the hand-off did not throw, so a message is marked read\n// after the platform holds it and never before. A failed pass leaves\n// everything unread and the next one picks it up again; the platform drops a\n// repeat by external_id, so a double delivery costs nothing.\nreturn $('One item per message').all().map((item) => ({ json: { id: item.json.id } }));"
+      },
+      "id": "ids",
+      "name": "The messages that landed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.LEGAL_MAILBOX }}/messages/{{ $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"isRead\": true}",
+        "options": {}
+      },
+      "id": "markread",
+      "name": "Mark it read",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Every five minutes": {
+      "main": [
+        [
+          {
+            "node": "List unread in the shared mailbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List unread in the shared mailbox": {
+      "main": [
+        [
+          {
+            "node": "One item per message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One item per message": {
+      "main": [
+        [
+          {
+            "node": "Fetch the attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch the attachments": {
+      "main": [
+        [
+          {
+            "node": "Shape for the platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape for the platform": {
+      "main": [
+        [
+          {
+            "node": "Sign the payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign the payload": {
+      "main": [
+        [
+          {
+            "node": "Hand off to the platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hand off to the platform": {
+      "main": [
+        [
+          {
+            "node": "The messages that landed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "The messages that landed": {
+      "main": [
+        [
+          {
+            "node": "Mark it read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

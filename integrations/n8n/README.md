@@ -86,9 +86,18 @@ stored. Nothing is classified, and no matter is created, until Legal opens it.
 
 ## Connecting the real Outlook mailbox
 
-`OUTLOOK.md` is the step by step: the Entra registration and its delegated
-permission, the n8n credential, the approved-mailbox row, and the one manual
-test that tells the three apart when mail is not arriving.
+`OUTLOOK.md` is the step by step. The legal mailbox is a **shared** mailbox,
+which cannot sign in, so the connector authenticates as an application and an
+Exchange application access policy scopes it to that one mailbox. The guide
+covers the registration, the policy, the n8n credential, the approved-mailbox
+row, and the one manual execution that tells those failures apart.
+
+| Workflow | For |
+| --- | --- |
+| `outlook-shared-mailbox-poll.json` | The shared legal mailbox. Application permissions, no sign-in, marks read after the hand-off |
+| `legal-mailbox-poll.json` | An ordinary personal mailbox, delegated OAuth |
+| `gmail-shared-mailbox-poll.json` | A Google Workspace mailbox through the Gmail API, OAuth2 as the account or a delegated service account. `GMAIL.md` is the setup |
+| `gmail-mailbox-poll.json` | The older IMAP variant, which needs an app password |
 
 ## Importing
 
