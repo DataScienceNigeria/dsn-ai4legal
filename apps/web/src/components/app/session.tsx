@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 
-import { ApiError, api, getEntity, setEntity as persistEntity } from "@/lib/api";
+import { ApiError, api, getEntity, getToken, setEntity as persistEntity } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
 type Status = "loading" | "ready" | "unauthenticated" | "unreachable";
@@ -64,6 +64,13 @@ export function SessionProvider({ children }: Readonly<{ children: React.ReactNo
 
   const load = React.useCallback(async () => {
     setStatus("loading");
+    // Nobody signed in yet is not a probe worth making. Asking anyway answers
+    // 401, which reads as a session that ended rather than one never started.
+    if (!getToken()) {
+      setMe(null);
+      setStatus("unauthenticated");
+      return;
+    }
     try {
       const result = await api<Me>("/auth/me");
       setMe(result);

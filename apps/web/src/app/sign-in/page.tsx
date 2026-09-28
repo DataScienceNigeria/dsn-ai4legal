@@ -8,6 +8,12 @@ import { Button, Card, CardBody, Field, Input, Notice, PasswordInput } from "@/c
 import { ApiError, login } from "@/lib/api";
 import { useQueryParams } from "@/lib/hooks";
 
+/* The demonstration accounts share one password that is in the repository, so
+   they belong to the development build and nowhere else. Next decides this at
+   build time, which keeps the list and the prefilled credentials out of the
+   production bundle rather than merely hidden in it. */
+const DEMONSTRATION = process.env.NODE_ENV !== "production";
+
 const DEMO_ACCOUNTS = [
   { email: "adaeze.okafor@dsn.example", role: "Legal lead, sees both entities" },
   { email: "ifeoma.chukwu@dsn.example", role: "Legal" },
@@ -28,8 +34,8 @@ export default function SignIn() {
   // sign in, and saying so is the difference between an explanation and a
   // form that appeared for no reason.
   const expired = useQueryParams().get("expired") === "1";
-  const [email, setEmail] = React.useState("adaeze.okafor@dsn.example");
-  const [password, setPassword] = React.useState("Lop-Demo-2026");
+  const [email, setEmail] = React.useState(DEMONSTRATION ? "adaeze.okafor@dsn.example" : "");
+  const [password, setPassword] = React.useState(DEMONSTRATION ? "Lop-Demo-2026" : "");
   const [code, setCode] = React.useState("");
   const [needsCode, setNeedsCode] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -62,7 +68,13 @@ export default function SignIn() {
 
   return (
     <div className="flex min-h-screen items-center justify-center p-6">
-      <div className="grid w-full max-w-4xl gap-5 md:grid-cols-[minmax(0,1fr)_18rem]">
+      <div
+        className={
+          DEMONSTRATION
+            ? "grid w-full max-w-4xl gap-5 md:grid-cols-[minmax(0,1fr)_18rem]"
+            : "grid w-full max-w-lg gap-5"
+        }
+      >
         <Card>
           <CardBody className="p-6 sm:p-8">
             <div className="mb-5 flex items-center gap-3">
@@ -126,17 +138,10 @@ export default function SignIn() {
                 {busy ? "Signing in" : "Sign in"}
               </Button>
             </form>
-
-            <p className="mt-5 max-w-reading text-sm leading-relaxed text-muted-foreground">
-              This is the local sign-in path. Set the deployment to OIDC and the same accounts
-              authenticate at Microsoft Entra ID or Google Workspace through Keycloak instead,
-              with the roles still coming from this platform. A role that can publish, sign or
-              administer needs a second factor either way, and a recovery code works in place of
-              the authenticator.
-            </p>
           </CardBody>
         </Card>
 
+        {DEMONSTRATION ? (
         <div className="space-y-3">
           <Notice title="Demonstration accounts">
             Every account uses the password{" "}
@@ -159,6 +164,7 @@ export default function SignIn() {
             </CardBody>
           </Card>
         </div>
+        ) : null}
       </div>
     </div>
   );

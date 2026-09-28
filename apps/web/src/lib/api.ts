@@ -81,10 +81,13 @@ function endsTheSession(status: number, code: string, path: string): boolean {
   return !path.startsWith("/auth/");
 }
 
-function redirectToSignIn(): void {
+/* Arriving at the sign-in form because a session lapsed is worth explaining.
+   Arriving because nobody was signed in at all is not: the banner then reads
+   as an error on a first visit to the address. */
+function redirectToSignIn(hadSession: boolean): void {
   const here = globalThis.location;
   if (!here || here.pathname.startsWith("/sign-in")) return;
-  here.assign("/sign-in?expired=1");
+  here.assign(hadSession ? "/sign-in?expired=1" : "/sign-in");
 }
 
 /* The platform's own refusal shape where there is one, FastAPI's `detail`
@@ -120,8 +123,9 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   if (!response.ok) {
     const problem = await readProblem(response);
     if (endsTheSession(response.status, problem.code, path)) {
+      const hadSession = getToken() !== null;
       setToken(null);
-      redirectToSignIn();
+      redirectToSignIn(hadSession);
     }
     throw new ApiError(response.status, problem);
   }

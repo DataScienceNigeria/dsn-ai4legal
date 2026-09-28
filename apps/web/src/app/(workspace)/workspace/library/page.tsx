@@ -47,6 +47,31 @@ function ClauseTab({
   canPropose: boolean;
   onSelect: (category: string) => void;
 }>) {
+  // With nothing published the split layout reads as a broken table: a 16rem
+  // sidebar holding nothing beside an empty pane, narrower than every other
+  // screen. Empty, it is one full-width card like the templates tab.
+  if (!clauses.loading && !clauses.data?.length) {
+    return (
+      <Card>
+        <CardHeader
+          title="Clauses"
+          subtitle="The house position for each category, with its ranked fallbacks"
+          actions={canPropose ? <NewClause onDone={() => clauses.reload()} /> : null}
+        />
+        <Empty
+          title="The clause library is empty"
+          detail={
+            canPropose
+              ? "Nothing is seeded here: house position is written by the legal team. Start a " +
+                "category with New clause, then the clause owner publishes the first version."
+              : "Nothing has been published yet. Legal writes the house position and the clause " +
+                "owner publishes it, and categories appear here as they do."
+          }
+        />
+      </Card>
+    );
+  }
+
   return (
         <div className="grid gap-4 lg:gap-5 lg:grid-cols-[16rem_minmax(0,1fr)]">
           <Card>
@@ -154,6 +179,11 @@ function ClauseTab({
 
               <ClauseVersionList clause={current} onChanged={() => clauses.reload()} />
             </div>
+          ) : current ? (
+            <Empty
+              title={`${current.name} has no approved version`}
+              detail="A draft exists but nothing is effective, so this category cannot be used for generation yet."
+            />
           ) : (
             <Empty title="Choose a clause category" />
           )}
