@@ -7,6 +7,7 @@ Revises:
 from collections.abc import Sequence
 
 from alembic import op
+from app.core.config import settings
 
 revision: str = "0001"
 down_revision: str | None = None
@@ -24,12 +25,17 @@ def upgrade() -> None:
     # The application connects as this role. It is deliberately not the owner,
     # because row-level security does not apply to a table's owner and would
     # therefore be decorative (LOP-NFR-13).
+    # The password comes from configuration, never from this file. It was
+    # written here as a literal, so every deployment shared one password that
+    # is published in the repository, and the value an operator put in .env was
+    # silently ignored until the application failed to authenticate with it.
+    password = settings.dsnlai_app_db_password.replace("'", "''")
     op.execute(
-        """
+        f"""
         DO $$
         BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dsnlai_app') THEN
-                CREATE ROLE dsnlai_app LOGIN PASSWORD 'dsnlai_app_dev_password';
+                CREATE ROLE dsnlai_app LOGIN PASSWORD '{password}';
             END IF;
         END
         $$;

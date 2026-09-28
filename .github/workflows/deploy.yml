@@ -139,19 +139,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Wait for the platform to answer
+        # Through the environment rather than interpolated into the script, so
+        # the shell never sees the value as code and a malformed one is
+        # reported rather than pasted into a command.
+        env:
+          PUBLIC_URL: ${{ vars.PUBLIC_URL }}
         run: |
-          for attempt in $(seq 1 30); do
-            body="$(curl -fsS "${{ vars.PUBLIC_URL }}/api/v1/health" || true)"
+          url="$(printf '%s' "$PUBLIC_URL" | tr -d '[:space:]')"
+          url="${url%/}"
+          case "$url" in
+            https://*|http://*) ;;
+            "") echo "The repository variable PUBLIC_URL is not set." >&2; exit 1 ;;
+            *) echo "PUBLIC_URL must start with https://, got: $url" >&2; exit 1 ;;
+          esac
+
+          echo "Asking $url/api/v1/health"
+          for _ in $(seq 1 30); do
+            body="$(curl -fsS --max-time 10 "$url/api/v1/health" || true)"
             case "$body" in
               *'"status":"ok"'*)
                 echo "$body"
                 case "$body" in
-                  *'"storage":"azure"'*) echo "Documents are in Azure." ;;
+                  *'"storage":"azure"'*) ;;
                   *) echo "WARNING: this deployment is not using Azure storage." ;;
                 esac
                 exit 0 ;;
             esac
             sleep 5
           done
-          echo "The platform did not answer within 150 seconds." >&2
+          echo "No healthy answer from $url after 150 seconds." >&2
+          curl -sS -o /dev/null -w 'last status: %{http_code}\n' "$url/api/v1/health" || true
           exit 1
