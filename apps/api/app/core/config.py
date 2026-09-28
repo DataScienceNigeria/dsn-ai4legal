@@ -24,10 +24,25 @@ _REPO_ROOT_ENV = next(
     Path(".env"),
 )
 
-#: The repository root, from this file rather than from the working directory,
-#: so the default document folder does not move with wherever the API was
-#: started from.
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+def _default_storage_root() -> Path:
+    """Where documents go when nothing says otherwise.
+
+    Found by looking for the repository root rather than by counting parents:
+    this file is four levels below the root in a checkout and two below ``/srv``
+    in the image, so a fixed index raises IndexError in the container and takes
+    the whole deployment down at import.
+
+    Compose sets DSNLAI_STORAGE_PATH explicitly, so this is the development
+    default and the image's fallback, never the production path.
+    """
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "docker-compose.yml").is_file():
+            return parent
+    return here.parents[2]
+
+
+_REPO_ROOT = _default_storage_root()
 
 #: The key the platform ships with. Anything holding it can sign a token for
 #: any role, so a deployment that is not development refuses to start on it.
