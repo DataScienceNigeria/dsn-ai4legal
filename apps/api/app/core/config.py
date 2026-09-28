@@ -15,7 +15,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 #: relative path meant each of those read a different file, or none. A local
 #: apps/api/.env is still read after it and still wins, which is what makes a
 #: per-checkout override possible without a second copy of everything.
-_REPO_ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
+_REPO_ROOT_ENV = next(
+    (
+        parent / ".env"
+        for parent in Path(__file__).resolve().parents
+        if (parent / ".env").is_file()
+    ),
+    Path(".env"),
+)
 
 
 class Settings(BaseSettings):
