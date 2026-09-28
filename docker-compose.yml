@@ -219,6 +219,18 @@ services:
       # The only address n8n needs. It calls the platform API and nothing else.
       DSNLAI_API_BASE_URL: http://api:8000
       DSNLAI_WEBHOOK_SECRET: ${DSNLAI_SECRET_KEY:-change-me-in-every-environment}
+      # The mailbox the poll reads, and the one the platform checks it against.
+      # It has to be on the approved list or every message is refused and the
+      # attempt recorded: python -m app.mailbox is how it gets there.
+      LEGAL_MAILBOX: ${LEGAL_MAILBOX:-legal@dsn.example}
+      # The shaping step and the signing step both read $$env. Newer n8n blocks
+      # that in Code nodes by default, and the failure is a signature that does
+      # not verify rather than an error naming the cause.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      # The signing step needs node's crypto. Code nodes run in an isolated VM
+      # with no built-ins at all unless they are named here, and the refusal is
+      # "Module 'crypto' is disallowed".
+      NODE_FUNCTION_ALLOW_BUILTIN: crypto
     ports:
       - "${DSNLAI_N8N_PORT:-5678}:5678"
     volumes:

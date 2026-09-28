@@ -35,15 +35,15 @@ mismatched call is refused.
 
 ## What the container has to be given
 
-Four environment variables, all set in `docker-compose.override.yml` for local
-development. Three of them fail quietly rather than loudly, which is worth
-knowing before an hour goes into the wrong place.
+Five environment variables, set in `docker-compose.yml` so they apply to a
+deployment as well as to development. Three of them fail quietly rather than
+loudly, which is worth knowing before an hour goes into the wrong place.
 
 | Variable | Why |
 | --- | --- |
 | `DSNLAI_API_BASE_URL` | Where the platform is. `api:8000` in the built stack, the host gateway during development |
 | `DSNLAI_WEBHOOK_SECRET` | The signing key. A wrong one is a 403 from the webhook, not an error in n8n |
-| `LEGAL_MAILBOX` | The mailbox being read. It has to match a row on the approved list or every message is refused |
+| `LEGAL_MAILBOX` | The mailbox being read. It has to match a row on the approved list or every message is refused: `python -m app.mailbox <address> --entity DSN` puts it there |
 | `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` | Code nodes read `$env`. Blocked, the secret reads as undefined and the signature simply fails to verify |
 | `NODE_FUNCTION_ALLOW_BUILTIN=crypto` | Code nodes run in an isolated VM with no built-ins. Without this, signing fails with "Module 'crypto' is disallowed" |
 
@@ -83,6 +83,12 @@ practice.
 The platform refuses any mailbox that is not on the approved list, records the
 attempt, and scans every message for instruction-like content before it is
 stored. Nothing is classified, and no matter is created, until Legal opens it.
+
+## Connecting the real Outlook mailbox
+
+`OUTLOOK.md` is the step by step: the Entra registration and its delegated
+permission, the n8n credential, the approved-mailbox row, and the one manual
+test that tells the three apart when mail is not arriving.
 
 ## Importing
 

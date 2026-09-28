@@ -34,3 +34,16 @@ services:
   opensign:
     depends_on: !override
       opensign-mongo: {condition: service_healthy}
+
+  # n8n holds the mailbox credential and can call the platform API, so it is
+  # not published to the internet. Bound to the loopback, it is reached by an
+  # SSH tunnel from whoever is editing a workflow:
+  #
+  #   ssh -L 5678:127.0.0.1:5678 azureuser@<server>
+  #
+  # That address is also what the Microsoft sign-in comes back to, so
+  # http://localhost:5678/rest/oauth2-credential/callback is the redirect URI
+  # registered on the Entra application and nothing else has to be exposed.
+  n8n:
+    ports: !override
+      - "127.0.0.1:${DSNLAI_N8N_PORT:-5678}:5678"

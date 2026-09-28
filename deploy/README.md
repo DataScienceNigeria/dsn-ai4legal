@@ -261,5 +261,15 @@ and run the drill quarterly, which is itself a compliance item in the platform.
   `docker-compose.yml` instead of localhost, and `OPENSIGN_PFX_BASE64`. Wet-ink
   execution is recorded either way.
 
+**The legal mailbox** is connected separately, once the deployment is up:
+`integrations/n8n/OUTLOOK.md` covers the Entra registration, the n8n
+credential, and putting the address on the platform's approved list with
+`python -m app.mailbox`. n8n is bound to the server's loopback here, so it is
+reached over an SSH tunnel rather than published:
+
+```bash
+ssh -L 5678:127.0.0.1:5678 azureuser@<server>
+```
+
 **Before real matters:** the platform's own DPIA and a penetration test are
 both gates in the PRD, section 21, and neither has been done.
