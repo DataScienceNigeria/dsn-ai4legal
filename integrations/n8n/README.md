@@ -43,7 +43,7 @@ loudly, which is worth knowing before an hour goes into the wrong place.
 | --- | --- |
 | `DSNLAI_API_BASE_URL` | Where the platform is. `api:8000` in the built stack, the host gateway during development |
 | `DSNLAI_WEBHOOK_SECRET` | The signing key. A wrong one is a 403 from the webhook, not an error in n8n |
-| `LEGAL_MAILBOX` | The mailbox being read. It has to match a row on the approved list or every message is refused: `python -m app.mailbox <address> --entity DSN` puts it there |
+| `DSN_LEGAL_MAILBOX`, `EAI_LEGAL_MAILBOX` | One mailbox per organisation. The Outlook workflows read the DSN one, the Gmail workflows the EAI one. Each has to be on the approved list under its own entity or every message is refused: `python -m app.mailbox <address> --entity DSN` or `--entity EAI` |
 | `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` | Code nodes read `$env`. Blocked, the secret reads as undefined and the signature simply fails to verify |
 | `NODE_FUNCTION_ALLOW_BUILTIN=crypto` | Code nodes run in an isolated VM with no built-ins. Without this, signing fails with "Module 'crypto' is disallowed" |
 
@@ -101,5 +101,7 @@ row, and the one manual execution that tells those failures apart.
 
 ## Importing
 
-Open n8n at `http://localhost:5678`, then import from `/workflows` inside the
-container, which is this directory mounted read only.
+Open n8n at `http://localhost:5678`, then **Workflows → Import from file** and
+pick the JSON from your own checkout; the picker is the browser's. The same
+directory is mounted read only at `/workflows` in the container for the CLI:
+`docker compose ... exec n8n n8n import:workflow --input=/workflows/<file>.json`.

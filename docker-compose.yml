@@ -219,10 +219,13 @@ services:
       # The only address n8n needs. It calls the platform API and nothing else.
       DSNLAI_API_BASE_URL: http://api:8000
       DSNLAI_WEBHOOK_SECRET: ${DSNLAI_SECRET_KEY:-change-me-in-every-environment}
-      # The mailbox the poll reads, and the one the platform checks it against.
-      # It has to be on the approved list or every message is refused and the
-      # attempt recorded: python -m app.mailbox is how it gets there.
-      LEGAL_MAILBOX: ${LEGAL_MAILBOX:-legal@dsn.example}
+      # One mailbox per organisation, each read by its own workflow: the
+      # Outlook ones read DSN_LEGAL_MAILBOX, the Gmail ones EAI_LEGAL_MAILBOX.
+      # n8n has no env_file, so a variable not named here never reaches it.
+      # Each address has to be on the approved list under its own entity or
+      # every message is refused: python -m app.mailbox is how it gets there.
+      DSN_LEGAL_MAILBOX: ${DSN_LEGAL_MAILBOX:-}
+      EAI_LEGAL_MAILBOX: ${EAI_LEGAL_MAILBOX:-}
       # The shaping step and the signing step both read $$env. Newer n8n blocks
       # that in Code nodes by default, and the failure is a signature that does
       # not verify rather than an error naming the cause.

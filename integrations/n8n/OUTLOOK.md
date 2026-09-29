@@ -93,10 +93,10 @@ In production n8n listens on the server's loopback only, since it holds the
 mailbox credential. From a workstation:
 
 ```bash
-ssh -L 15678:127.0.0.1:5678 azureuser@<server>
+ssh -L 5678:127.0.0.1:5678 azureuser@<server>
 ```
 
-Then open `http://localhost:15678`. On first visit n8n asks for an owner
+Then open `http://localhost:5678`. On first visit n8n asks for an owner
 account: use a real address and keep the password with the other secrets.
 `N8N_USER` and `N8N_PASSWORD` in `.env` are ignored by n8n 1.x, so a **Sign
 in** screen means an owner already exists and wants its email. If nobody knows
@@ -137,11 +137,11 @@ a token when a node first runs.
 In the server's `.env`:
 
 ```
-LEGAL_MAILBOX=legal@dsn.org
+DSN_LEGAL_MAILBOX=legal@dsn.org
 N8N_ENCRYPTION_KEY=<a generated secret>
 ```
 
-`LEGAL_MAILBOX` must be the same address in three places: this variable, the
+`DSN_LEGAL_MAILBOX` must be the same address in three places: this variable, the
 group member in step 2, and the approved list in step 6. The compose file
 already passes `DSNLAI_WEBHOOK_SECRET` (the platform's own key),
 `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` and `NODE_FUNCTION_ALLOW_BUILTIN=crypto`,
@@ -154,9 +154,9 @@ docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d n8n
 
 ## 6. Import the workflow
 
-In n8n, **Import from file**, and pick
-`/workflows/outlook-shared-mailbox-poll.json` — this directory, mounted read
-only inside the container. Nine nodes: the five-minute schedule, a Graph call
+In n8n, **Workflows → Import from file**, and pick
+`integrations/n8n/outlook-shared-mailbox-poll.json` from your own checkout: the picker is your
+browser's, not the server's. Nine nodes: the five-minute schedule, a Graph call
 for unread messages in the shared mailbox's Inbox, a split, a Graph call for
 each message's attachments, the shaping step, the HMAC signature, the POST to
 the webhook, and a mark-as-read that runs only after the platform has the

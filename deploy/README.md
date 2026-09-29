@@ -268,7 +268,7 @@ credential, and putting the address on the platform's approved list with
 reached over an SSH tunnel rather than published:
 
 ```bash
-ssh -L 15678:127.0.0.1:5678 azureuser@<server>
+ssh -L 5678:127.0.0.1:5678 azureuser@<server>
 ```
 
 **Before real matters:** the platform's own DPIA and a penetration test are

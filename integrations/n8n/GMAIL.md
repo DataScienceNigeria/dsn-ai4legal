@@ -17,12 +17,12 @@ polled.
 
 | What it is | Can the Gmail API read it | What to do |
 | --- | --- | --- |
-| **A Google Group / collaborative inbox** (`legal@dsn.org` with no licence, members read it in Groups) | **No.** A group has no mailbox. Gmail API calls against the address fail: the account does not exist to Gmail | Either give the group a licensed Gmail account instead, or add a member account the group delivers to and poll that |
+| **A Google Group / collaborative inbox** (`admin@equalyz.ai` with no licence, members read it in Groups) | **No.** A group has no mailbox. Gmail API calls against the address fail: the account does not exist to Gmail | Either give the group a licensed Gmail account instead, or add a member account the group delivers to and poll that |
 | **A licensed user account** other people delegate into (Gmail → Settings → Accounts → Grant access) | Yes | This guide |
 | **An alias** on somebody's account | Yes, but you would be reading that person's whole mailbox | Don't. Make it its own account |
 
 Check which you have: Admin console → **Directory → Groups**. If
-`legal@dsn.org` is listed there and not under **Users**, it is a group and step
+`admin@equalyz.ai` is listed there and not under **Users**, it is a group and step
 1 will fail with a 404 on the user.
 
 ## 1. Choose how it authenticates
@@ -60,26 +60,24 @@ same people who hold the database password.
    poll mark a message read so the next pass does not re-fetch it.
 4. **Credentials → Create credentials → OAuth client ID → Web application.**
    Authorised redirect URI:
-   `http://localhost:15678/rest/oauth2-credential/callback`
+   `http://localhost:5678/rest/oauth2-credential/callback`
 
-   That is the n8n editor as it is reached: in production, an SSH tunnel from
-   local port 15678 to the server's loopback. It must equal `N8N_EDITOR_URL`
-   in the server's `.env` plus `rest/oauth2-credential/callback`, because n8n
-   builds the redirect from that variable. 15678 rather than 5678 because
-   Windows often reserves 5678 for Hyper-V and refuses the tunnel with
-   "Permission denied". Google accepts plain `http` for `localhost` only.
+   That is the n8n editor as it is reached: in production, an SSH tunnel to the
+   server's loopback. It must equal `N8N_EDITOR_URL` in the server's `.env`
+   plus `rest/oauth2-credential/callback`, because n8n builds the redirect from
+   that variable. Google accepts plain `http` for `localhost` only.
 5. Copy the **Client ID** and **Client secret**.
 
 ### A2. Connect it in n8n
 
-Reach n8n first (`ssh -L 15678:127.0.0.1:5678 azureuser@<server>`, then
-`http://localhost:15678`). The login is the n8n owner's email; `N8N_USER` and
+Reach n8n first (`ssh -L 5678:127.0.0.1:5678 azureuser@<server>`, then
+`http://localhost:5678`). The login is the n8n owner's email; `N8N_USER` and
 `N8N_PASSWORD` are ignored by n8n 1.x. If nobody knows the owner,
 `docker compose ... exec n8n n8n user-management:reset` and a restart bring
 back the setup screen with workflows and credentials intact.
 
 **Credentials → New → Gmail OAuth2 API.** Paste the client ID and secret, press
-**Connect my account**, and sign in **as `legal@dsn.org` itself** — not as an
+**Connect my account**, and sign in **as `admin@equalyz.ai` itself** — not as an
 administrator, and not as a member who has delegate access. A delegate's token
 reads the delegate's own mailbox, which is the quiet way this ends up ingesting
 the wrong inbox.
@@ -124,7 +122,7 @@ it and why, because it is the kind of grant an audit asks about.
 | Service Account Email | From the JSON, `client_email` |
 | Private Key | From the JSON, `private_key`, including the BEGIN and END lines |
 | Impersonate a User | **on** |
-| Email | `legal@dsn.org` |
+| Email | `admin@equalyz.ai` |
 
 Impersonation is what points the delegation at the one mailbox that should be
 read. Getting it wrong reads somebody else's mail with no error.
@@ -138,11 +136,11 @@ read. Getting it wrong reads somebody else's mail with no error.
 In the server's `.env`:
 
 ```
-LEGAL_MAILBOX=legal@dsn.org
+EAI_LEGAL_MAILBOX=admin@equalyz.ai
 N8N_ENCRYPTION_KEY=<a generated secret>
 ```
 
-`LEGAL_MAILBOX` must be the same address in three places: this variable, the
+`EAI_LEGAL_MAILBOX` must be the same address in three places: this variable, the
 account connected or impersonated above, and the approved list below. The
 compose file already passes `DSNLAI_WEBHOOK_SECRET`,
 `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` and `NODE_FUNCTION_ALLOW_BUILTIN=crypto`,
@@ -155,8 +153,8 @@ docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d n8n
 
 ### 2b. Import the workflow
 
-**Import from file → `/workflows/gmail-shared-mailbox-poll.json`**, this
-directory mounted read only inside the container. Seven nodes: the five-minute
+**Workflows → Import from file**, and pick `integrations/n8n/gmail-shared-mailbox-poll.json` from
+your own checkout: the picker is your browser's, not the server's. Seven nodes: the five-minute
 schedule, the Gmail read of unread inbox mail with attachments, the shaping
 step, the HMAC signature, the POST to the webhook, and a mark-as-read that runs
 only after the platform has the message.
@@ -174,7 +172,7 @@ the API workflow.
 ```bash
 cd /home/azureuser/ai4legal
 COMPOSE="docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml"
-$COMPOSE run --rm api python -m app.mailbox legal@dsn.org --entity DSN
+$COMPOSE run --rm api python -m app.mailbox admin@equalyz.ai --entity EAI
 $COMPOSE run --rm api python -m app.mailbox --list
 ```
 

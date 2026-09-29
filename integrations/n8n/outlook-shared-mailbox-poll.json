@@ -1,5 +1,5 @@
 {
-  "name": "Legal shared mailbox poll (app-only)",
+  "name": "DSN legal mailbox poll (Outlook, app-only)",
   "nodes": [
     {
       "parameters": {
@@ -23,7 +23,7 @@
     },
     {
       "parameters": {
-        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.LEGAL_MAILBOX }}/mailFolders/Inbox/messages",
+        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.DSN_LEGAL_MAILBOX }}/mailFolders/Inbox/messages",
         "authentication": "genericCredentialType",
         "genericAuthType": "oAuth2Api",
         "sendQuery": true,
@@ -74,7 +74,7 @@
     },
     {
       "parameters": {
-        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.LEGAL_MAILBOX }}/messages/{{ $json.id }}/attachments",
+        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.DSN_LEGAL_MAILBOX }}/messages/{{ $json.id }}/attachments",
         "authentication": "genericCredentialType",
         "genericAuthType": "oAuth2Api",
         "options": {}
@@ -91,7 +91,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Shape only. No decision is made here and nothing is filtered out on\n// legal grounds: the platform decides what matters. The only things dropped\n// are an inline image, which is part of the body rather than a document, and\n// anything past the size ceiling, which the platform would refuse anyway.\n\nconst MAX_BYTES = 15 * 1024 * 1024;\n\nconst mail = $('One item per message').all();\nconst fetched = $('Fetch the attachments').all();\n\nconst messages = mail.map((item, index) => {\n  const message = item.json;\n  const carried = fetched[index]?.json?.value ?? [];\n\n  const attachments = carried\n    .filter((one) => one['@odata.type'] === '#microsoft.graph.fileAttachment')\n    .filter((one) => one.isInline !== true)\n    .filter((one) => (one.size ?? 0) <= MAX_BYTES)\n    .filter((one) => typeof one.contentBytes === 'string')\n    .map((one) => ({\n      filename: one.name,\n      content_type: one.contentType || 'application/octet-stream',\n      content_base64: one.contentBytes,\n    }));\n\n  const participants = [...(message.toRecipients ?? []), ...(message.ccRecipients ?? [])].map(\n    (one) => ({ name: one.emailAddress?.name ?? '', address: one.emailAddress?.address ?? '' }),\n  );\n\n  return {\n    external_id: message.id,\n    mailbox: $env.LEGAL_MAILBOX,\n    sender: message.from?.emailAddress?.address ?? 'unknown',\n    subject: message.subject ?? '(no subject)',\n    body: message.body?.content ?? message.bodyPreview ?? '',\n    received_at: message.receivedDateTime,\n    participants,\n    attachments,\n  };\n});\n\nif (!messages.length) return [];\nreturn [{ json: { messages } }];"
+        "jsCode": "// Shape only. No decision is made here and nothing is filtered out on\n// legal grounds: the platform decides what matters. The only things dropped\n// are an inline image, which is part of the body rather than a document, and\n// anything past the size ceiling, which the platform would refuse anyway.\n\nconst MAX_BYTES = 15 * 1024 * 1024;\n\nconst mail = $('One item per message').all();\nconst fetched = $('Fetch the attachments').all();\n\nconst messages = mail.map((item, index) => {\n  const message = item.json;\n  const carried = fetched[index]?.json?.value ?? [];\n\n  const attachments = carried\n    .filter((one) => one['@odata.type'] === '#microsoft.graph.fileAttachment')\n    .filter((one) => one.isInline !== true)\n    .filter((one) => (one.size ?? 0) <= MAX_BYTES)\n    .filter((one) => typeof one.contentBytes === 'string')\n    .map((one) => ({\n      filename: one.name,\n      content_type: one.contentType || 'application/octet-stream',\n      content_base64: one.contentBytes,\n    }));\n\n  const participants = [...(message.toRecipients ?? []), ...(message.ccRecipients ?? [])].map(\n    (one) => ({ name: one.emailAddress?.name ?? '', address: one.emailAddress?.address ?? '' }),\n  );\n\n  return {\n    external_id: message.id,\n    mailbox: $env.DSN_LEGAL_MAILBOX,\n    sender: message.from?.emailAddress?.address ?? 'unknown',\n    subject: message.subject ?? '(no subject)',\n    body: message.body?.content ?? message.bodyPreview ?? '',\n    received_at: message.receivedDateTime,\n    participants,\n    attachments,\n  };\n});\n\nif (!messages.length) return [];\nreturn [{ json: { messages } }];"
       },
       "id": "shape",
       "name": "Shape for the platform",
@@ -171,7 +171,7 @@
     {
       "parameters": {
         "method": "PATCH",
-        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.LEGAL_MAILBOX }}/messages/{{ $json.id }}",
+        "url": "=https://graph.microsoft.com/v1.0/users/{{ $env.DSN_LEGAL_MAILBOX }}/messages/{{ $json.id }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "oAuth2Api",
         "sendBody": true,
