@@ -27,6 +27,19 @@ import { useAction, useApi } from "@/lib/hooks";
 import type { Communication, ExtractedValue } from "@/lib/types";
 import { cn, formatDateTime, titleCase } from "@/lib/utils";
 
+/* The mailbox's own state, as the connector last saw it. Separate from the
+   Legal tabs above it on purpose: read means somebody opened it in the
+   mailbox, handled means Legal has dealt with it, and neither implies the
+   other. */
+const MAILBOX_STATES = [
+  { id: "all", label: "All mail" },
+  { id: "unread", label: "Unread" },
+  { id: "read", label: "Read" },
+  { id: "starred", label: "Starred" },
+  { id: "important", label: "Important" },
+  { id: "sent", label: "Sent" },
+];
+
 const CLASSIFICATIONS = [
   "action_required",
   "deadline_present",
@@ -187,9 +200,15 @@ function ExtractedValueRow({
 export default function Inbox() {
   const { entity } = useSession();
   const [view, setView] = React.useState("all");
+  const [state, setState] = React.useState("all");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [showQuoted, setShowQuoted] = React.useState(false);
 
-  const messages = useApi<Communication[]>(`/ai/inbox?view=${view}`, [entity, view]);
+  const messages = useApi<Communication[]>(`/ai/inbox?view=${view}&state=${state}`, [
+    entity,
+    view,
+    state,
+  ]);
   const current =
     messages.data?.find((message) => message.id === selectedId) ?? messages.data?.[0] ?? null;
 
@@ -260,7 +279,26 @@ export default function Inbox() {
 
       <div className="grid gap-4 lg:gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <Card>
-          <CardHeader title={`${messages.data?.length ?? 0} messages`} />
+          <CardHeader
+            title={`${messages.data?.length ?? 0} messages`}
+            actions={
+              <Select
+                aria-label="Mailbox status"
+                value={state}
+                onChange={(event) => {
+                  setState(event.target.value);
+                  setSelectedId(null);
+                }}
+                className="h-8 w-36 text-xs"
+              >
+                {MAILBOX_STATES.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            }
+          />
           <div className="max-h-[620px] overflow-y-auto">
             {messages.loading ? (
               <Spinner />
@@ -270,19 +308,42 @@ export default function Inbox() {
               messages.data.map((message) => (
                 <button
                   key={message.id}
-                  onClick={() => setSelectedId(message.id)}
+                  onClick={() => {
+                    setSelectedId(message.id);
+                    setShowQuoted(false);
+                  }}
                   className={cn(
                     "block w-full border-b p-4 text-left last:border-b-0 hover:bg-muted/60",
                     current?.id === message.id && "bg-brand/5 shadow-[inset_2px_0_0] shadow-brand",
                   )}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-xs text-muted-foreground">{message.sender}</span>
+                    <span className="flex min-w-0 items-center gap-1.5 truncate text-xs text-muted-foreground">
+                      {message.mailbox_read === false ? (
+                        <span
+                          aria-label="Unread in the mailbox"
+                          className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand"
+                        />
+                      ) : null}
+                      <span className="truncate">
+                        {message.direction === "outbound" ? "To " : ""}
+                        {message.direction === "outbound"
+                          ? (message.participants?.[0]?.address ?? message.sender)
+                          : message.sender}
+                      </span>
+                    </span>
                     <span className="shrink-0 text-2xs text-muted-foreground">
                       {message.age_days}d
                     </span>
                   </div>
-                  <div className="mt-0.5 truncate text-sm font-medium">{message.subject}</div>
+                  <div
+                    className={cn(
+                      "mt-0.5 truncate text-sm",
+                      message.mailbox_read === false ? "font-semibold" : "font-medium",
+                    )}
+                  >
+                    {message.subject}
+                  </div>
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                     {message.classification ? (
                       <Pill tone={message.classification === "action_required" ? "warn" : "neutral"}>
@@ -295,6 +356,18 @@ export default function Inbox() {
                       <Mono>{Math.round(message.classification_confidence * 100)}% confidence</Mono>
                     ) : null}
                     {message.quarantined ? <Pill tone="bad">Quarantined</Pill> : null}
+                    {message.direction === "outbound" ? <Pill tone="info">Sent</Pill> : null}
+                    {message.mailbox_labels.includes("STARRED") ? (
+                      <Pill tone="warn">Starred</Pill>
+                    ) : null}
+                    {message.mailbox_labels.includes("IMPORTANT") ? (
+                      <Pill tone="neutral">Important</Pill>
+                    ) : null}
+                    {message.attachments.length ? (
+                      <Mono>
+                        {message.attachments.length} file{message.attachments.length === 1 ? "" : "s"}
+                      </Mono>
+                    ) : null}
                   </div>
                 </button>
               ))
@@ -321,9 +394,32 @@ export default function Inbox() {
                 }
               />
               <CardBody className="space-y-3">
-                <p className="whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm leading-relaxed">
+                <p className="whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm leading-relaxed [overflow-wrap:anywhere]">
                   {current.body}
                 </p>
+
+                {/*
+                  The history quoted under a reply. Folded by default, because
+                  shown whole it buried a two-line answer under a screen of
+                  chevrons, and kept one click away, because the thread is
+                  often where the commitment was actually made.
+                */}
+                {current.body_quoted ? (
+                  <div className="rounded-md border">
+                    <button
+                      onClick={() => setShowQuoted((open) => !open)}
+                      className="flex w-full items-center justify-between px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted/60"
+                    >
+                      <span>Earlier in the thread</span>
+                      <span aria-hidden>{showQuoted ? "Hide" : "Show"}</span>
+                    </button>
+                    {showQuoted ? (
+                      <p className="whitespace-pre-wrap border-t p-3 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+                        {current.body_quoted}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 {/*
                   What arrived with the message. The agreement is usually the

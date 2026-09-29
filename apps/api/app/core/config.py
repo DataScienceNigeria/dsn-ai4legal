@@ -161,10 +161,17 @@ class Settings(BaseSettings):
     dsnlai_ai_output_cost_per_mtok: float = 10.0
 
     dsnlai_max_upload_mb: int = 50
+    # Spreadsheets and presentations are here because a counterparty's rate
+    # card or schedule usually is one, and refusing it kept the covering note
+    # while losing the thing it covered.
     dsnlai_allowed_upload_types: str = (
         "application/pdf,"
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document,"
-        "application/msword,text/plain,image/png,image/jpeg"
+        "application/msword,text/plain,image/png,image/jpeg,"
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
+        "application/vnd.ms-excel,text/csv,"
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation,"
+        "application/vnd.ms-powerpoint"
     )
 
     @property

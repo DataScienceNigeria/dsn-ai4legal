@@ -17,6 +17,20 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
+        -440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Which slice of the mailbox this pass reads.\n//\n// The whole mailbox is read, not only unread mail, and it is read forwards\n// through time in fixed windows so a mailbox with years of history is\n// ingested over a few hours rather than in one pass that runs out of memory.\n// Once the walk reaches today, every pass re-reads the last few days, which\n// is what keeps read, starred and labels current on recent mail.\n//\n// The cursor lives in the workflow's static data, which n8n saves only for\n// runs started by the trigger. A manual Execute starts from the beginning\n// every time; the platform drops what it already holds, so that costs a\n// re-read and nothing else.\n\nconst DAY = 24 * 60 * 60;\nconst now = Math.floor(Date.now() / 1000);\n\nconst since = $env.EAI_MAIL_SINCE\n  ? Math.floor(new Date($env.EAI_MAIL_SINCE + 'T00:00:00Z').getTime() / 1000)\n  : now - 365 * DAY;\nconst windowDays = Number($env.EAI_MAIL_WINDOW_DAYS || 7);\nconst refreshDays = Number($env.EAI_MAIL_REFRESH_DAYS || 3);\n\nconst state = $getWorkflowStaticData('global');\nconst cursor = Number(state.cursor || since);\n\nconst caughtUp = cursor + windowDays * DAY >= now;\nconst after = caughtUp ? Math.min(cursor, now - refreshDays * DAY) : cursor;\nconst before = caughtUp ? now + DAY : cursor + windowDays * DAY;\n\n// Everything except what is not correspondence. Sent mail is included: what\n// Legal said is half of the record.\nconst query = `after:${after} before:${before} -in:spam -in:trash -in:drafts -in:chats`;\n\nreturn [{ json: { after, before, caughtUp, query } }];"
+      },
+      "id": "window",
+      "name": "Which part of the mailbox",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
         -220,
         0
       ]
@@ -25,11 +39,11 @@
       "parameters": {
         "resource": "message",
         "operation": "getAll",
-        "returnAll": false,
-        "limit": 25,
+        "returnAll": true,
         "simple": false,
         "filters": {
-          "q": "is:unread in:inbox"
+          "q": "={{ $json.query }}",
+          "includeSpamTrash": false
         },
         "options": {
           "downloadAttachments": true,
@@ -37,18 +51,19 @@
         }
       },
       "id": "read",
-      "name": "Read the shared mailbox",
+      "name": "Read the mailbox",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
         0,
         0
-      ]
+      ],
+      "alwaysOutputData": true
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Shape only. No decision is made here on legal grounds: the platform\n// decides what matters.\n//\n// Gmail hands a message over in more than one shape depending on the node\n// version and whether simplify is on, so the headers are read from either the\n// simplified object or the raw payload array rather than assumed.\n\nconst MAX_BYTES = 15 * 1024 * 1024;\n\nfunction headers(message) {\n  if (message.headers && !Array.isArray(message.headers)) {\n    return Object.fromEntries(\n      Object.entries(message.headers).map(([key, value]) => [key.toLowerCase(), value]),\n    );\n  }\n  const raw = message.payload?.headers ?? [];\n  return Object.fromEntries(raw.map((one) => [String(one.name).toLowerCase(), one.value]));\n}\n\nfunction address(value) {\n  if (!value) return '';\n  const match = String(value).match(/<([^>]+)>/);\n  return (match ? match[1] : String(value)).trim();\n}\n\nfunction people(value) {\n  if (!value) return [];\n  return String(value)\n    .split(',')\n    .map((one) => one.trim())\n    .filter(Boolean)\n    .map((one) => ({ name: one.replace(/<[^>]*>/, '').trim(), address: address(one) }));\n}\n\nconst messages = $input.all().map((item) => {\n  const message = item.json;\n  const head = headers(message);\n\n  // Attachments arrive as binary properties, base64 in `.data`. This is true\n  // in the default binary mode; with N8N_DEFAULT_BINARY_DATA_MODE=filesystem\n  // n8n stores them on disk and `.data` is absent, which is why anything\n  // without it is skipped rather than sent as undefined.\n  const attachments = Object.values(item.binary ?? {})\n    .filter((one) => typeof one.data === 'string')\n    .filter((one) => one.fileName)\n    .filter((one) => Buffer.from(one.data, 'base64').length <= MAX_BYTES)\n    .map((one) => ({\n      filename: one.fileName,\n      content_type: one.mimeType || 'application/octet-stream',\n      content_base64: one.data,\n    }));\n\n  const received = message.internalDate\n    ? new Date(Number(message.internalDate)).toISOString()\n    : new Date(head.date ?? Date.now()).toISOString();\n\n  return {\n    external_id: message.id,\n    mailbox: $env.EAI_LEGAL_MAILBOX,\n    sender: address(head.from) || 'unknown',\n    subject: head.subject ?? message.subject ?? '(no subject)',\n    body: message.text ?? message.textPlain ?? message.html ?? message.snippet ?? '',\n    received_at: received,\n    participants: [...people(head.to), ...people(head.cc)],\n    attachments,\n  };\n});\n\nif (!messages.length) return [];\nreturn [{ json: { messages } }];"
+        "jsCode": "// Shape only. No decision is made here on legal grounds: the platform\n// decides what matters, and it also cleans the body and splits off the\n// quoted history, so the text is handed over as received.\n\nconst MAX_BYTES = 15 * 1024 * 1024;\nconst mailbox = ($env.EAI_LEGAL_MAILBOX || '').toLowerCase();\n\nfunction first(value) {\n  if (!value) return null;\n  if (Array.isArray(value.value)) return value.value[0] ?? null;\n  return null;\n}\n\nfunction list(value) {\n  if (!value) return [];\n  if (Array.isArray(value.value)) {\n    return value.value.map((one) => ({ name: one.name ?? '', address: one.address ?? '' }));\n  }\n  return String(value)\n    .split(',')\n    .map((one) => one.trim())\n    .filter(Boolean)\n    .map((one) => {\n      const match = one.match(/<([^>]+)>/);\n      return { name: one.replace(/<[^>]*>/, '').trim(), address: (match ? match[1] : one).trim() };\n    });\n}\n\nfunction header(message, name) {\n  const headers = message.headers;\n  if (headers && !Array.isArray(headers)) {\n    const key = Object.keys(headers).find((one) => one.toLowerCase() === name);\n    if (key) return headers[key];\n  }\n  const raw = message.payload?.headers ?? [];\n  return raw.find((one) => String(one.name).toLowerCase() === name)?.value;\n}\n\nconst items = $input.all();\nconst messages = [];\n\nfor (let index = 0; index < items.length; index++) {\n  const item = items[index];\n  const message = item.json;\n  // With nothing in the window the Gmail node still hands on one empty item,\n  // so that the cursor below can move past an empty week.\n  if (!message.id) continue;\n\n  const labels = message.labelIds ?? [];\n  const from = first(message.from) ?? list(header(message, 'from'))[0] ?? {};\n  const sender = (from.address || 'unknown').toLowerCase();\n  const outbound = labels.includes('SENT') || sender === mailbox;\n\n  // Read through the helper rather than `.data`, which is empty whenever n8n\n  // keeps binaries on disk. That was the quiet reason attachments went\n  // missing.\n  const attachments = [];\n  for (const [key, one] of Object.entries(item.binary ?? {})) {\n    if (!one.fileName) continue;\n    const buffer = await this.helpers.getBinaryDataBuffer(index, key);\n    if (buffer.length > MAX_BYTES) continue;\n    // Signature logos and pasted screenshots come through as small inline\n    // images. They are part of the body, not documents.\n    if ((one.mimeType || '').startsWith('image/') && buffer.length < 40 * 1024) continue;\n    attachments.push({\n      filename: one.fileName,\n      content_type: one.mimeType || 'application/octet-stream',\n      content_base64: buffer.toString('base64'),\n    });\n  }\n\n  const received = message.internalDate\n    ? new Date(Number(message.internalDate)).toISOString()\n    : new Date(message.date ?? header(message, 'date') ?? Date.now()).toISOString();\n\n  messages.push({\n    external_id: message.id,\n    mailbox,\n    sender,\n    subject: message.subject ?? header(message, 'subject') ?? '(no subject)',\n    body: typeof message.text === 'string' ? message.text : '',\n    body_html: typeof message.html === 'string' ? message.html : null,\n    received_at: received,\n    direction: outbound ? 'outbound' : 'inbound',\n    thread_id: message.threadId ?? null,\n    read: !labels.includes('UNREAD'),\n    labels,\n    participants: [...list(message.to ?? header(message, 'to')), ...list(message.cc ?? header(message, 'cc'))],\n    attachments,\n  });\n}\n\nreturn [{ json: { messages } }];"
       },
       "id": "shape",
       "name": "Shape for the platform",
@@ -95,6 +110,7 @@
         "rawContentType": "application/json",
         "body": "={{ $json.body }}",
         "options": {
+          "timeout": 300000,
           "response": {
             "response": {
               "neverError": false
@@ -114,29 +130,14 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Only reached when the hand-off did not throw, so a message is marked read\n// after the platform holds it and never before. A failed pass leaves\n// everything unread and the next one picks it up again; the platform drops a\n// repeat by external_id, so a double delivery costs nothing.\nreturn $('Read the shared mailbox').all().map((item) => ({ json: { id: item.json.id } }));"
+        "jsCode": "// Reached only when the platform accepted the batch, so the cursor never moves\n// past mail the platform does not hold. A failed pass leaves it where it was\n// and the next pass reads the same window again.\nconst slice = $('Which part of the mailbox').first().json;\nconst state = $getWorkflowStaticData('global');\nif (!slice.caughtUp) state.cursor = slice.before;\nelse state.cursor = Math.max(Number(state.cursor || 0), Math.floor(Date.now() / 1000));\nreturn [{ json: { cursor: state.cursor, caughtUp: slice.caughtUp } }];"
       },
-      "id": "ids",
-      "name": "The messages that landed",
+      "id": "advance",
+      "name": "Move the cursor on",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         880,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "resource": "message",
-        "operation": "markAsRead",
-        "messageId": "={{ $json.id }}"
-      },
-      "id": "markread",
-      "name": "Mark it read",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
-      "position": [
-        1100,
         0
       ]
     }
@@ -146,14 +147,25 @@
       "main": [
         [
           {
-            "node": "Read the shared mailbox",
+            "node": "Which part of the mailbox",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Read the shared mailbox": {
+    "Which part of the mailbox": {
+      "main": [
+        [
+          {
+            "node": "Read the mailbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read the mailbox": {
       "main": [
         [
           {
@@ -190,18 +202,7 @@
       "main": [
         [
           {
-            "node": "The messages that landed",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "The messages that landed": {
-      "main": [
-        [
-          {
-            "node": "Mark it read",
+            "node": "Move the cursor on",
             "type": "main",
             "index": 0
           }

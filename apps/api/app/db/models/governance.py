@@ -41,9 +41,15 @@ class Communication(UUIDPrimaryKey, Timestamped, EntityScoped, Base):
     sender: Mapped[str] = mapped_column(String(320), nullable=False)
     subject: Mapped[str] = mapped_column(String(512), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
+    body_quoted: Mapped[str | None] = mapped_column(Text)
+    body_original: Mapped[str | None] = mapped_column(Text)
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )
+    thread_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    mailbox_read: Mapped[bool | None] = mapped_column(Boolean, index=True)
+    mailbox_labels: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    mailbox_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     classification: Mapped[str | None] = mapped_column(String(32), index=True)
     classification_confidence: Mapped[float | None] = mapped_column()
     classification_corrected: Mapped[bool] = mapped_column(Boolean, default=False)

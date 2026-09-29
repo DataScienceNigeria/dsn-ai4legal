@@ -226,6 +226,13 @@ services:
       # every message is refused: python -m app.mailbox is how it gets there.
       DSN_LEGAL_MAILBOX: ${DSN_LEGAL_MAILBOX:-}
       EAI_LEGAL_MAILBOX: ${EAI_LEGAL_MAILBOX:-}
+      # How the Gmail workflow walks the mailbox: from EAI_MAIL_SINCE
+      # (YYYY-MM-DD, a year back when unset) forwards in windows of this many
+      # days, then re-reading the last few days on every pass so read state
+      # and labels stay current.
+      EAI_MAIL_SINCE: ${EAI_MAIL_SINCE:-}
+      EAI_MAIL_WINDOW_DAYS: ${EAI_MAIL_WINDOW_DAYS:-7}
+      EAI_MAIL_REFRESH_DAYS: ${EAI_MAIL_REFRESH_DAYS:-3}
       # The shaping step and the signing step both read $$env. Newer n8n blocks
       # that in Code nodes by default, and the failure is a signature that does
       # not verify rather than an error naming the cause.

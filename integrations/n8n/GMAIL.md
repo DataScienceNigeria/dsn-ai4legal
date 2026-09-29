@@ -55,9 +55,9 @@ same people who hold the database password.
 2. **OAuth consent screen.** User type **Internal** (Workspace only, so no
    verification and no test-user expiry). App name
    `DSN Legal Operations mail connector`.
-3. **Scopes:** `https://www.googleapis.com/auth/gmail.readonly` and
-   `https://www.googleapis.com/auth/gmail.modify`. The second is what lets the
-   poll mark a message read so the next pass does not re-fetch it.
+3. **Scope:** `https://www.googleapis.com/auth/gmail.readonly`. Read only is
+   enough: the workflow never changes the mailbox, and records each message's
+   read state and labels instead of setting them.
 4. **Credentials → Create credentials → OAuth client ID → Web application.**
    Authorised redirect URI:
    `http://localhost:5678/rest/oauth2-credential/callback`
@@ -108,7 +108,7 @@ Domain-wide delegation → Add new**.
 
 - Client ID: the numeric unique ID from B1
 - OAuth scopes, comma separated:
-  `https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/gmail.modify`
+  `https://www.googleapis.com/auth/gmail.readonly`
 
 This is the step that grants access to every user's mail. Record who approved
 it and why, because it is the kind of grant an audit asks about.
@@ -153,19 +153,34 @@ docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d n8n
 
 ### 2b. Import the workflow
 
-**Workflows → Import from file**, and pick `integrations/n8n/gmail-shared-mailbox-poll.json` from
-your own checkout: the picker is your browser's, not the server's. Seven nodes: the five-minute
-schedule, the Gmail read of unread inbox mail with attachments, the shaping
-step, the HMAC signature, the POST to the webhook, and a mark-as-read that runs
-only after the platform has the message.
+**Workflows → Import from file**, and pick
+`integrations/n8n/gmail-shared-mailbox-poll.json` from your own checkout: the
+picker is your browser's, not the server's. Open **Read the mailbox**, set the
+credential, save.
 
-Open the two Gmail nodes (**Read the shared mailbox**, **Mark it read**) and
-set **Authentication** to match the route taken, then pick the credential.
-Nothing else needs editing.
+What it does on each five-minute pass:
 
-`gmail-mailbox-poll.json` is the older IMAP variant. It needs an app password,
-which Workspace increasingly refuses, and it cannot mark read reliably. Prefer
-the API workflow.
+1. **Which part of the mailbox** picks a date window. The whole mailbox is
+   read, read and unread, sent mail included, spam, trash and drafts left out.
+   It walks forwards from `EAI_MAIL_SINCE` (a year back when unset) in windows
+   of `EAI_MAIL_WINDOW_DAYS`, so years of history arrive over a few hours
+   rather than in one pass that runs out of memory.
+2. Once it reaches today, every pass re-reads the last
+   `EAI_MAIL_REFRESH_DAYS`. That is what keeps read, starred and labels
+   current: a message the platform already holds is not created again, only
+   its mailbox state brought up to date. Older mail keeps the state it had
+   when last read.
+3. **Shape for the platform** hands over the text and HTML as received, the
+   thread, the labels and the attachments. Small inline images are dropped as
+   part of the body.
+4. **Move the cursor on** runs only when the platform accepted the batch, so a
+   failed pass reads the same window again.
+
+Nothing in the mailbox is changed. The cursor is saved only on runs started by
+the schedule, so a manual **Execute** always starts from the beginning; the
+platform drops what it already holds, and it costs a re-read.
+
+`gmail-mailbox-poll.json` is the older IMAP variant. Prefer this one.
 
 ### 2c. Approve the mailbox on the platform
 
@@ -180,8 +195,8 @@ Skip this and the webhook refuses every message and records the attempt.
 
 ### 2d. Test it once, by hand
 
-Send a message with a PDF to the mailbox, leave it unread, **Execute
-workflow**. The hand-off node should answer:
+Send a message with a PDF to the mailbox, then **Execute workflow**. Read or
+unread makes no difference now. The hand-off node should answer:
 
 ```json
 {
@@ -193,10 +208,10 @@ workflow**. The hand-off node should answer:
 | What you see | What it is |
 | --- | --- |
 | `404` / "Requested entity was not found" | The address is a Google Group, not a mailbox. Back to section 0 |
-| `403 insufficientPermissions` | The scope. `gmail.modify` is missing, or on route B the delegation lists a different scope string |
+| `403 insufficientPermissions` | The scope. `gmail.readonly` is missing, or on route B the delegation lists a different scope string |
 | `401 unauthorized_client` (route B) | The delegation client ID does not match the service account's unique ID, or the impersonated address is wrong |
 | Mail from the wrong mailbox | Signed in as a delegate rather than as the account, or impersonating the wrong address |
-| No items, no error | Nothing is unread. The query is `is:unread in:inbox` |
+| No items, no error | Nothing in the window. A manual run reads the first window from `EAI_MAIL_SINCE`; test mail sent today appears once the walk has caught up, or set `EAI_MAIL_SINCE` to today for the test |
 | `403` at the hand-off | The signature: `DSNLAI_WEBHOOK_SECRET` in n8n does not match `DSNLAI_SECRET_KEY` on the API, or the Code node could not read `$env` |
 | `422`, `These mailboxes are not approved` | Step 2c, or the address differs by a domain or a case |
 
@@ -205,10 +220,11 @@ for Legal. Activate the workflow.
 
 ## Afterwards
 
-- **People read this mailbox too.** The poll takes unread messages, so anybody
-  opening one in Gmail before the next pass hides it from the connector. Where
-  that matters, give the workflow a label an incoming filter applies and query
-  `label:to-platform` instead of `is:unread`.
+- **People read this mailbox too, and that is fine.** The connector reads
+  every message whatever its state and never marks anything, so opening a
+  message in Gmail no longer hides it from the platform. The Inbox shows the
+  mailbox state as a filter (All mail, Unread, Read, Starred, Important,
+  Sent), kept apart from Legal's own Handled.
 - **Binary mode matters.** With `N8N_DEFAULT_BINARY_DATA_MODE=filesystem` n8n
   writes attachments to disk and the shaping step cannot read them, so it skips
   them silently. The default mode is the one that works.

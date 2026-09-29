@@ -643,6 +643,8 @@ def inbox(
     principal: CurrentUser,
     entity: WorkingEntity,
     view: str = Query(default="all", pattern="^(all|action|watch|handled)$"),
+    state: str = Query(default="all", pattern="^(all|unread|read|starred|important|sent)$"),
+    limit: int = Query(default=200, ge=1, le=1000),
 ) -> list[CommunicationOut]:
     """The action queue and the implied-work watch view are separate.
 
@@ -660,8 +662,20 @@ def inbox(
     elif view == "handled":
         stmt = stmt.where(Communication.handled.is_(True))
 
+    # The mailbox's own state, as the connector last saw it. Read and unread
+    # say what the mailbox says, not whether Legal has dealt with a message:
+    # that is `handled`, and the two are deliberately separate filters.
+    if state == "unread":
+        stmt = stmt.where(Communication.mailbox_read.is_(False))
+    elif state == "read":
+        stmt = stmt.where(Communication.mailbox_read.is_(True))
+    elif state == "sent":
+        stmt = stmt.where(Communication.direction == "outbound")
+    elif state in {"starred", "important"}:
+        stmt = stmt.where(Communication.mailbox_labels.contains([state.upper()]))
+
     out = []
-    for record in db.execute(stmt.order_by(Communication.received_at.desc()).limit(200)).scalars():
+    for record in db.execute(stmt.order_by(Communication.received_at.desc()).limit(limit)).scalars():
         model = CommunicationOut.model_validate(record)
         model.age_days = (datetime.now(UTC) - record.received_at).days
         out.append(model)

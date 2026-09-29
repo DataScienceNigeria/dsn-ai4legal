@@ -28,7 +28,13 @@ class CommunicationOut(ApiModel):
     sender: str
     subject: str
     body: str
+    body_quoted: str | None = None
     received_at: datetime
+    direction: str = "inbound"
+    thread_id: str | None = None
+    mailbox_read: bool | None = None
+    mailbox_labels: list[str] = Field(default_factory=list)
+    participants: list[dict] = Field(default_factory=list)
     classification: str | None
     classification_confidence: float | None
     classification_corrected: bool

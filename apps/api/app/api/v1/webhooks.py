@@ -11,12 +11,14 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import mimetypes
 from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Header, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.ai import guards
 from app.core import audit
@@ -27,6 +29,7 @@ from app.db.models.governance import Communication, Mailbox
 from app.db.models.intake import Attachment
 from app.schemas.common import Ack
 from app.services import storage
+from app.services.mail_text import readable
 from app.services.hashing import file_hash
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -46,18 +49,45 @@ class InboundAttachment(BaseModel):
 
 
 class InboundMessage(BaseModel):
+    """One message, and what its mailbox says about it.
+
+    ``read`` and ``labels`` are the mailbox's state, recorded as it is rather
+    than changed: the connector reads every message, and Legal still works
+    from the mailbox itself. ``None`` for ``read`` means the connector did not
+    say, which is not the same as unread.
+    """
+
     external_id: str
     mailbox: str
     sender: str
     subject: str
-    body: str
+    body: str = ""
+    body_html: str | None = None
     received_at: datetime
+    direction: str = Field(default="inbound", pattern="^(inbound|outbound)$")
+    thread_id: str | None = None
+    read: bool | None = None
+    labels: list[str] = Field(default_factory=list)
     participants: list[dict] = Field(default_factory=list)
     attachments: list[InboundAttachment] = Field(default_factory=list)
 
 
 class InboundBatch(BaseModel):
     messages: list[InboundMessage]
+
+
+def _content_type(item: InboundAttachment) -> str:
+    """The declared type, or the one the filename implies where none was given.
+
+    Mail clients label spreadsheets and presentations as octet-stream as often
+    as not, and taking that at face value refuses the agreement's schedule
+    while accepting the covering note.
+    """
+    declared = (item.content_type or "").split(";")[0].strip().lower()
+    if declared and declared != "application/octet-stream":
+        return declared
+    guessed, _ = mimetypes.guess_type(item.filename)
+    return guessed or "application/octet-stream"
 
 
 def _store_attachments(db, communication, message, entity: str) -> int:
@@ -85,8 +115,9 @@ def _store_attachments(db, communication, message, entity: str) -> int:
             )
             continue
 
+        content_type = _content_type(item)
         try:
-            digest = storage.validate_upload(item.filename, item.content_type, data)
+            digest = storage.validate_upload(item.filename, content_type, data)
         except ValidationFailed as refusal:
             audit.record(
                 db,
@@ -118,12 +149,12 @@ def _store_attachments(db, communication, message, entity: str) -> int:
             continue
 
         key = f"mail/{communication.id}/{digest[:12]}-{item.filename}"
-        storage.store.put(key, data, item.content_type)
+        storage.store.put(key, data, content_type)
         db.add(
             Attachment(
                 communication_id=communication.id,
                 filename=item.filename,
-                content_type=item.content_type,
+                content_type=content_type,
                 size_bytes=len(data),
                 storage_key=key,
                 content_hash=file_hash(data),
@@ -174,9 +205,13 @@ async def receive_mail(
     }
 
     accepted = 0
+    updated = 0
     refused: list[str] = []
     quarantined = 0
     stored_files = 0
+    polled: set[str] = set()
+    seen: set[str] = set()
+    now = datetime.now(UTC)
 
     for message in batch.messages:
         mailbox = known.get(message.mailbox.lower())
@@ -192,32 +227,69 @@ async def receive_mail(
                 detail="The mailbox is not on the approved list.",
             )
             continue
+        polled.add(mailbox.address)
+
+        if message.external_id in seen:
+            continue
+        seen.add(message.external_id)
 
         existing = db.execute(
             select(Communication).where(Communication.external_id == message.external_id)
         ).scalar_one_or_none()
         if existing is not None:
+            # Seen before. The connector reads the whole mailbox and re-reads
+            # recent mail on every pass, so this is the common case: the
+            # message is not created again, only its mailbox state brought up
+            # to date, plus anything an earlier pass could not supply.
+            existing.mailbox_read = message.read
+            existing.mailbox_labels = message.labels
+            existing.thread_id = message.thread_id or existing.thread_id
+            existing.mailbox_seen_at = now
+            if existing.body_original is None:
+                fresh, quoted, original = readable(message.body, message.body_html)
+                existing.body, existing.body_quoted, existing.body_original = fresh, quoted, original
+            if message.attachments and not existing.attachments:
+                stored_files += _store_attachments(db, existing, message, existing.entity)
+            updated += 1
             continue
 
+        fresh, quoted, original = readable(message.body, message.body_html)
+
         # Ingested content is untrusted. It is scanned on the way in so that a
-        # quarantined message never reaches a capability at all.
-        scan = guards.scan(f"{message.subject}\n\n{message.body}")
+        # quarantined message never reaches a capability at all. The whole
+        # text is scanned, quoted history included: an instruction hidden in
+        # the history is still in the message.
+        scan = guards.scan(f"{message.subject}\n\n{fresh}\n\n{quoted or ''}")
 
         communication = Communication(
             mailbox_id=mailbox.id,
             entity=mailbox.entity,
             external_id=message.external_id,
-            direction="inbound",
+            direction=message.direction,
             sender=message.sender,
-            subject=message.subject,
-            body=message.body,
+            subject=message.subject[:512],
+            body=fresh,
+            body_quoted=quoted,
+            body_original=original,
             received_at=message.received_at,
+            thread_id=message.thread_id,
+            mailbox_read=message.read,
+            mailbox_labels=message.labels,
+            mailbox_seen_at=now,
             participants=message.participants,
             injection_flagged=scan.detected,
             quarantined=scan.quarantine,
         )
-        db.add(communication)
-        db.flush()
+        # Two passes can overlap. The unique external_id stops the second
+        # from creating a duplicate, and the savepoint keeps that refusal to
+        # this one message rather than failing the batch.
+        try:
+            with db.begin_nested():
+                db.add(communication)
+                db.flush()
+        except IntegrityError:
+            continue
+
         stored_files += _store_attachments(db, communication, message, mailbox.entity)
         accepted += 1
         if scan.quarantine:
@@ -233,11 +305,10 @@ async def receive_mail(
                 detail=", ".join(scan.patterns),
             )
 
-    mailbox_record = next(iter(known.values()), None)
-    if mailbox_record is not None:
-        mailbox_record.last_polled_at = datetime.now(UTC)
+    for address in polled:
+        known[address].last_polled_at = now
 
-    if refused and not accepted:
+    if refused and not accepted and not updated:
         raise ValidationFailed(
             "No message was accepted.",
             {"mailbox": f"These mailboxes are not approved: {', '.join(sorted(set(refused)))}"},
@@ -245,7 +316,8 @@ async def receive_mail(
 
     return Ack(
         message=(
-            f"{accepted} messages accepted, {stored_files} attachments stored, "
+            f"{accepted} messages accepted, {updated} already held and brought up to date, "
+            f"{stored_files} attachments stored, "
             f"{len(refused)} refused as unapproved mailboxes, {quarantined} quarantined "
             "for review. Nothing is classified or actioned until Legal opens it."
         )

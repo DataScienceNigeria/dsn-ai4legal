@@ -440,7 +440,13 @@ export type Communication = {
   sender: string;
   subject: string;
   body: string;
+  body_quoted: string | null;
   received_at: string;
+  direction: "inbound" | "outbound";
+  thread_id: string | null;
+  mailbox_read: boolean | null;
+  mailbox_labels: string[];
+  participants: { name: string; address: string }[];
   classification: string | null;
   classification_confidence: number | null;
   classification_corrected: boolean;
@@ -457,7 +463,8 @@ export type Communication = {
   injection_flagged: boolean;
   quarantined: boolean;
   age_days: number;
-  extracted_values: ExtractedValue[];  attachments: MailAttachment[];
+  extracted_values: ExtractedValue[];
+  attachments: MailAttachment[];
 };
 
 export type Source = { reference: string; kind: string; detail: string | null; quote: string | null };
