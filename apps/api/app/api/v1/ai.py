@@ -79,6 +79,22 @@ def _call(capability_code: str, **kwargs) -> CapabilityCall:
     )
 
 
+def _message_source(record: Communication) -> Source:
+    """The message a mailbox capability reads, named as its grounding.
+
+    Classifying or extracting from one email answers from that email, not from
+    the clause library, so the email is the source. Without it every answer
+    was refused as having no retrieved source while holding the message it
+    had just read, which is the case the gateway's subject exists for.
+    """
+    return Source(
+        reference=f"MSG-{str(record.id)[:8].upper()}",
+        kind="correspondence",
+        detail=f"{record.sender}, {record.received_at:%d %b %Y}",
+        quote=record.external_id,
+    )
+
+
 def _house_style(db, counterparty=None):
     """Load the configured house style, and treat the counterparty legal name as
     a party that earns its short form after the first mention."""
@@ -751,6 +767,7 @@ def classify(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> Com
             data_class=DataClass.CONFIDENTIAL,
             user_content=("Classify this message and propose a next step for a person to confirm."),
             untrusted=[(f"email from {record.sender}", f"{record.subject}\n\n{record.body}")],
+            subject=_message_source(record),
             user_id=uuid.UUID(principal.user_id),
             input_summary=record.subject[:200],
         ),
@@ -812,6 +829,7 @@ def extract(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> list
             data_class=DataClass.CONFIDENTIAL,
             user_content="Extract the facts present in this message.",
             untrusted=[(f"email from {record.sender}", f"{record.subject}\n\n{record.body}")],
+            subject=_message_source(record),
             user_id=uuid.UUID(principal.user_id),
             input_summary=record.subject[:200],
         ),
