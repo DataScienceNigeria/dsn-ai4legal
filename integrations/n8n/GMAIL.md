@@ -60,17 +60,23 @@ same people who hold the database password.
    poll mark a message read so the next pass does not re-fetch it.
 4. **Credentials → Create credentials → OAuth client ID → Web application.**
    Authorised redirect URI:
-   `http://localhost:5678/rest/oauth2-credential/callback`
+   `http://localhost:15678/rest/oauth2-credential/callback`
 
-   That is the n8n editor as it is reached: in production, an SSH tunnel to the
-   server's loopback. Google accepts plain `http` for `localhost` and for
-   nothing else.
+   That is the n8n editor as it is reached: in production, an SSH tunnel from
+   local port 15678 to the server's loopback. It must equal `N8N_EDITOR_URL`
+   in the server's `.env` plus `rest/oauth2-credential/callback`, because n8n
+   builds the redirect from that variable. 15678 rather than 5678 because
+   Windows often reserves 5678 for Hyper-V and refuses the tunnel with
+   "Permission denied". Google accepts plain `http` for `localhost` only.
 5. Copy the **Client ID** and **Client secret**.
 
 ### A2. Connect it in n8n
 
-Reach n8n first (`ssh -L 5678:127.0.0.1:5678 azureuser@<server>`, then
-`http://localhost:5678`).
+Reach n8n first (`ssh -L 15678:127.0.0.1:5678 azureuser@<server>`, then
+`http://localhost:15678`). The login is the n8n owner's email; `N8N_USER` and
+`N8N_PASSWORD` are ignored by n8n 1.x. If nobody knows the owner,
+`docker compose ... exec n8n n8n user-management:reset` and a restart bring
+back the setup screen with workflows and credentials intact.
 
 **Credentials → New → Gmail OAuth2 API.** Paste the client ID and secret, press
 **Connect my account**, and sign in **as `legal@dsn.org` itself** — not as an

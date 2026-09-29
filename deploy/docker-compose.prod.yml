@@ -39,11 +39,25 @@ services:
   # not published to the internet. Bound to the loopback, it is reached by an
   # SSH tunnel from whoever is editing a workflow:
   #
-  #   ssh -L 5678:127.0.0.1:5678 azureuser@<server>
+  #   ssh -L 15678:127.0.0.1:5678 azureuser@<server>
   #
   # That address is also what the Microsoft sign-in comes back to, so
-  # http://localhost:5678/rest/oauth2-credential/callback is the redirect URI
+  # http://localhost:15678/rest/oauth2-credential/callback is the redirect URI
   # registered on the Entra application and nothing else has to be exposed.
   n8n:
     ports: !override
       - "127.0.0.1:${DSNLAI_N8N_PORT:-5678}:5678"
+    environment:
+      # The address the editor is opened at, which is the tunnel's local end,
+      # not the server. n8n builds every OAuth redirect from it, so it has to
+      # match the redirect URI registered at Google or Microsoft exactly: a
+      # tunnel on 15678 with this left at 5678 signs in and then sends the
+      # browser to a port nothing is listening on.
+      N8N_EDITOR_BASE_URL: ${N8N_EDITOR_URL:-http://localhost:5678/}
+      WEBHOOK_URL: ${N8N_EDITOR_URL:-http://localhost:5678/}
+      # Refused rather than defaulted. n8n writes the first key it sees into
+      # its volume and will not start under any other, so a deployment that
+      # came up once on the placeholder is locked to a key that is in the
+      # repository.
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY in .env}
+      N8N_LOG_LEVEL: info

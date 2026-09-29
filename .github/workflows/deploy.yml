@@ -134,6 +134,14 @@ jobs:
             set -euo pipefail
             cd ${{ secrets.DEPLOY_PATH }}
 
+            # The images come from the registry but the compose files come
+            # from this checkout, so a deploy that only pulls images runs new
+            # code under old wiring. Fast-forward only: a checkout somebody
+            # edited by hand stops the deploy here rather than being
+            # overwritten.
+            git fetch --quiet origin main
+            git merge --ff-only origin/main
+
             COMPOSE="docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml"
 
             # The overlay reads IMAGE_TAG, and so does anything run by hand

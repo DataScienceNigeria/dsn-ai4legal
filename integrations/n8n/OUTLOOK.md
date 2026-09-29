@@ -93,11 +93,15 @@ In production n8n listens on the server's loopback only, since it holds the
 mailbox credential. From a workstation:
 
 ```bash
-ssh -L 5678:127.0.0.1:5678 azureuser@<server>
+ssh -L 15678:127.0.0.1:5678 azureuser@<server>
 ```
 
-Then open `http://localhost:5678`. On first visit n8n asks for an owner
+Then open `http://localhost:15678`. On first visit n8n asks for an owner
 account: use a real address and keep the password with the other secrets.
+`N8N_USER` and `N8N_PASSWORD` in `.env` are ignored by n8n 1.x, so a **Sign
+in** screen means an owner already exists and wants its email. If nobody knows
+it, `docker compose ... exec n8n n8n user-management:reset` and a restart bring
+back the setup screen with workflows and credentials intact.
 
 Locally it is `http://localhost:5678` directly, with n8n started on its own
 while the API runs on the host:
