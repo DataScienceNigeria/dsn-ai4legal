@@ -160,25 +160,25 @@ credential, save.
 
 What it does on each five-minute pass:
 
-1. **Which part of the mailbox** picks a date window. The whole mailbox is
-   read, read and unread, sent mail included, spam, trash and drafts left out.
-   It walks forwards from `EAI_MAIL_SINCE` (a year back when unset) in windows
-   of `EAI_MAIL_WINDOW_DAYS`, so years of history arrive over a few hours
-   rather than in one pass that runs out of memory.
-2. Once it reaches today, every pass re-reads the last
-   `EAI_MAIL_REFRESH_DAYS`. That is what keeps read, starred and labels
-   current: a message the platform already holds is not created again, only
-   its mailbox state brought up to date. Older mail keeps the state it had
-   when last read.
+1. **Which part of the mailbox** picks two date ranges. **Recent** is the last
+   `EAI_MAIL_REFRESH_DAYS`, every pass, so new mail appears within five
+   minutes, a manual Execute included, and read state and labels stay current
+   on the mail people are working on. **History** is one older window of
+   `EAI_MAIL_WINDOW_DAYS`, walking backwards from there towards
+   `EAI_MAIL_SINCE` (a year back when unset), so the archive fills in behind
+   the live mail. It stops when it reaches the start date.
+2. The whole mailbox is read, read and unread, sent mail included; spam,
+   trash and drafts are left out. A message the platform already holds is not
+   created again, only its mailbox state brought up to date.
 3. **Shape for the platform** hands over the text and HTML as received, the
    thread, the labels and the attachments. Small inline images are dropped as
    part of the body.
 4. **Move the cursor on** runs only when the platform accepted the batch, so a
-   failed pass reads the same window again.
+   failed pass reads the same history window again.
 
-Nothing in the mailbox is changed. The cursor is saved only on runs started by
-the schedule, so a manual **Execute** always starts from the beginning; the
-platform drops what it already holds, and it costs a re-read.
+Nothing in the mailbox is changed. The history cursor is saved only on runs
+started by the schedule, so a manual Execute re-reads the newest history
+window; the platform drops what it already holds.
 
 `gmail-mailbox-poll.json` is the older IMAP variant. Prefer this one.
 
@@ -211,7 +211,7 @@ unread makes no difference now. The hand-off node should answer:
 | `403 insufficientPermissions` | The scope. `gmail.readonly` is missing, or on route B the delegation lists a different scope string |
 | `401 unauthorized_client` (route B) | The delegation client ID does not match the service account's unique ID, or the impersonated address is wrong |
 | Mail from the wrong mailbox | Signed in as a delegate rather than as the account, or impersonating the wrong address |
-| No items, no error | Nothing in the window. A manual run reads the first window from `EAI_MAIL_SINCE`; test mail sent today appears once the walk has caught up, or set `EAI_MAIL_SINCE` to today for the test |
+| No items, no error | Nothing in either range. Mail from the last `EAI_MAIL_REFRESH_DAYS` should always appear; if it does not, check the credential is on **Read the mailbox** and that the node ran once per range |
 | `403` at the hand-off | The signature: `DSNLAI_WEBHOOK_SECRET` in n8n does not match `DSNLAI_SECRET_KEY` on the API, or the Code node could not read `$env` |
 | `422`, `These mailboxes are not approved` | Step 2c, or the address differs by a domain or a case |
 

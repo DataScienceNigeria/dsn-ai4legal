@@ -246,8 +246,14 @@ async def receive_mail(
             existing.thread_id = message.thread_id or existing.thread_id
             existing.mailbox_seen_at = now
             if existing.body_original is None:
+                # Ingested by the first connector, which read raw header
+                # lines ("Subject: Re: ...") and never split the quoted
+                # history. Rewritten once from the fresh read, then left alone.
                 fresh, quoted, original = readable(message.body, message.body_html)
                 existing.body, existing.body_quoted, existing.body_original = fresh, quoted, original
+                existing.subject = message.subject[:512]
+                existing.sender = message.sender
+                existing.direction = message.direction
             if message.attachments and not existing.attachments:
                 stored_files += _store_attachments(db, existing, message, existing.entity)
             updated += 1
