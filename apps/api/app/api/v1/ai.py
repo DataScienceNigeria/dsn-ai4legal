@@ -774,6 +774,12 @@ def classify(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> Com
         )
 
     record.classification_interaction_id = envelope.interaction_id
+    if envelope.refused:
+        # Said, not swallowed. Returning the message unchanged made a refusal
+        # look like a button that did nothing, and the reason is the one
+        # thing the person needs: usually that no model is configured.
+        db.commit()
+        raise Refused("Classification did not run.", [envelope.refusal_reason or ""])
     if not envelope.refused:
         output = envelope.output
         record.classification = fit(output.get("classification"), 32)
@@ -811,6 +817,9 @@ def extract(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> list
         ),
     )
     if envelope.refused:
+        # The interaction is part of the record whatever the outcome, and a
+        # raise rolls the session back, so it is committed first.
+        db.commit()
         raise Refused("Extraction did not run.", [envelope.refusal_reason or ""])
 
     created = []

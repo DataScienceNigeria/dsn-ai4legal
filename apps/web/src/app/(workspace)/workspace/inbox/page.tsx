@@ -22,7 +22,7 @@ import {
   Tabs,
   Textarea,
 } from "@/components/ui";
-import { api, view as openFile } from "@/lib/api";
+import { ApiError, api, view as openFile } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
 import type { Communication, ExtractedValue } from "@/lib/types";
 import { cn, formatDateTime, titleCase } from "@/lib/utils";
@@ -275,8 +275,6 @@ export default function Inbox() {
         </Notice>
       ) : null}
 
-      {error ? <Refusal title="That action was refused" reason={error.message} /> : null}
-
       <div className="grid gap-4 lg:gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <Card>
           <CardHeader
@@ -394,6 +392,15 @@ export default function Inbox() {
                 }
               />
               <CardBody className="space-y-3">
+                {/* Beside the buttons that caused it. Above the list it sat out
+                    of sight, and a refused Classify read as one that did nothing. */}
+                {error ? (
+                  <Refusal
+                    title="That did not run"
+                    reason={error.message}
+                    reasons={error instanceof ApiError ? error.reasons : undefined}
+                  />
+                ) : null}
                 <p className="whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm leading-relaxed [overflow-wrap:anywhere]">
                   {current.body}
                 </p>

@@ -1,0 +1,25 @@
+# Build on the server instead of pulling from GHCR. Layered after the production
+# overlay, so everything else it sets (n8n on the loopback, the required
+# encryption key, no Mailpit) still applies:
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml \
+#     -f deploy/docker-compose.build.yml build api web
+#
+# The web image inlines NEXT_PUBLIC_API_BASE_URL at build time, read from .env,
+# so it has to be the public address before building, not after.
+
+services:
+  api:
+    image: dsn-lai-api:server
+    build:
+      context: ./apps/api
+
+  worker:
+    image: dsn-lai-api:server
+
+  web:
+    image: dsn-lai-web:server
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?Set NEXT_PUBLIC_API_BASE_URL in .env}
