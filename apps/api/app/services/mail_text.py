@@ -78,7 +78,9 @@ def looks_like_html(text: str) -> bool:
 def tidy(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = IMAGE_PLACEHOLDER.sub("", text)
-    text = "\n".join(line.rstrip() for line in text.split("\n"))
+    # HTML mail keeps the indentation of its markup, so a paragraph arrives
+    # behind six tabs. Runs of spaces and tabs inside a line are one space.
+    text = "\n".join(re.sub(r"[ \t]+", " ", line).strip() for line in text.split("\n"))
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 

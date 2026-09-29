@@ -66,7 +66,7 @@ def openai(texts: list[str]) -> list[list[float]]:
 
     client = OpenAI(
         api_key=settings.openai_api_key,
-        base_url=settings.openai_base_url or None,
+        base_url=settings.openai_endpoint,
         timeout=settings.dsnlai_ai_timeout_seconds,
         max_retries=2,
     )

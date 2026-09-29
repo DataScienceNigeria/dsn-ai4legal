@@ -77,7 +77,7 @@ function Attachments({ request }: Readonly<{ request: RequestDetail }>) {
             <Button
               size="sm"
               variant="ghost"
-              disabled={save.busy}
+              disabled={save.busy} loading={save.busy}
               onClick={() => void save.run(file.id, file.filename)}
             >
               Save

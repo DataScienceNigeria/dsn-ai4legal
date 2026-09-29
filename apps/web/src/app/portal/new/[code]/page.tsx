@@ -405,7 +405,7 @@ export default function NewRequest() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <Button
           variant="primary"
-          disabled={submit.busy}
+          disabled={submit.busy} loading={submit.busy}
           onClick={() => void submit.run()}
           className="w-full sm:w-auto"
         >
@@ -416,7 +416,7 @@ export default function NewRequest() {
             : "Submit the request"}
         </Button>
         <Button
-          disabled={submit.busy}
+          disabled={submit.busy} loading={submit.busy}
           onClick={() => setAbandoning(true)}
           className="w-full sm:w-auto"
         >

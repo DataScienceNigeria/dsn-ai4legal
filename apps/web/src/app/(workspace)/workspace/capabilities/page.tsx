@@ -139,7 +139,7 @@ function Evaluation({
             ) : null}
             <Button
               variant="primary"
-              disabled={measure.busy || (set !== null && !set.measurable)}
+              disabled={measure.busy || (set !== null && !set.measurable)} loading={measure.busy}
               onClick={() => void measure.run()}
             >
               {measure.busy ? "Running the set" : "Run the golden set"}
@@ -597,7 +597,7 @@ function KillSwitch({
     <Button
       size="sm"
       variant="destructive"
-      disabled={busy}
+      loading={busy}
       onClick={() =>
         onToggle(capability.code, "disabled", "Disabled by the administrator.")
       }

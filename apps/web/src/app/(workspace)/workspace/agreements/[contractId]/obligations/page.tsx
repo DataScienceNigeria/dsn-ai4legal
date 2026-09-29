@@ -73,7 +73,7 @@ export default function ContractObligations() {
               <Button
                 size="sm"
                 variant={held.length ? "default" : "primary"}
-                disabled={extract.busy}
+                disabled={extract.busy} loading={extract.busy}
                 onClick={() => void extract.run()}
               >
                 {held.length ? "Extract again" : "Extract the obligations"}
@@ -234,7 +234,7 @@ function RenewalDecision({
             placeholder="Why, in a line"
             className="min-w-[16rem] flex-1"
           />
-          <Button variant="primary" disabled={decide.busy} onClick={() => void decide.run()}>
+          <Button variant="primary" disabled={decide.busy} loading={decide.busy} onClick={() => void decide.run()}>
             Record it
           </Button>
         </div>

@@ -195,7 +195,7 @@ function Close({
         footer={
           <>
             <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="primary" disabled={close.busy} onClick={() => void close.run()}>
+            <Button variant="primary" disabled={close.busy} loading={close.busy} onClick={() => void close.run()}>
               Close it
             </Button>
           </>
@@ -296,7 +296,7 @@ export default function ContractClosure() {
               because nobody is chasing it.
             </Notice>
             {canAct ? (
-              <Button variant="primary" disabled={start.busy} onClick={() => void start.run()}>
+              <Button variant="primary" disabled={start.busy} loading={start.busy} onClick={() => void start.run()}>
                 Open closure
               </Button>
             ) : (

@@ -56,16 +56,25 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "default" | "primary" | "dark" | "ghost" | "destructive";
   size?: "sm" | "md";
   ref?: React.Ref<HTMLButtonElement>;
+  /* The action this button started is still running. It spins and stops
+     taking clicks, so a model call that takes twenty seconds reads as work in
+     progress rather than a button that did nothing and wants pressing again. */
+  loading?: boolean;
 };
 
 export function Button({
   className,
   variant = "default",
   size = "md",
+  loading = false,
+  disabled,
+  children,
   ...props
 }: ButtonProps) {
   return (
     <button
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
       className={cn(
         "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
@@ -79,10 +88,19 @@ export function Button({
         variant === "ghost" && "border-transparent bg-transparent hover:bg-muted",
         variant === "destructive" &&
           "border-destructive bg-destructive text-destructive-foreground hover:brightness-110",
+        loading && "disabled:cursor-progress disabled:opacity-80",
         className,
       )}
       {...props}
-    />
+    >
+      {loading ? (
+        <span
+          aria-hidden
+          className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent"
+        />
+      ) : null}
+      {children}
+    </button>
   );
 }
 
@@ -1098,7 +1116,8 @@ export function Confirm({
           </Button>
           <Button
             variant={destructive ? "destructive" : "primary"}
-            disabled={blocked || busy}
+            disabled={blocked}
+            loading={busy}
             onClick={() => onConfirm(reason.trim())}
           >
             {confirmLabel}

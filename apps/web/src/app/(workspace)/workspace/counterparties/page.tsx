@@ -612,7 +612,7 @@ function RenewalCell({
 }>) {
   if (!outcome) {
     return (
-      <Button size="sm" disabled={busy} onClick={onCheck}>
+      <Button size="sm" loading={busy} onClick={onCheck}>
         Check renewal risk
       </Button>
     );

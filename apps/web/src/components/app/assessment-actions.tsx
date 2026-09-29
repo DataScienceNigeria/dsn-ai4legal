@@ -110,7 +110,7 @@ function CompleteStage({
         footer={
           <>
             <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="primary" disabled={complete.busy} onClick={() => void complete.run()}>
+            <Button variant="primary" disabled={complete.busy} loading={complete.busy} onClick={() => void complete.run()}>
               Complete and route on
             </Button>
           </>

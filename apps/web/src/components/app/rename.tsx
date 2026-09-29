@@ -98,7 +98,7 @@ export function Rename({
             <Button onClick={() => setOpen(false)}>Cancel</Button>
             <Button
               variant="primary"
-              disabled={rename.busy || unchanged || tooShort}
+              disabled={rename.busy || unchanged || tooShort} loading={rename.busy}
               onClick={() => void rename.run()}
             >
               {rename.busy ? "Saving" : "Save the name"}

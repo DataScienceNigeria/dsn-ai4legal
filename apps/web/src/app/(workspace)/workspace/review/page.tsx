@@ -213,7 +213,7 @@ export default function Review() {
                 >
                   {mode === "editor" ? "Back to the list" : "Open the paper in the editor"}
                 </Button>
-                <Button disabled={send.busy} onClick={() => void send.run()}>
+                <Button disabled={send.busy} loading={send.busy} onClick={() => void send.run()}>
                   Send it out marked up
                 </Button>
               </>
@@ -287,7 +287,7 @@ export default function Review() {
                 title={paper.name}
                 subtitle={`Version ${paper.version}. Every save is a new version, so the draft a round was raised against stays as it was.`}
                 actions={
-                  <Button size="sm" disabled={rereview.busy} onClick={() => void rereview.run()}>
+                  <Button size="sm" disabled={rereview.busy} loading={rereview.busy} onClick={() => void rereview.run()}>
                     Re-read it
                   </Button>
                 }
@@ -504,7 +504,7 @@ export default function Review() {
                     {edited ? (
                       <Button
                         variant="primary"
-                        disabled={decide.busy}
+                        disabled={decide.busy} loading={decide.busy}
                         onClick={() => void decide.run(current.id, "edited", draft)}
                       >
                         Accept with my edit
@@ -512,7 +512,7 @@ export default function Review() {
                     ) : (
                       <Button
                         variant="primary"
-                        disabled={decide.busy}
+                        disabled={decide.busy} loading={decide.busy}
                         onClick={() => void decide.run(current.id, "accepted")}
                       >
                         Accept the suggestion
@@ -520,7 +520,7 @@ export default function Review() {
                     )}
                     <Button
                       variant="destructive"
-                      disabled={decide.busy}
+                      disabled={decide.busy} loading={decide.busy}
                       onClick={() => void decide.run(current.id, "rejected")}
                     >
                       Reject
@@ -558,10 +558,10 @@ export default function Review() {
           what it still says is open, and anything new is what they changed while nobody was
           looking.
           <div className="mt-2.5 flex flex-wrap gap-2">
-            <Button size="sm" variant="primary" disabled={send.busy} onClick={() => void send.run()}>
+            <Button size="sm" variant="primary" disabled={send.busy} loading={send.busy} onClick={() => void send.run()}>
               Send it out marked up
             </Button>
-            <Button size="sm" disabled={rereview.busy} onClick={() => void rereview.run()}>
+            <Button size="sm" disabled={rereview.busy} loading={rereview.busy} onClick={() => void rereview.run()}>
               Re-read their paper
             </Button>
           </div>

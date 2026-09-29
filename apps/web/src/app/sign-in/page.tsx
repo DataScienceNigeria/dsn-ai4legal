@@ -134,7 +134,7 @@ export default function SignIn() {
                 </div>
               ) : null}
 
-              <Button type="submit" variant="primary" disabled={busy} className="w-full">
+              <Button type="submit" variant="primary" loading={busy} className="w-full">
                 {busy ? "Signing in" : "Sign in"}
               </Button>
             </form>

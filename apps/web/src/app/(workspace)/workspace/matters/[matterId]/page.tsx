@@ -384,7 +384,7 @@ function ApprovalDecision({
             <Button onClick={() => setOpen(false)}>Cancel</Button>
             <Button
               variant={decision === "rejected" ? "destructive" : "primary"}
-              disabled={decide.busy || (decision === "rejected" && !comments.trim())}
+              disabled={decide.busy || (decision === "rejected" && !comments.trim())} loading={decide.busy}
               onClick={() => void decide.run()}
             >
               Record the decision
@@ -615,7 +615,7 @@ function InteractionDecision({
         footer={
           <>
             <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="primary" disabled={decide.busy} onClick={() => void decide.run()}>
+            <Button variant="primary" disabled={decide.busy} loading={decide.busy} onClick={() => void decide.run()}>
               Record it
             </Button>
           </>
@@ -919,7 +919,7 @@ export default function MatterDetail() {
             </Button>
             <Button
               variant="primary"
-              disabled={transition.busy}
+              disabled={transition.busy} loading={transition.busy}
               onClick={() => void transition.run()}
             >
               {transition.busy ? "Recording" : "Record the move"}

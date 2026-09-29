@@ -759,13 +759,25 @@ def classify(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> Com
     if record is None:
         raise NotFound(MESSAGE_NOT_FOUND)
 
+    # The request types a matter can be opened as. Given the list, the model
+    # proposes one of them; without it, it invented labels such as "marketing
+    # communication" that no matter could be opened under.
+    from app.db.models.intake import RequestType
+
+    types = db.execute(select(RequestType).order_by(RequestType.sort_order)).scalars().all()
+    menu = "\n".join(f"- {t.code}: {t.business_label}" for t in types)
+
     envelope = invoke(
         db,
         _call(
             "inbox_classification",
             entity=record.entity,
             data_class=DataClass.CONFIDENTIAL,
-            user_content=("Classify this message and propose a next step for a person to confirm."),
+            user_content=(
+                "Classify this message and propose a next step for a person to confirm.\n\n"
+                "For proposed_matter_type, give exactly one of these codes, or "
+                "something_else when none fits or no matter is needed:\n" + menu
+            ),
             untrusted=[(f"email from {record.sender}", f"{record.subject}\n\n{record.body}")],
             subject=_message_source(record),
             user_id=uuid.UUID(principal.user_id),
@@ -840,12 +852,31 @@ def extract(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> list
         db.commit()
         raise Refused("Extraction did not run.", [envelope.refusal_reason or ""])
 
+    # Running it again replaces what nobody has reviewed yet and leaves every
+    # decision alone. Each run used to add a full second set beside the first,
+    # so the message carried every fact twice and a deadline was escalated
+    # once per run. A fact already decided is not proposed again either.
+    previous = db.execute(
+        select(ExtractedValue).where(ExtractedValue.communication_id == record.id)
+    ).scalars().all()
+    decided = set()
+    for old in previous:
+        if old.decision == "pending":
+            db.delete(old)
+        else:
+            decided.add((old.field_name, (old.value or "").strip().lower()))
+    db.flush()
+
     created = []
     for item in envelope.output.get("values", []):
+        field = fit(item.get("field_name"), 64) or "party"
+        text = without_citations(item.get("value")) or ""
+        if (field, text.strip().lower()) in decided:
+            continue
         value = ExtractedValue(
             communication_id=record.id,
-            field_name=fit(item.get("field_name"), 64) or "party",
-            value=without_citations(item.get("value")) or "",
+            field_name=field,
+            value=text,
             source_sentence=item.get("source_sentence", ""),
             confidence=item.get("confidence"),
         )

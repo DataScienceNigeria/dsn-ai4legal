@@ -24,7 +24,7 @@ import {
 } from "@/components/ui";
 import { ApiError, api, view as openFile } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
-import type { Communication, ExtractedValue } from "@/lib/types";
+import type { Communication, ExtractedValue, RequestType } from "@/lib/types";
 import { cn, formatDateTime, titleCase } from "@/lib/utils";
 
 /* The mailbox's own state, as the connector last saw it. Separate from the
@@ -87,7 +87,7 @@ function CorrectClassification({
         footer={
           <>
             <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="primary" disabled={correct.busy} onClick={() => void correct.run()}>
+            <Button variant="primary" disabled={correct.busy} loading={correct.busy} onClick={() => void correct.run()}>
               Record the correction
             </Button>
           </>
@@ -145,15 +145,15 @@ function ExtractedValueRow({
               <Button
                 size="sm"
                 variant="primary"
-                disabled={decide.busy}
+                disabled={decide.busy} loading={decide.busy}
                 onClick={() => void decide.run("confirmed")}
               >
                 Confirm
               </Button>
-              <Button size="sm" disabled={decide.busy} onClick={() => setCorrecting(true)}>
+              <Button size="sm" disabled={decide.busy} loading={decide.busy} onClick={() => setCorrecting(true)}>
                 Correct
               </Button>
-              <Button size="sm" disabled={decide.busy} onClick={() => void decide.run("rejected")}>
+              <Button size="sm" disabled={decide.busy} loading={decide.busy} onClick={() => void decide.run("rejected")}>
                 Reject
               </Button>
             </>
@@ -181,7 +181,7 @@ function ExtractedValueRow({
             <Button onClick={() => setCorrecting(false)}>Cancel</Button>
             <Button
               variant="primary"
-              disabled={decide.busy}
+              disabled={decide.busy} loading={decide.busy}
               onClick={() => void decide.run("corrected", corrected)}
             >
               Save the correction
@@ -195,6 +195,50 @@ function ExtractedValueRow({
       </Modal>
     </div>
   );
+}
+
+/*
+  Mail text with its links folded. A tracking link runs to four hundred
+  characters and, printed in full, took the whole message. Each is shown as
+  its host and the start of its path, opens in a new tab with no referrer, and
+  keeps the full address on hover so nothing about where it goes is hidden.
+*/
+const LINK = /https?:\/\/[^\s<>"')\]]+/g;
+
+function shortLink(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, "");
+    const path = parsed.pathname === "/" ? "" : parsed.pathname;
+    const label = host + path;
+    return label.length > 40 ? `${label.slice(0, 40)}…` : label;
+  } catch {
+    return url.length > 40 ? `${url.slice(0, 40)}…` : url;
+  }
+}
+
+function MailText({ text }: Readonly<{ text: string }>) {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(LINK)) {
+    const start = match.index ?? 0;
+    if (start > last) parts.push(text.slice(last, start));
+    parts.push(
+      <a
+        key={start}
+        href={match[0]}
+        title={match[0]}
+        target="_blank"
+        rel="noopener noreferrer nofollow"
+        className="text-brand underline decoration-dotted underline-offset-2"
+      >
+        {shortLink(match[0])}
+      </a>,
+    );
+    last = start + match[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
 }
 
 export default function Inbox() {
@@ -228,13 +272,44 @@ export default function Inbox() {
     messages.reload();
   });
 
+  /*
+    What the matter will be opened as, shown and changeable before it is
+    created. The model proposes the type as free text, so it is matched to a
+    real request type here; one it cannot be matched to starts on "something
+    else" instead of failing at the moment of confirming.
+  */
+  const requestTypes = useApi<RequestType[]>("/requests/types");
+  const [matterType, setMatterType] = React.useState("");
+  const [matterPriority, setMatterPriority] = React.useState("normal");
+
+  const proposedTypeCode = React.useMemo(() => {
+    const types = requestTypes.data ?? [];
+    const proposal = current?.proposed_matter_type?.trim().toLowerCase();
+    if (!proposal) return null;
+    const match = types.find(
+      (type) =>
+        type.code.toLowerCase() === proposal ||
+        type.business_label.toLowerCase() === proposal ||
+        type.agreement_type.toLowerCase() === proposal,
+    );
+    return match?.code ?? null;
+  }, [requestTypes.data, current?.proposed_matter_type]);
+
+  React.useEffect(() => {
+    const types = requestTypes.data ?? [];
+    const fallback =
+      types.find((type) => type.code === "something_else")?.code ?? types[0]?.code ?? "";
+    setMatterType(proposedTypeCode ?? fallback);
+    setMatterPriority(current?.proposed_priority ?? "normal");
+  }, [current?.id, current?.proposed_priority, proposedTypeCode, requestTypes.data]);
+
   const confirm = useAction(async (message: Communication) => {
     await api(`/ai/inbox/${message.id}/confirm`, {
       method: "POST",
       body: {
-        request_type_code: message.proposed_matter_type ?? "something_else",
+        request_type_code: matterType,
         entity: message.entity,
-        priority: message.proposed_priority ?? "normal",
+        priority: matterPriority,
         send_acknowledgment: false,
       },
     });
@@ -381,11 +456,21 @@ export default function Inbox() {
                 subtitle={`${current.sender}, received ${formatDateTime(current.received_at)}`}
                 actions={
                   <>
-                    <Button size="sm" disabled={busy} onClick={() => void classify.run(current.id)}>
-                      Classify
+                    <Button
+                      size="sm"
+                      disabled={busy}
+                      loading={classify.busy}
+                      onClick={() => void classify.run(current.id)}
+                    >
+                      {classify.busy ? "Classifying" : "Classify"}
                     </Button>
-                    <Button size="sm" disabled={busy} onClick={() => void extract.run(current.id)}>
-                      Extract facts
+                    <Button
+                      size="sm"
+                      disabled={busy}
+                      loading={extract.busy}
+                      onClick={() => void extract.run(current.id)}
+                    >
+                      {extract.busy ? "Extracting" : "Extract facts"}
                     </Button>
                     <CorrectClassification message={current} onDone={() => messages.reload()} />
                   </>
@@ -402,7 +487,7 @@ export default function Inbox() {
                   />
                 ) : null}
                 <p className="whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm leading-relaxed [overflow-wrap:anywhere]">
-                  {current.body}
+                  <MailText text={current.body} />
                 </p>
 
                 {/*
@@ -422,7 +507,7 @@ export default function Inbox() {
                     </button>
                     {showQuoted ? (
                       <p className="whitespace-pre-wrap border-t p-3 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
-                        {current.body_quoted}
+                        <MailText text={current.body_quoted} />
                       </p>
                     ) : null}
                   </div>
@@ -520,18 +605,69 @@ export default function Inbox() {
             ) : null}
 
             {!current.handled ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="primary"
-                  disabled={busy}
-                  onClick={() => void confirm.run(current)}
-                >
-                  Create a matter from this
-                </Button>
-                <span className="text-xs text-muted-foreground">
-                  No matter exists, and nothing has been sent, until you confirm here.
-                </span>
-              </div>
+              <Card>
+                <CardHeader
+                  title="Open a matter"
+                  subtitle={
+                    current.classification
+                      ? "Proposed from the classification. Change either before creating."
+                      : "Not classified yet. Classify for a proposal, or choose here."
+                  }
+                />
+                <CardBody className="space-y-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field
+                      label="Request type"
+                      hint={
+                        current.proposed_matter_type && !proposedTypeCode
+                          ? `Proposed "${current.proposed_matter_type}", which is not a request type here.`
+                          : proposedTypeCode
+                            ? "As proposed."
+                            : undefined
+                      }
+                    >
+                      <Select
+                        value={matterType}
+                        onChange={(event) => setMatterType(event.target.value)}
+                      >
+                        {(requestTypes.data ?? []).map((type) => (
+                          <option key={type.code} value={type.code}>
+                            {type.business_label}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field
+                      label="Priority"
+                      hint={current.proposed_priority ? "As proposed." : undefined}
+                    >
+                      <Select
+                        value={matterPriority}
+                        onChange={(event) => setMatterPriority(event.target.value)}
+                      >
+                        {["low", "normal", "high", "urgent"].map((value) => (
+                          <option key={value} value={value}>
+                            {titleCase(value)}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="primary"
+                      disabled={busy || !matterType}
+                      loading={confirm.busy}
+                      onClick={() => void confirm.run(current)}
+                    >
+                      Create a matter from this
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      No matter exists, and nothing has been sent, until you confirm here.
+                    </span>
+                  </div>
+                </CardBody>
+              </Card>
             ) : (
               <Notice tone="good" title="Handled">
                 A matter was created from this correspondence.

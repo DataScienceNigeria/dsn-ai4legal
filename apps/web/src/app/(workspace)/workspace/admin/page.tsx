@@ -174,7 +174,7 @@ function Retention() {
                         <p className="text-xs text-muted-foreground">{policy.hold_reason}</p>
                         <Button
                           size="sm"
-                          disabled={toggle.busy}
+                          disabled={toggle.busy} loading={toggle.busy}
                           onClick={() => toggle.run(policy.record_class, false)}
                         >
                           Lift the hold
@@ -197,7 +197,7 @@ function Retention() {
                         <Button
                           size="sm"
                           variant="destructive"
-                          disabled={toggle.busy || (reason[policy.record_class] ?? "") === ""}
+                          disabled={toggle.busy || (reason[policy.record_class] ?? "") === ""} loading={toggle.busy}
                           onClick={() => toggle.run(policy.record_class, true)}
                         >
                           Place a hold
@@ -300,7 +300,7 @@ function Boundary() {
             </p>
             <Button
               variant="primary"
-              disabled={requestExport.busy || form.reason.trim() === ""}
+              disabled={requestExport.busy || form.reason.trim() === ""} loading={requestExport.busy}
               onClick={() => requestExport.run()}
             >
               {requestExport.busy ? "Requesting" : "Request the export"}
@@ -390,14 +390,14 @@ function Boundary() {
                         <Button
                           size="sm"
                           variant="primary"
-                          disabled={decideDeletion.busy}
+                          disabled={decideDeletion.busy} loading={decideDeletion.busy}
                           onClick={() => decideDeletion.run(row.id, true)}
                         >
                           Approve
                         </Button>
                         <Button
                           size="sm"
-                          disabled={decideDeletion.busy}
+                          disabled={decideDeletion.busy} loading={decideDeletion.busy}
                           onClick={() => decideDeletion.run(row.id, false)}
                         >
                           Refuse
@@ -407,7 +407,7 @@ function Boundary() {
                     {row.status === "approved" && row.certificate_reference === null ? (
                       <Button
                         size="sm"
-                        disabled={issueCertificate.busy}
+                        disabled={issueCertificate.busy} loading={issueCertificate.busy}
                         onClick={() => issueCertificate.run(row.id)}
                       >
                         Issue certificate
@@ -1431,7 +1431,7 @@ function Audit() {
               />
             </>
           ) : null}
-          <Button disabled={save.busy} onClick={() => void save.run()}>
+          <Button disabled={save.busy} loading={save.busy} onClick={() => void save.run()}>
             <Icon name="archive" className="h-4 w-4" />
             {save.busy ? "Preparing" : "Export CSV"}
           </Button>
@@ -1742,7 +1742,7 @@ function QualitySamples() {
         footer={
           <>
             <Button onClick={() => setReviewing(null)}>Cancel</Button>
-            <Button variant="primary" disabled={review.busy} onClick={() => void review.run(reviewing!.id)}>
+            <Button variant="primary" disabled={review.busy} loading={review.busy} onClick={() => void review.run(reviewing!.id)}>
               Record the review
             </Button>
           </>

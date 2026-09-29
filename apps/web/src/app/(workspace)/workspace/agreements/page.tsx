@@ -140,7 +140,7 @@ function SignedFile({ contractId }: Readonly<{ contractId: string }>) {
   const open = useAction(async () => view(`/contracts/${contractId}/original`));
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <Button size="sm" disabled={open.busy} onClick={() => void open.run()}>
+      <Button size="sm" disabled={open.busy} loading={open.busy} onClick={() => void open.run()}>
         {open.busy ? "Opening" : "Open the signed file"}
       </Button>
       {open.error ? <span className="text-xs text-destructive">{open.error.message}</span> : null}
@@ -176,7 +176,7 @@ function RenewalDialog({
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={open.busy} onClick={() => void open.run()}>
+          <Button variant="primary" disabled={open.busy} loading={open.busy} onClick={() => void open.run()}>
             Open the task
           </Button>
         </>

@@ -432,13 +432,19 @@ def _watch_reasons(session, message, horizon, silence_days: int, now, waiting_si
 
     reasons: list[str] = []
 
+    # A person's decision on the value outranks the model's reading of it. A
+    # rejected deadline was escalated anyway, and a corrected one was escalated
+    # on the date the model got wrong. One not yet reviewed still counts: an
+    # unread deadline is the case this sweep exists for.
     for value in session.execute(
         select(ExtractedValue).where(
             ExtractedValue.communication_id == message.id,
             ExtractedValue.field_name.in_(["deadline", "date"]),
+            ExtractedValue.decision != "rejected",
         )
     ).scalars():
-        due = _as_date(value.value)
+        stated = value.corrected_value if value.decision == "corrected" else value.value
+        due = _as_date(stated or "")
         if due and due <= horizon:
             reasons.append(f"An extracted deadline falls on {due}.")
 

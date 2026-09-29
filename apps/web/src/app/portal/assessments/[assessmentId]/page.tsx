@@ -144,7 +144,7 @@ export default function PortalAssessment() {
               <Button
                 size="sm"
                 variant="primary"
-                disabled={submit.busy || outstanding.length > 0}
+                disabled={submit.busy || outstanding.length > 0} loading={submit.busy}
                 onClick={() => void submit.run()}
                 title={
                   outstanding.length

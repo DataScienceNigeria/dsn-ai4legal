@@ -71,7 +71,7 @@ export function EvidenceField({
               if (chosen) void send.run(chosen);
             }}
           />
-          <Button size="sm" disabled={send.busy} onClick={() => chooser.current?.click()}>
+          <Button size="sm" disabled={send.busy} loading={send.busy} onClick={() => chooser.current?.click()}>
             {send.busy ? "Scanning and storing" : "Attach a file"}
           </Button>
           {value.documentId && name ? (

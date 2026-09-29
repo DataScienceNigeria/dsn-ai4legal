@@ -227,7 +227,7 @@ export default function TriageDetail() {
             <Button
               variant="primary"
               onClick={() => void accept.run()}
-              disabled={accept.busy || (tierChanged && !reason.trim())}
+              disabled={accept.busy || (tierChanged && !reason.trim())} loading={accept.busy}
             >
               {accept.busy ? "Creating" : "Accept and create matter"}
             </Button>

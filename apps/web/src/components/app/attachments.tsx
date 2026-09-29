@@ -46,7 +46,7 @@ export function Attachments({ requestId }: Readonly<{ requestId: string }>) {
                 event.target.value = "";
               }}
             />
-            <Button variant="primary" disabled={send.busy} onClick={() => input.current?.click()}>
+            <Button variant="primary" disabled={send.busy} loading={send.busy} onClick={() => input.current?.click()}>
               {send.busy ? "Uploading" : "Attach a file"}
             </Button>
           </>

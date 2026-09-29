@@ -220,7 +220,7 @@ export default function RegisterEntry() {
 
       <div className="flex flex-wrap items-center gap-3">
         {canEdit ? (
-          <Button variant="primary" disabled={save.busy} onClick={() => void save.run()}>
+          <Button variant="primary" disabled={save.busy} loading={save.busy} onClick={() => void save.run()}>
             Record it
           </Button>
         ) : (

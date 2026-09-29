@@ -384,7 +384,7 @@ function PaperDialog({
               <Button
                 key={attachment.id}
                 className="w-full justify-start"
-                disabled={adopt.busy}
+                disabled={adopt.busy} loading={adopt.busy}
                 onClick={() => void adopt.run(attachment.id)}
               >
                 {attachment.filename}

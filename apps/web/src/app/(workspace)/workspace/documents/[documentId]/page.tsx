@@ -136,10 +136,10 @@ export default function DocumentScreen() {
             <Button variant={showEditor ? "default" : "primary"} onClick={() => setShowEditor((v) => !v)}>
               {showEditor ? "Close the editor" : "Open in the editor"}
             </Button>
-            <Button disabled={save.busy} onClick={() => void save.run(document.name)}>
+            <Button disabled={save.busy} loading={save.busy} onClick={() => void save.run(document.name)}>
               Download
             </Button>
-            <Button disabled={verify.busy} onClick={() => void verify.run(document.content_hash)}>
+            <Button disabled={verify.busy} loading={verify.busy} onClick={() => void verify.run(document.content_hash)}>
               Verify the hash
             </Button>
           </>
@@ -264,7 +264,7 @@ export default function DocumentScreen() {
                     <Pill tone="good">Nothing outstanding</Pill>
                   )}
                   {document.immutable ? null : (
-                    <Button size="sm" disabled={recheck.busy} onClick={() => void recheck.run()}>
+                    <Button size="sm" disabled={recheck.busy} loading={recheck.busy} onClick={() => void recheck.run()}>
                       {recheck.busy ? "Checking" : "Run again"}
                     </Button>
                   )}

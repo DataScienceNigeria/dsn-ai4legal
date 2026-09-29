@@ -146,7 +146,7 @@ export function MfaEnrolment() {
           <>
             <Button onClick={() => setOpen(false)}>Cancel</Button>
             <Button
-              disabled={start.busy}
+              disabled={start.busy} loading={start.busy}
               onClick={() => void start.run(true)}
               title="Issues a new secret. Delete the old entry from your authenticator first."
             >

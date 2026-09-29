@@ -96,7 +96,7 @@ function EditBaseline({ row, onSaved }: Readonly<{ row: KpiRow; onSaved: () => v
         footer={
           <>
             <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="primary" disabled={save.busy} onClick={() => void save.run()}>
+            <Button variant="primary" disabled={save.busy} loading={save.busy} onClick={() => void save.run()}>
               Record it
             </Button>
           </>

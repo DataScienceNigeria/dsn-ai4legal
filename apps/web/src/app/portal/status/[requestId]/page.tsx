@@ -97,7 +97,7 @@ export default function ReadDraft() {
             <Button
               size="sm"
               variant="primary"
-              disabled={decide.busy}
+              disabled={decide.busy} loading={decide.busy}
               onClick={() => void decide.run("approved")}
             >
               {decide.busy ? "Confirming" : "This is what we asked for"}

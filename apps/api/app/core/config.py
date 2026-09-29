@@ -15,11 +15,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 #: relative path meant each of those read a different file, or none. A local
 #: apps/api/.env is still read after it and still wins, which is what makes a
 #: per-checkout override possible without a second copy of everything.
+#:
+#: The root is the directory holding docker-compose.yml, not the first one
+#: holding a .env: apps/api/.env is met first on the way up, so taking it read
+#: the override twice and the repository's file never, and every setting only
+#: the root carried (the MFA switch among them) fell back to its default.
 _REPO_ROOT_ENV = next(
     (
         parent / ".env"
         for parent in Path(__file__).resolve().parents
-        if (parent / ".env").is_file()
+        if (parent / "docker-compose.yml").is_file()
     ),
     Path(".env"),
 )
@@ -150,6 +155,17 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     openai_base_url: str = ""
+
+    @property
+    def openai_endpoint(self) -> str:
+        """Where OpenAI calls go, never empty.
+
+        Passing None tells the client library to read OPENAI_BASE_URL itself,
+        and it takes a variable that is set but empty as the address: every
+        call then failed before leaving the host, reported as "could not be
+        reached". An empty setting means the public endpoint, said here once.
+        """
+        return self.openai_base_url.strip() or "https://api.openai.com/v1"
     dsnlai_ai_default_model: str = "gpt-5"
     dsnlai_ai_local_base_url: str = ""
     dsnlai_ai_local_model: str = "local-open-weights"

@@ -160,7 +160,7 @@ function ImportTemplate() {
             />
             <Button
               variant="primary"
-              disabled={read.busy}
+              disabled={read.busy} loading={read.busy}
               onClick={() => input.current?.click()}
             >
               {read.busy ? "Reading the document" : "Choose a .docx"}

@@ -8,6 +8,11 @@ where the act is deliberate and leaves an audit row like every other change.
     python -m app.mailbox legal@dsn.org --entity DSN
     python -m app.mailbox legal@dsn.org --off
     python -m app.mailbox --list
+    python -m app.mailbox --reparse
+
+--reparse rewrites the readable body of every stored message from the text as
+received, for mail ingested before the parser existed or before a change to
+it. The text as received is never touched.
 
 It lives in the package rather than in scripts/ because the image carries only
 apps/api, and approving the mailbox is something a deployment has to do.
@@ -20,7 +25,8 @@ import argparse
 from sqlalchemy import select
 
 from app.core import audit
-from app.db.models.governance import Mailbox
+from app.db.models.governance import Communication, Mailbox
+from app.services.mail_text import readable
 from app.db.session import owner_session
 
 
@@ -31,9 +37,14 @@ def main() -> int:
     parser.add_argument("--provider", default="microsoft_graph")
     parser.add_argument("--off", action="store_true", help="Deactivate rather than approve.")
     parser.add_argument("--list", action="store_true", help="Show the list and stop.")
+    parser.add_argument(
+        "--reparse", action="store_true", help="Rewrite every stored message's readable body."
+    )
     args = parser.parse_args()
 
     with owner_session() as session:
+        if args.reparse:
+            return reparse(session)
         if args.list or not args.address:
             rows = session.execute(select(Mailbox).order_by(Mailbox.address)).scalars().all()
             if not rows:
@@ -75,6 +86,34 @@ def main() -> int:
         )
         session.commit()
         print(f"{address} is {'off' if args.off else 'approved for ' + args.entity}.")
+    return 0
+
+
+def reparse(session) -> int:
+    """Readable bodies again, from what was received.
+
+    A row from before the parser holds the raw text in ``body`` and nothing in
+    ``body_original``; that raw text becomes the original here, once, so the
+    record of what arrived is kept before the readable version replaces it.
+    """
+    changed = 0
+    for record in session.execute(select(Communication)).scalars():
+        if record.body_original is None:
+            record.body_original = record.body
+        fresh, quoted, _ = readable(record.body_original, None)
+        if (fresh, quoted) != (record.body, record.body_quoted):
+            record.body, record.body_quoted = fresh, quoted
+            changed += 1
+    audit.record(
+        session,
+        action="mail_bodies_reparsed",
+        object_type="communication",
+        object_id="all",
+        actor_label="app.mailbox",
+        after_state={"changed": changed},
+    )
+    session.commit()
+    print(f"{changed} message bodies rewritten. The text as received is unchanged.")
     return 0
 
 
