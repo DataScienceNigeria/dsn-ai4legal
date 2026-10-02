@@ -897,8 +897,15 @@ def extract(communication_id: uuid.UUID, db: Db, principal: CurrentUser) -> list
 def decide_extracted(
     value_id: uuid.UUID, payload: ExtractionDecision, db: Db, principal: CurrentUser
 ) -> Ack:
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+
+    # The fact is reached through its message, the same way the attachment is.
+    # extracted_value is readable across entities, so its own identifier alone
+    # would let a decision land on another organisation's correspondence; the
+    # message is entity-scoped, and not seeing it means not deciding on it.
     value = db.get(ExtractedValue, value_id)
-    if value is None:
+    message = db.get(Communication, value.communication_id) if value else None
+    if value is None or message is None:
         raise NotFound("That extracted value was not found.")
 
     value.decision = payload.decision

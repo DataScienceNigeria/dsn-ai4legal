@@ -59,3 +59,5 @@ DSN_Guide_to_Engaging_Legal_Team_and_Contract_Management_Workflow.docx
 
 # Documents held by the local storage backend. Signed agreements, never committed.
 /storage/
+apps/api/celerybeat-schedule
+apps/api/celerybeat-schedule

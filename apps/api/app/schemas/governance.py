@@ -65,7 +65,7 @@ class CorrectClassification(BaseModel):
 
 
 class ExtractionDecision(BaseModel):
-    decision: str
+    decision: str = Field(pattern="^(confirmed|corrected|rejected)$")
     corrected_value: str | None = None
 
 
