@@ -42,7 +42,7 @@ from app.schemas.matters import (
 from app.services import approvals as approval_service
 from app.services import autoissue, docx_comments, docx_import, memory, storage
 from app.services import checks as check_service
-from app.services.generation import generate, render_docx
+from app.services.generation import generate, render_docx, validate_variables
 from app.services.hashing import file_hash
 
 DOCUMENT_NOT_FOUND = "That document was not found."
@@ -372,9 +372,6 @@ def generate_document(
     if counterparty is None:
         refusals.append("The counterparty record on this matter is incomplete.")
 
-    if refusals:
-        raise Refused("This document cannot be generated.", refusals)
-
     organisation = db.execute(
         select(Organisation).where(Organisation.entity_code == matter.entity)
     ).scalar_one_or_none()
@@ -390,10 +387,14 @@ def generate_document(
         ),
         "our_signatory": organisation.signatory_name if organisation else None,
         "our_signatory_title": organisation.signatory_title if organisation else None,
-        "counterparty": counterparty.legal_name,
-        "counterparty_jurisdiction": counterparty.jurisdiction,
-        "counterparty_address": registered_address(counterparty.addresses),
-        "counterparty_registration_number": counterparty.registration_number,
+        "counterparty": counterparty.legal_name if counterparty else None,
+        "counterparty_jurisdiction": counterparty.jurisdiction if counterparty else None,
+        "counterparty_address": (
+            registered_address(counterparty.addresses) if counterparty else None
+        ),
+        "counterparty_registration_number": (
+            counterparty.registration_number if counterparty else None
+        ),
         "effective_date": date.today().isoformat(),
         "governing_law": organisation.default_jurisdiction if organisation else "Nigeria",
         "value_amount": float(matter.value_amount) if matter.value_amount else None,
@@ -401,6 +402,21 @@ def generate_document(
         "privacy_flag": matter.privacy_flag,
         **payload.facts,
     }
+
+    # Every blocker in one answer. Raising at the first group meant a matter
+    # with no counterparty never said which template facts were also missing,
+    # so it was fixed one refusal at a time.
+    _, missing = validate_variables(
+        [
+            declaration
+            for declaration in version.variables or []
+            if counterparty or not declaration["name"].startswith("counterparty")
+        ],
+        facts,
+    )
+    refusals.extend(missing)
+    if refusals:
+        raise Refused("This document cannot be generated.", refusals)
 
     result = generate(
         template_reference=version.reference,

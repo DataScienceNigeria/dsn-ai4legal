@@ -164,9 +164,7 @@ class Approval(UUIDPrimaryKey, Timestamped, Base):
         PgUUID(as_uuid=True), ForeignKey("document.id", ondelete="SET NULL")
     )
     document_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    chain_definition_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("approval_chain_definition.id", ondelete="SET NULL")
-    )
+    chain_definition_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
     chain_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
     step_index: Mapped[int] = mapped_column(Integer, default=0)
     step_name: Mapped[str] = mapped_column(String(128), nullable=False)

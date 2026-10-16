@@ -135,11 +135,12 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   return (await response.json()) as T;
 }
 
+/* Finance and Procurement are not here. No workspace screen is theirs, so
+   sending them to /workspace only bounced them on to the portal, where their
+   confirmations are. */
 const WORKSPACE_ROLES = new Set([
   "counsel",
   "head_of_legal",
-  "finance",
-  "procurement",
   "admin",
   "auditor",
   "management",

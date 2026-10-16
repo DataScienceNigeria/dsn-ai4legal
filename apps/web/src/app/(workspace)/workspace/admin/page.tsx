@@ -16,6 +16,7 @@ import {
   DataState,
   Field,
   Input,
+  PasswordInput,
   KeyValue,
   Modal,
   Mono,
@@ -909,8 +910,8 @@ function AddPerson({ onDone }: Readonly<{ onDone: () => void }>) {
           required
           hint="At least 12 characters. You will know it, so they are expected to change it."
         >
-          <Input
-            type="password"
+          <PasswordInput
+            autoComplete="new-password"
             value={form.password}
             onChange={(event) => setForm({ ...form, password: event.target.value })}
           />
@@ -1072,8 +1073,8 @@ function SetPassword({ user, onDone }: Readonly<{ user: UserRow; onDone: () => v
           <Refusal title="It was not set" reason={save.error.message} />
         ) : null}
         <Field label="New password" required hint="At least 12 characters.">
-          <Input
-            type="password"
+          <PasswordInput
+            autoComplete="new-password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />
@@ -1124,7 +1125,7 @@ function Suspend({ user, onDone }: Readonly<{ user: UserRow; onDone: () => void 
             ? "They stop at their next request, not at their next sign-in. Nothing of theirs is deleted, and their name stays on every decision they made."
             : "They can sign in again with the password they already have."
         }
-        confirmLabel={user.active ? "Suspend them" : "Reinstate them"}
+        confirmLabel={user.active ? "Suspend user" : "Reinstate user"}
         destructive={user.active}
         reasonLabel="Why"
         busy={change.busy}

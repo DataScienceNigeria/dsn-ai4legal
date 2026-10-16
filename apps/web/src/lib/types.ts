@@ -165,6 +165,23 @@ export type AwaitingConfirmation = {
   changes_requested: string | null;
 };
 
+export type AwaitingDecision = {
+  approval_id: string;
+  step_name: string;
+  due_at: string | null;
+  changes_requested: string | null;
+  matter_id: string;
+  matter_number: string;
+  matter_title: string;
+  entity: string;
+  counterparty: string | null;
+  value_amount: number | null;
+  value_currency: string | null;
+  document_id: string;
+  document_name: string;
+  document_hash: string;
+};
+
 export type DraftBlock = { number: string; heading: string; text: string };
 
 export type DraftForConfirmation = {

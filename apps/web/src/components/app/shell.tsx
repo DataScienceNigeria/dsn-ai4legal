@@ -683,7 +683,13 @@ export function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
     );
   }
 
-  if (!me) return null;
+  if (!me) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Spinner label="Taking you to sign in" />
+      </div>
+    );
+  }
 
   if (sections.length === 0) {
     return (

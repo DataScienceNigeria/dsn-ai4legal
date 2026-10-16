@@ -171,7 +171,7 @@ def issue_token(payload: LoginRequest, db: AnonDb, request: Request) -> TokenRes
         select(User).where(User.work_email == payload.email.lower())
     ).scalar_one_or_none()
 
-    if user is None or not user.active or not user.password_hash:
+    if user is None or not user.password_hash:
         raise Unauthenticated("Those credentials were not recognised.")
     if not verify_password(payload.password, user.password_hash):
         audit.record(
@@ -184,6 +184,13 @@ def issue_token(payload: LoginRequest, db: AnonDb, request: Request) -> TokenRes
             ip_address=client_ip(request),
         )
         raise Unauthenticated("Those credentials were not recognised.")
+    # Said only after the password matched, so it confirms nothing to somebody
+    # guessing which addresses hold an account.
+    if not user.active:
+        raise Unauthenticated(
+            "This account has been suspended. Contact your administrator "
+            "or the legal operations team to have it reinstated."
+        )
 
     factor_presented = _check_second_factor(db, user, payload.code, request)
 

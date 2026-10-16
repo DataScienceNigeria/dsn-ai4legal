@@ -25,11 +25,18 @@ from app.db.models.counterparty import Counterparty
 from app.db.models.document import Document
 from app.db.models.matter import Matter
 from app.db.models.organisation import User
-from app.domain.enums import ApprovalDecision, DocumentType, MatterState, Role
+from app.domain.enums import (
+    CONFIRMING_ROLES,
+    ApprovalDecision,
+    DocumentType,
+    MatterState,
+    Role,
+)
 from app.schemas.common import Ack
 from app.schemas.matters import (
     ApprovalDecisionRequest,
     ApprovalOut,
+    AwaitingDecision,
     SignatureOut,
     SignatureRequestCreate,
     WetInkExecution,
@@ -204,11 +211,7 @@ def open_approvals(
                     f"Bound to {document.content_hash[:12]}. "
                     f"{document.novel_clause_count} novel clauses."
                 ),
-                href=(
-                    "/portal/status"
-                    if approval.approver_role == "requester"
-                    else f"/workspace/matters/{matter.id}"
-                ),
+                href=_approver_href(approval, matter),
                 reference=matter.number,
                 matter_id=matter.id,
             )
@@ -231,6 +234,20 @@ def open_approvals(
     return _decorate(created, db)
 
 
+def _approver_href(approval: Approval, matter: Matter) -> str:
+    """Where the person asked to decide goes to decide.
+
+    Only legal staff have the matter page. Finance and Procurement are sent
+    their confirmation, and the requester their request, because a link into
+    the workspace for a role the workspace turns away lands on nothing.
+    """
+    if approval.approver_role == Role.REQUESTER.value:
+        return "/portal/status"
+    if approval.approver_role in {role.value for role in CONFIRMING_ROLES}:
+        return f"/portal/confirmations/{approval.id}"
+    return f"/workspace/matters/{matter.id}"
+
+
 def _decorate(approvals: list[Approval], db=None) -> list[ApprovalOut]:
     actionable = {a.id for a in service.current_step(approvals)}
     names: dict[uuid.UUID, str] = {}
@@ -250,6 +267,69 @@ def _decorate(approvals: list[Approval], db=None) -> list[ApprovalOut]:
         model.notes = list((approval.chain_snapshot or {}).get("notes", []))
         out.append(model)
     return out
+
+
+@router.get("/approvals/awaiting")
+def awaiting_me(db: Db, principal: CurrentUser) -> list[AwaitingDecision]:
+    """The steps that are the caller's to decide now, their own or a delegator's.
+
+    Finance and Procurement have no workspace, so this is the only place
+    their part of a chain is reachable. A step behind an undecided earlier one
+    is left out: it cannot be decided yet, and listing it invites an answer
+    the decision endpoint would refuse.
+    """
+    caller = uuid.UUID(principal.user_id)
+    for_whom = {caller} | set(
+        db.execute(select(User.id).where(User.delegate_id == caller)).scalars()
+    )
+    pending = list(
+        db.execute(
+            select(Approval).where(
+                Approval.approver_id.in_(for_whom),
+                Approval.decision == ApprovalDecision.PENDING.value,
+                Approval.invalidated_by_event.is_(None),
+                Approval.document_id.is_not(None),
+            )
+        ).scalars()
+    )
+
+    out: list[AwaitingDecision] = []
+    for matter_id in {approval.matter_id for approval in pending}:
+        siblings = list(
+            db.execute(select(Approval).where(Approval.matter_id == matter_id)).scalars()
+        )
+        current = {approval.id for approval in service.current_step(siblings)}
+        matter = db.get(Matter, matter_id)
+        if matter is None:
+            continue
+        counterparty = (
+            db.get(Counterparty, matter.counterparty_id) if matter.counterparty_id else None
+        )
+        for approval in pending:
+            if approval.matter_id != matter_id or approval.id not in current:
+                continue
+            document = db.get(Document, approval.document_id)
+            if document is None:
+                continue
+            out.append(
+                AwaitingDecision(
+                    approval_id=approval.id,
+                    step_name=approval.step_name,
+                    due_at=approval.due_at,
+                    changes_requested=approval.comments,
+                    matter_id=matter.id,
+                    matter_number=matter.number,
+                    matter_title=matter.title,
+                    entity=matter.entity,
+                    counterparty=counterparty.legal_name if counterparty else None,
+                    value_amount=float(matter.value_amount) if matter.value_amount else None,
+                    value_currency=matter.value_currency,
+                    document_id=document.id,
+                    document_name=document.name,
+                    document_hash=document.content_hash,
+                )
+            )
+    return sorted(out, key=lambda item: (item.due_at is None, item.due_at))
 
 
 @router.get("/matters/{matter_id}/approvals")
@@ -424,7 +504,7 @@ def decide(
                     kind="approval_waiting",
                     title=f"{following.step_name} on {matter.number}",
                     body=f"{approval.step_name} has approved. This step is now yours.",
-                    href=f"/workspace/matters/{matter.id}",
+                    href=_approver_href(following, matter),
                     reference=matter.number,
                     matter_id=matter.id,
                 )

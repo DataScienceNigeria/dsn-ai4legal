@@ -104,8 +104,21 @@ export function PortalNav() {
   disappearing behind a control: three destinations fit across a phone, and a
   menu that has to be opened to find out what is in it is a menu nobody opens.
 */
+const CONFIRMATIONS = {
+  href: "/portal/confirmations",
+  icon: "check" as const,
+  label: "Confirmations",
+  detail: "Drafts waiting on your part of the approval",
+};
+
+const CONFIRMING_ROLES = new Set(["finance", "procurement"]);
+
 export function PortalSideNav() {
   const pathname = usePathname();
+  const { me } = useSession();
+  const links = (me?.roles ?? []).some((role) => CONFIRMING_ROLES.has(role))
+    ? [CONFIRMATIONS, ...SIDE_LINKS]
+    : SIDE_LINKS;
 
   return (
     <nav
@@ -113,7 +126,7 @@ export function PortalSideNav() {
       className="w-full shrink-0 lg:w-60"
     >
       <ul className="flex gap-1.5 overflow-x-auto pb-1 lg:sticky lg:top-6 lg:flex-col lg:gap-1 lg:overflow-visible lg:pb-0">
-        {SIDE_LINKS.map((link) => {
+        {links.map((link) => {
           const active =
             pathname === link.href ||
             (link.href !== "/portal" && pathname.startsWith(`${link.href}/`));

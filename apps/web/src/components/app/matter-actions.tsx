@@ -59,9 +59,32 @@ const SUPPLIED_BY_THE_MATTER = new Set([
 
 function useTemplates(entity: string) {
   const templates = useApi<Template[]>("/templates", [entity]);
-  return (templates.data ?? []).filter(
-    (template) => template.current?.status === "approved",
-  );
+  return {
+    loaded: templates.data !== null,
+    approved: (templates.data ?? []).filter(
+      (template) => template.current?.status === "approved",
+    ),
+  };
+}
+
+/*
+  What the API would refuse, said before anybody presses the button. The API
+  still decides; this only stops the dialog offering an act that cannot land.
+*/
+function generationBlockers(matter: Matter, chosen: Template | undefined): string[] {
+  const blockers: string[] = [];
+  if (!matter.counterparty) {
+    blockers.push("The matter has no counterparty. Link one before generating.");
+  }
+  if (!chosen?.current) return blockers;
+  if (!chosen.entity_applicability.includes(matter.entity)) {
+    blockers.push(`${chosen.name} does not apply to ${matter.entity}.`);
+  }
+  const effective = chosen.current.effective_date;
+  if (effective && effective > new Date().toISOString().slice(0, 10)) {
+    blockers.push(`${chosen.current.reference} does not take effect until ${effective}.`);
+  }
+  return blockers;
 }
 
 /*
@@ -149,7 +172,7 @@ function GenerateDialog({
   onClose,
   onDone,
 }: Readonly<{ matter: Matter; open: boolean; onClose: () => void; onDone: () => void }>) {
-  const templates = useTemplates(matter.entity);
+  const { loaded, approved: templates } = useTemplates(matter.entity);
   const [code, setCode] = React.useState("");
   const [name, setName] = React.useState("");
   const [facts, setFacts] = React.useState<Record<string, string>>({});
@@ -179,6 +202,7 @@ function GenerateDialog({
   });
 
   const tierOne = matter.risk_tier === "tier_1";
+  const blockers = generationBlockers(matter, chosen);
 
   return (
     <Modal
@@ -192,7 +216,8 @@ function GenerateDialog({
           <Button onClick={onClose}>Cancel</Button>
           <Button
             variant="primary"
-            disabled={!chosen?.current || generate.busy}
+            disabled={!chosen?.current || blockers.length > 0}
+            loading={generate.busy}
             onClick={() => void generate.run()}
           >
             {autoIssue ? "Assemble and issue" : "Assemble the document"}
@@ -201,6 +226,22 @@ function GenerateDialog({
       }
     >
       {generate.busy ? <Spinner label="Assembling the document" /> : null}
+
+      {loaded && templates.length === 0 ? (
+        <Notice tone="warn" title="No template can generate yet">
+          There is no approved template version. Approve one under Templates, then come back.
+        </Notice>
+      ) : null}
+
+      {blockers.length ? (
+        <Notice tone="warn" title="This document cannot be generated yet">
+          <ul className="list-disc space-y-0.5 pl-4">
+            {blockers.map((blocker) => (
+              <li key={blocker}>{blocker}</li>
+            ))}
+          </ul>
+        </Notice>
+      ) : null}
 
       <Field label="Template" required hint="Only approved versions can generate.">
         <Select value={code} onChange={(event) => setCode(event.target.value)}>
@@ -368,7 +409,7 @@ function PaperDialog({
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={!file || send.busy} onClick={() => void send.run()}>
+          <Button variant="primary" disabled={!file} loading={send.busy} onClick={() => void send.run()}>
             {send.busy ? "Reading" : "Add the paper"}
           </Button>
         </>

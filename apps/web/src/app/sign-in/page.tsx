@@ -91,6 +91,7 @@ export default function SignIn() {
               <Field label="Work email" required>
                 <Input
                   type="email"
+                  placeholder="name@organisation.org"
                   value={email}
                   autoComplete="username"
                   onChange={(event) => setEmail(event.target.value)}
@@ -98,6 +99,7 @@ export default function SignIn() {
               </Field>
               <Field label="Password" required>
                 <PasswordInput
+                  placeholder="Your password"
                   value={password}
                   autoComplete="current-password"
                   onChange={(event) => setPassword(event.target.value)}
@@ -114,6 +116,7 @@ export default function SignIn() {
                     inputMode="numeric"
                     autoComplete="one-time-code"
                     maxLength={9}
+                    placeholder="Six-digit code or recovery code"
                     value={code}
                     autoFocus
                     onChange={(event) => setCode(event.target.value)}

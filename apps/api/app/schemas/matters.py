@@ -300,6 +300,25 @@ class ApprovalOut(ApiModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class AwaitingDecision(ApiModel):
+    """One approval step waiting on the caller, with what they need to decide it."""
+
+    approval_id: UUID
+    step_name: str
+    due_at: datetime | None
+    changes_requested: str | None
+    matter_id: UUID
+    matter_number: str
+    matter_title: str
+    entity: str
+    counterparty: str | None
+    value_amount: float | None
+    value_currency: str | None
+    document_id: UUID
+    document_name: str
+    document_hash: str
+
+
 class ApprovalDecisionRequest(BaseModel):
     decision: str
     comments: str | None = None

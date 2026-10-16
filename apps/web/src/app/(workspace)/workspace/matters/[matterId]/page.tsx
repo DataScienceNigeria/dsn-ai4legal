@@ -81,7 +81,17 @@ type Progress = {
   obligations: number;
 };
 
-function lifecycle(matter: Matter, at: Progress, act: (id: string) => void): Stage[] {
+/*
+  canAct is the same test the Actions menu applies. Without it a read-only role
+  saw Generate and Add their paper on the track, pressed them, and nothing
+  opened, because the dialogs they open belong to a menu that role never gets.
+*/
+function lifecycle(
+  matter: Matter,
+  at: Progress,
+  act: (id: string) => void,
+  canAct: boolean,
+): Stage[] {
   const ours = at.documents.filter((d) => d.document_type !== "counterparty");
   const paper = at.documents.filter((d) => d.document_type === "counterparty");
   const executed = at.documents.some((d) => d.immutable);
@@ -118,14 +128,14 @@ function lifecycle(matter: Matter, at: Progress, act: (id: string) => void): Sta
       detail: at.documents.length
         ? `${ours.length} of ours, ${paper.length} of theirs.`
         : "Nothing to work from yet. Assemble ours from a template, or add the draft they sent.",
-      action: (
+      action: canAct ? (
         <>
           <Button variant="primary" onClick={() => act("generate")}>
             Generate a document
           </Button>
           <Button onClick={() => act("paper")}>Add their paper</Button>
         </>
-      ),
+      ) : undefined,
     },
     {
       id: "approval",
@@ -142,7 +152,7 @@ function lifecycle(matter: Matter, at: Progress, act: (id: string) => void): Sta
         <Button variant="primary" onClick={() => act("open-approvals")}>
           Open the approvals
         </Button>
-      ) : (
+      ) : canAct ? (
         <Button
           variant="primary"
           disabled={ours.length === 0}
@@ -150,7 +160,7 @@ function lifecycle(matter: Matter, at: Progress, act: (id: string) => void): Sta
         >
           Route for approval
         </Button>
-      ),
+      ) : undefined,
     },
     {
       id: "signature",
@@ -165,7 +175,7 @@ function lifecycle(matter: Matter, at: Progress, act: (id: string) => void): Sta
             : approved
               ? "Both approvals are in, so this document can be sent."
               : "Only an approved hash can be sent, so approval comes first.",
-      action: placing ? (
+      action: !canAct ? undefined : placing ? (
         <Button variant="primary" onClick={() => act("open-signature")}>
           Place the signature fields
         </Button>
@@ -644,6 +654,8 @@ function InteractionDecision({
 export default function MatterDetail() {
   const { matterId } = useParams<{ matterId: string }>();
   const [tab, setTab] = React.useState("overview");
+  const { has, readOnly } = useRoles();
+  const canAct = !readOnly && has("counsel", "head_of_legal", "admin");
 
   const matter = useApi<Matter>(`/matters/${matterId}`);
   const documents = useApi<DocumentRecord[]>(`/matters/${matterId}/documents`);
@@ -767,6 +779,7 @@ export default function MatterDetail() {
             obligations: obligations.data?.length ?? 0,
           },
           setAct,
+          canAct,
         )}
         note={
           data.next_action ? (
