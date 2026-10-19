@@ -3,25 +3,61 @@
 #
 #   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d
 #
-# The only thing it changes is where the images come from. They are built in
+# The main thing it changes is where the images come from. They are built in
 # GitHub Actions and pulled here, so the server needs no toolchain, no source
 # and no build: a deploy is a pull and a restart.
 #
 # IMAGE_TAG is written by the workflow and pins both images to one commit, so a
 # rollback is that variable set to an earlier tag.
 
+#
+# It also keeps every published port on the server's loopback. The base file
+# publishes them on all interfaces, which is what local development wants and
+# what a server must not do: Docker writes its own iptables rules, so a port
+# published on 0.0.0.0 is reachable from outside whatever ufw says, and the
+# Azure NSG becomes the only thing between the internet and the database.
+# nginx on the host proxies to 127.0.0.1:8000 and 127.0.0.1:3000, and the
+# containers reach one another by service name on the compose network, so
+# nothing that works today needs the wider binding. Only the bind address
+# changes here; the port numbers are the base file's.
+
 services:
+  db:
+    ports: !override
+      - "127.0.0.1:${DSNLAI_DB_PORT:-5433}:5432"
+
+  # A password, because anything that can reach the broker can queue a task
+  # for the worker to run with the platform's database credentials. Generate
+  # it with `openssl rand -hex 32`: it is written into a URL below, so it must
+  # not contain characters that need escaping there.
+  redis:
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    ports: !override
+      - "127.0.0.1:${DSNLAI_REDIS_PORT:-6380}:6379"
+
   api:
     image: ghcr.io/datasciencenigeria/dsn-ai4legal-api:${IMAGE_TAG:-latest}
     build: !reset null
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379/0
+      DSNLAI_WEBHOOK_SECRET: ${DSNLAI_WEBHOOK_SECRET:?Set DSNLAI_WEBHOOK_SECRET in .env}
+    ports: !override
+      - "127.0.0.1:${DSNLAI_API_PORT:-8000}:8000"
 
   worker:
     image: ghcr.io/datasciencenigeria/dsn-ai4legal-api:${IMAGE_TAG:-latest}
     build: !reset null
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379/0
+      DSNLAI_WEBHOOK_SECRET: ${DSNLAI_WEBHOOK_SECRET:?Set DSNLAI_WEBHOOK_SECRET in .env}
 
   web:
     image: ghcr.io/datasciencenigeria/dsn-ai4legal-web:${IMAGE_TAG:-latest}
     build: !reset null
+    ports: !override
+      - "127.0.0.1:${DSNLAI_WEB_PORT:-3000}:3000"
 
   # Mailpit is a mailbox that goes nowhere, which is the right answer in
   # development and the wrong one here: signature links are emailed to people
@@ -31,9 +67,18 @@ services:
   mail:
     profiles: ["never"]
 
+  # The API calls OpenSign by service name, so it needs no published port.
+  # When signing is switched on, signers reach it through nginx and TLS, not
+  # through 8080 or 3200 directly.
   opensign:
     depends_on: !override
       opensign-mongo: {condition: service_healthy}
+    ports: !override
+      - "127.0.0.1:${DSNLAI_OPENSIGN_PORT:-8080}:8080"
+
+  opensign-client:
+    ports: !override
+      - "127.0.0.1:${DSNLAI_OPENSIGN_CLIENT_PORT:-3200}:3000"
 
   # n8n holds the mailbox credential and can call the platform API, so it is
   # not published to the internet. Bound to the loopback, it is reached by an
@@ -60,4 +105,7 @@ services:
       # came up once on the placeholder is locked to a key that is in the
       # repository.
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY in .env}
+      # Its own key, never DSNLAI_SECRET_KEY: n8n only has to sign the mail
+      # hand-off, and holding the session key would let it mint any session.
+      DSNLAI_WEBHOOK_SECRET: ${DSNLAI_WEBHOOK_SECRET:?Set DSNLAI_WEBHOOK_SECRET in .env}
       N8N_LOG_LEVEL: info

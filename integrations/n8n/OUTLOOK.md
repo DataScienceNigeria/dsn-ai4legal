@@ -143,7 +143,7 @@ N8N_ENCRYPTION_KEY=<a generated secret>
 
 `DSN_LEGAL_MAILBOX` must be the same address in three places: this variable, the
 group member in step 2, and the approved list in step 6. The compose file
-already passes `DSNLAI_WEBHOOK_SECRET` (the platform's own key),
+already passes `DSNLAI_WEBHOOK_SECRET` (the webhook key, shared with the API),
 `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` and `NODE_FUNCTION_ALLOW_BUILTIN=crypto`,
 without which the signing step fails quietly.
 
@@ -204,7 +204,7 @@ Send a message to the shared mailbox with a PDF attached, leave it unread, then
 | `401` at the first Graph call | The credential: wrong tenant in the token URL, a stale secret, or the scope not `.default` |
 | `403 ErrorAccessDenied` at the first Graph call | Step 2. Either the policy has not applied yet, or the mailbox is not in the group. `Test-ApplicationAccessPolicy` settles it |
 | No items, no error | Nothing is unread. The poll reads unread only, so a message somebody has already opened in Outlook is invisible to it |
-| `403` at the hand-off | The signature: `DSNLAI_WEBHOOK_SECRET` in n8n does not match `DSNLAI_SECRET_KEY` on the API, or the Code node could not read `$env` |
+| `403` at the hand-off | The signature: `DSNLAI_WEBHOOK_SECRET` in n8n does not match `DSNLAI_WEBHOOK_SECRET` on the API, or the Code node could not read `$env` |
 | `422`, `These mailboxes are not approved` | Step 7 was not done, or the address differs by a domain or a case |
 
 Then open the platform's **Inbox**. The message is there, unclassified, waiting

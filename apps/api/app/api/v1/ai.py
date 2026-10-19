@@ -22,6 +22,7 @@ from app.ai.gateway import (
 from app.core import audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Conflict, NotFound, Refused
+from app.db.models.ai import AIInteraction
 from app.db.models.contract import Contract, Obligation
 from app.db.models.conversation import Conversation, ConversationTurn
 from app.db.models.counterparty import Counterparty
@@ -923,8 +924,11 @@ def correct_classification(
     principal: CurrentUser,
 ) -> Ack:
     """Corrections feed the evaluation set (LOP-M09-US-02)."""
+    # Classification is legal's call, and only on mail in an entity the caller
+    # belongs to: a correction changes what the evaluation set learns from.
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     record = db.get(Communication, communication_id)
-    if record is None:
+    if record is None or not principal.in_entity(record.entity):
         raise NotFound(MESSAGE_NOT_FOUND)
 
     record.classification_corrected = True
@@ -1527,5 +1531,19 @@ def decide_interaction(
     principal: CurrentUser,
     correction: str | None = None,
 ) -> Ack:
+    """Accept, edit or reject what a capability produced.
+
+    The decision is the quality signal for the capability, so it is legal's to
+    record, and only on an interaction in an entity the caller belongs to and,
+    where it was about a matter, on a matter they can see.
+    """
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    interaction = db.execute(
+        select(AIInteraction).where(AIInteraction.interaction_id == interaction_id)
+    ).scalar_one_or_none()
+    if interaction is None or not principal.in_entity(interaction.entity):
+        raise NotFound("That AI interaction was not found.")
+    if interaction.matter_id and db.get(Matter, interaction.matter_id) is None:
+        raise NotFound("That AI interaction was not found.")
     record_human_decision(db, interaction_id, decision, uuid.UUID(principal.user_id), correction)
     return Ack(message=f"Recorded as {decision}.")

@@ -68,6 +68,11 @@ class User(UUIDPrimaryKey, Timestamped, Base):
     mfa_recovery_codes: Mapped[list[str]] = mapped_column(ARRAY(String(128)), default=list)
     mfa_last_used_counter: Mapped[int | None] = mapped_column(Integer)
 
+    # Sign-in lockout. Consecutive failed passwords or codes, and the time
+    # before which the account accepts none.
+    failed_login_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     # SCIM provisioning. external_id is what the directory calls this person.
     external_id: Mapped[str | None] = mapped_column(String(255), index=True)
     provisioned_by: Mapped[str | None] = mapped_column(String(32))

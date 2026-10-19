@@ -4,6 +4,7 @@ Every request opens one transaction, stamps the security context on it so the
 row-level security policies apply, and closes it when the response is written.
 """
 
+import ipaddress
 from collections.abc import Iterator
 from typing import Annotated
 
@@ -146,11 +147,32 @@ def get_entity(
         raise Forbidden("Your account has no entity membership.")
     return principal.entities[0]
 
+def _trusted(address: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return any(ip in network for network in settings.trusted_proxies)
+
+
 def client_ip(request: Request) -> str | None:
+    """The address the request came from, as far as it can be trusted.
+
+    X-Forwarded-For is written by whoever sent the request, so its first entry
+    is whatever the client chose to put there. It is read only when the direct
+    peer is a configured proxy, and then from the right: each trusted proxy
+    appends the address it saw, so the right-most entry that is not one of ours
+    is the client as our own proxy saw it.
+    """
+    peer = request.client.host if request.client else None
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else None
+    if not forwarded or peer is None or not _trusted(peer):
+        return peer
+    hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+    for hop in reversed(hops):
+        if not _trusted(hop):
+            return hop
+    return hops[0] if hops else peer
 
 def require_legal(principal: Annotated[Principal, Depends(get_principal)]) -> Principal:
     principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)

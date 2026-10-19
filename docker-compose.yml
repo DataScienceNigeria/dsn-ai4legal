@@ -52,6 +52,9 @@ services:
       # published port, which is what the host process needs and what a
       # container would fail to resolve.
       OPENSIGN_BASE_URL: http://opensign:8080/app
+      # Verifies what n8n signs. The same variable n8n reads, never the
+      # session key.
+      DSNLAI_WEBHOOK_SECRET: ${DSNLAI_WEBHOOK_SECRET:-development-webhook-secret-do-not-use-in-production}
     ports:
       - "${DSNLAI_API_PORT:-8000}:8000"
     volumes:
@@ -80,6 +83,7 @@ services:
       DSNLAI_STORAGE_BACKEND: ${DSNLAI_STORAGE_BACKEND:-local}
       DSNLAI_STORAGE_PATH: /var/lib/dsn-lai/storage
       OPENSIGN_BASE_URL: http://opensign:8080/app
+      DSNLAI_WEBHOOK_SECRET: ${DSNLAI_WEBHOOK_SECRET:-development-webhook-secret-do-not-use-in-production}
     volumes:
       - document_store:/var/lib/dsn-lai/storage
     depends_on:
@@ -218,7 +222,9 @@ services:
       N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:-change-me-in-every-environment}
       # The only address n8n needs. It calls the platform API and nothing else.
       DSNLAI_API_BASE_URL: http://api:8000
-      DSNLAI_WEBHOOK_SECRET: ${DSNLAI_SECRET_KEY:-change-me-in-every-environment}
+      # Signs the mail hand-off. Its own key: this used to be DSNLAI_SECRET_KEY,
+      # which signs sessions, so n8n could have minted a token for any role.
+      DSNLAI_WEBHOOK_SECRET: ${DSNLAI_WEBHOOK_SECRET:-development-webhook-secret-do-not-use-in-production}
       # One mailbox per organisation, each read by its own workflow: the
       # Outlook ones read DSN_LEGAL_MAILBOX, the Gmail ones EAI_LEGAL_MAILBOX.
       # n8n has no env_file, so a variable not named here never reaches it.

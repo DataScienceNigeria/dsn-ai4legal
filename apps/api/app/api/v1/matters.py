@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from sqlalchemy import select
 
-from app.core import audit
+from app.core import access, audit
 from app.core.deps import CurrentUser, Db, WorkingEntity, client_ip
 from app.core.errors import Conflict, Forbidden, NotFound, ValidationFailed
 from app.db.models.counterparty import Counterparty
@@ -624,7 +624,7 @@ def list_matters(
     matter nobody could act on stayed at the top of the list forever.
     """
     concluded = [state.value for state in CONCLUDED_STATES]
-    stmt = select(Matter).where(Matter.entity == entity)
+    stmt = access.scope_matters(select(Matter).where(Matter.entity == entity), principal)
     if mine:
         stmt = stmt.where(Matter.responsible_lawyer_id == uuid.UUID(principal.user_id))
     if stage == "open":
@@ -645,6 +645,7 @@ def get_matter(matter_id: uuid.UUID, db: Db, principal: CurrentUser) -> MatterOu
     matter = db.get(Matter, matter_id)
     if matter is None:
         raise NotFound(MATTER_NOT_FOUND)
+    access.ensure_matter(db, principal, matter, MATTER_NOT_FOUND)
 
     out = MatterOut.model_validate(matter)
     out.days_open = (datetime.now(UTC) - matter.created_at).days
@@ -675,10 +676,10 @@ def matter_request(matter_id: uuid.UUID, db: Db, principal: CurrentUser) -> Requ
     the position against. Null where a matter was opened directly rather than
     from a request.
     """
-    del principal
     matter = db.get(Matter, matter_id)
     if matter is None:
         raise NotFound(MATTER_NOT_FOUND)
+    access.ensure_matter(db, principal, matter, MATTER_NOT_FOUND)
     if matter.request_id is None:
         return None
 

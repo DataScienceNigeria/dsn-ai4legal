@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core import context
-from app.core.config import DEVELOPMENT_SECRET_KEY, settings
+from app.core.config import DEVELOPMENT_SECRET_KEY, DEVELOPMENT_WEBHOOK_SECRET, settings
 from app.core.deps import client_ip
 from app.core.errors import PlatformError
 
@@ -37,6 +37,26 @@ async def lifespan(_: FastAPI):
             f"{settings.dsnlai_env} deployment."
         )
 
+    if not settings.is_development:
+        webhook_secret = settings.dsnlai_webhook_secret
+        if not webhook_secret:
+            raise RuntimeError(
+                "DSNLAI_WEBHOOK_SECRET is not set, so no webhook can be verified. "
+                f"Set it before running a {settings.dsnlai_env} deployment."
+            )
+        if webhook_secret in (settings.dsnlai_secret_key, DEVELOPMENT_SECRET_KEY):
+            raise RuntimeError(
+                "DSNLAI_WEBHOOK_SECRET is the token signing key. Whatever holds the "
+                "webhook secret, n8n among them, could then sign a session for any "
+                "role. Give it a value of its own."
+            )
+        if webhook_secret == DEVELOPMENT_WEBHOOK_SECRET:
+            raise RuntimeError(
+                "DSNLAI_WEBHOOK_SECRET is still the one in the repository, so anybody "
+                "holding it could forge mail and signature callbacks. Set it before "
+                f"running a {settings.dsnlai_env} deployment."
+            )
+
     store.verify()
     log.info("Documents are kept in the %s store.", store.backend.name)
 
@@ -57,8 +77,11 @@ app = FastAPI(
         "DSN and EqualyzAI legal staff. AI may recommend, an authorised human "
         "must confirm. The API is the only write path."
     ),
-    openapi_url="/api/v1/openapi.json",
-    docs_url="/api/v1/docs",
+    # The schema is a map of every route and parameter, which is a reference
+    # for development and a reconnaissance aid anywhere else.
+    openapi_url="/api/v1/openapi.json" if settings.is_development else None,
+    docs_url="/api/v1/docs" if settings.is_development else None,
+    redoc_url="/api/v1/redoc" if settings.is_development else None,
 )
 
 @app.middleware("http")

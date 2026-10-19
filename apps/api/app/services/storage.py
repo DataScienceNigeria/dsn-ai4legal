@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import pathlib
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.core.config import settings
@@ -227,6 +228,42 @@ def build(backend: str) -> LocalStore | AzureStore:
 
 
 store = ObjectStore()
+
+
+#: Long enough for any real filename, short enough that the key stays well
+#: inside a blob name's limit with its prefix.
+MAX_FILENAME_LENGTH = 150
+
+
+def sanitize_filename(filename: str | None, fallback: str = "file") -> str:
+    """A filename that is safe to put inside a storage key.
+
+    The name arrives from a browser or a mail connector and says whatever its
+    sender wanted, including ``../`` and separators. Only the last path
+    component is kept, control characters and separators are dropped, and the
+    length is bounded, so the name can never choose where in the store it lands.
+    """
+    name = (filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    name = "".join(ch for ch in name if ch.isprintable() and ch not in '/\\:*?"<>|')
+    name = name.strip().lstrip(".").strip()
+    if not name:
+        name = fallback
+    if len(name) > MAX_FILENAME_LENGTH:
+        stem, dot, extension = name.rpartition(".")
+        if dot and 0 < len(extension) <= 10:
+            name = f"{stem[: MAX_FILENAME_LENGTH - len(extension) - 1]}.{extension}"
+        else:
+            name = name[:MAX_FILENAME_LENGTH]
+    return name
+
+
+def upload_key(prefix: str, filename: str | None, fallback: str = "file") -> str:
+    """Where an uploaded file is kept: under its prefix, behind a fresh id.
+
+    The id makes every key unique, so two uploads with the same name, or the
+    same bytes, can never overwrite one another in the store.
+    """
+    return f"{prefix}/{uuid.uuid4().hex}-{sanitize_filename(filename, fallback)}"
 
 
 def validate_upload(filename: str, content_type: str, data: bytes) -> str:

@@ -92,6 +92,8 @@ Three settings stop the platform rather than degrading it, deliberately:
 | Setting | What happens if it is wrong |
 | --- | --- |
 | `DSNLAI_SECRET_KEY` | Outside development the platform refuses to start while this is the key in the repository, because anybody who has read the repository could sign a token for any role |
+| `DSNLAI_WEBHOOK_SECRET` | Signs the n8n mail hand-off and verifies every webhook. The platform refuses to start while it is empty, the development value, or equal to `DSNLAI_SECRET_KEY`, and the production overlay will not bring the stack up without it. It used to be `DSNLAI_SECRET_KEY` itself; anything that held that key, n8n included, could sign a session for any role |
+| `REDIS_PASSWORD` | The production overlay starts Redis with it and builds the broker URL from it, and will not bring the stack up without it. Generate with `openssl rand -hex 32`, since it goes into a URL |
 | `DSNLAI_STORAGE_BACKEND=azure` | Refuses to start if the container cannot be reached, rather than accepting uploads it cannot keep |
 | `DSNLAI_BACKUP_PASSPHRASE` | `scripts/backup.sh` refuses to run. Keep it somewhere other than this server |
 
@@ -139,7 +141,24 @@ limit of 50, so without it an ordinary signed agreement is refused by the proxy
 with a 413 the interface never sees and cannot explain.
 
 **Only 80 and 443 should be open.** The API, the interface, the database and
-Redis are reached through nginx or not at all.
+Redis are reached through nginx or not at all. The production overlay binds
+every published port (database, Redis, API, interface, OpenSign and its client,
+n8n) to `127.0.0.1`, because Docker writes its own iptables rules and a port
+published on all interfaces is reachable whatever `ufw` says. Check the Azure
+NSG as well: it should allow 22, 80 and 443 inbound and nothing else.
+
+The configuration also limits `/api/v1/auth/token` to 10 requests a minute per
+address, with a burst of 5, and sets the security headers: HSTS,
+`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and a minimal
+enforced `Content-Security-Policy`. A fuller policy is sent as
+`Content-Security-Policy-Report-Only`; watch the browser console for reports
+with signing switched on, then tighten it and enforce it. Where certbot already
+manages the file, copy the `limit_req_zone` line above the `server` block and
+the `add_header` lines and the `location = /api/v1/auth/token` block into it.
+
+The API believes `X-Forwarded-For` only from the addresses in
+`DSNLAI_TRUSTED_PROXIES`, by default the loopback and Docker's bridge networks,
+which is where the host's nginx reaches it from.
 
 ## 4. GitHub
 

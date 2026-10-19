@@ -42,7 +42,7 @@ loudly, which is worth knowing before an hour goes into the wrong place.
 | Variable | Why |
 | --- | --- |
 | `DSNLAI_API_BASE_URL` | Where the platform is. `api:8000` in the built stack, the host gateway during development |
-| `DSNLAI_WEBHOOK_SECRET` | The signing key. A wrong one is a 403 from the webhook, not an error in n8n |
+| `DSNLAI_WEBHOOK_SECRET` | The signing key, the same value the API is given and never `DSNLAI_SECRET_KEY`. A wrong one is a 403 from the webhook, not an error in n8n |
 | `DSN_LEGAL_MAILBOX`, `EAI_LEGAL_MAILBOX` | One mailbox per organisation. The Outlook workflows read the DSN one, the Gmail workflows the EAI one. Each has to be on the approved list under its own entity or every message is refused: `python -m app.mailbox <address> --entity DSN` or `--entity EAI` |
 | `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` | Code nodes read `$env`. Blocked, the secret reads as undefined and the signature simply fails to verify |
 | `NODE_FUNCTION_ALLOW_BUILTIN=crypto` | Code nodes run in an isolated VM with no built-ins. Without this, signing fails with "Module 'crypto' is disallowed" |

@@ -361,7 +361,6 @@ def list_templates(db: Db, principal: CurrentUser, entity: WorkingEntity) -> lis
     return out
 
 
-@router.get("/templates/{code}")
 def _template_version_out(version) -> TemplateVersionOut:
     """The version, with the blanks its body actually contains.
 
@@ -376,6 +375,7 @@ def _template_version_out(version) -> TemplateVersionOut:
     return model
 
 
+@router.get("/templates/{code}")
 def get_template(code: str, db: Db, principal: CurrentUser) -> TemplateOut:
     principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     template = db.execute(select(Template).where(Template.code == code)).scalar_one_or_none()
@@ -437,7 +437,7 @@ def import_agreement_template(
             "rather than importing it again as a second template."
         )
 
-    key = f"templates/{entity}/{digest[:12]}-{filename}"
+    key = storage.upload_key(f"templates/{entity}", filename)
     storage.store.put(key, data, DOCX_MEDIA_TYPE)
 
     # The import record carries the provenance and the clause candidates, so

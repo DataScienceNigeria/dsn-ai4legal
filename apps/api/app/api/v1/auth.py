@@ -8,7 +8,7 @@ with the same claim shape.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -20,6 +20,7 @@ from app.core.deps import AnonDb, CurrentUser, client_ip
 from app.core.errors import Conflict, Unauthenticated, ValidationFailed
 from app.core.security import create_access_token, verify_password
 from app.db.models.organisation import User
+from app.db.session import owner_session
 from app.schemas.common import Ack
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -159,6 +160,37 @@ def _check_second_factor(
     return True
 
 
+LOCKED_OUT = "Too many failed sign-in attempts. Try again later."
+
+
+def _locked(user: User) -> bool:
+    return bool(user.locked_until and user.locked_until > datetime.now(UTC))
+
+
+def _count_failure(user: User) -> None:
+    """Count a failed attempt against the account, and lock it at the limit.
+
+    Written on its own connection, because the refusal that follows rolls the
+    request's transaction back and a count that is rolled back never reaches
+    the limit. Failing to write it never turns the refusal into a 500.
+    """
+    try:
+        with owner_session() as session:
+            record = session.get(User, user.id)
+            if record is None:
+                return
+            record.failed_login_count = (record.failed_login_count or 0) + 1
+            if record.failed_login_count >= settings.dsnlai_login_max_failures:
+                record.locked_until = datetime.now(UTC) + timedelta(
+                    minutes=settings.dsnlai_login_lockout_minutes
+                )
+                record.failed_login_count = 0
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("The failed sign-in could not be counted.")
+
+
 @router.post("/token")
 def issue_token(payload: LoginRequest, db: AnonDb, request: Request) -> TokenResponse:
     if settings.dsnlai_auth_mode != "local":
@@ -173,16 +205,29 @@ def issue_token(payload: LoginRequest, db: AnonDb, request: Request) -> TokenRes
 
     if user is None or not user.password_hash:
         raise Unauthenticated("Those credentials were not recognised.")
+    # Checked before the password, so a locked account answers nothing about
+    # whether a guess was right.
+    if _locked(user):
+        audit.record_refusal(
+            action="authentication_locked_out",
+            object_type="app_user",
+            object_id=str(user.id),
+            actor_label=payload.email,
+            ip_address=client_ip(request),
+            detail=f"Locked until {user.locked_until.isoformat()}.",
+        )
+        raise Unauthenticated(LOCKED_OUT)
     if not verify_password(payload.password, user.password_hash):
-        audit.record(
-            db,
+        # On its own connection: the refusal below rolls this transaction back,
+        # and a failed password that leaves no trace is the one that matters.
+        audit.record_refusal(
             action="authentication_failed",
             object_type="app_user",
             object_id=str(user.id),
             actor_label=payload.email,
-            result="failure",
             ip_address=client_ip(request),
         )
+        _count_failure(user)
         raise Unauthenticated("Those credentials were not recognised.")
     # Said only after the password matched, so it confirms nothing to somebody
     # guessing which addresses hold an account.
@@ -192,10 +237,19 @@ def issue_token(payload: LoginRequest, db: AnonDb, request: Request) -> TokenRes
             "or the legal operations team to have it reinstated."
         )
 
-    factor_presented = _check_second_factor(db, user, payload.code, request)
+    try:
+        factor_presented = _check_second_factor(db, user, payload.code, request)
+    except ValidationFailed:
+        # A wrong code counts like a wrong password, or six digits could be
+        # walked once the password was known. A missing code does not.
+        if payload.code:
+            _count_failure(user)
+        raise
 
     session_id = uuid.uuid4().hex
     user.last_login = datetime.now(UTC)
+    user.failed_login_count = 0
+    user.locked_until = None
 
     audit.record(
         db,

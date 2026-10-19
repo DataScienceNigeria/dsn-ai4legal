@@ -4,6 +4,7 @@ Every value is environment-driven so that the same image runs in development,
 staging and production without a rebuild (PRD section 10.2).
 """
 
+import ipaddress
 from functools import lru_cache
 from pathlib import Path
 
@@ -53,6 +54,10 @@ _REPO_ROOT = _default_storage_root()
 #: any role, so a deployment that is not development refuses to start on it.
 DEVELOPMENT_SECRET_KEY = "development-secret-key-do-not-use-in-production"
 
+#: The webhook secret the development compose file falls back to. Like the key
+#: above, it is in the repository, so nothing outside development may run on it.
+DEVELOPMENT_WEBHOOK_SECRET = "development-webhook-secret-do-not-use-in-production"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -67,7 +72,15 @@ class Settings(BaseSettings):
     # the interface cannot sign in, so it is reported on startup rather than
     # left to read as a CORS error in somebody's console.
     dsnlai_allowed_origins: str = ""
+    # Proxies whose X-Forwarded-For is believed, as addresses or networks. The
+    # host's nginx reaches a published port from the loopback or, through
+    # Docker's port proxy, from a bridge gateway in 172.16.0.0/12. A request
+    # from anywhere else has its X-Forwarded-For ignored.
+    dsnlai_trusted_proxies: str = "127.0.0.1/32,::1/128,172.16.0.0/12"
     dsnlai_access_token_minutes: int = 60
+    # Consecutive failed sign-ins before an account is locked, and for how long.
+    dsnlai_login_max_failures: int = 5
+    dsnlai_login_lockout_minutes: int = 15
     dsnlai_step_up_window_minutes: int = 5
 
     postgres_db: str = "dsn_lai"
@@ -140,6 +153,10 @@ class Settings(BaseSettings):
     smtp_from: str = "legal@dsn.example"
     smtp_starttls: bool = True
     dsnlai_webhook_url: str = ""
+    # Signs and verifies webhooks: the n8n mail hand-off, the platform's own
+    # signature callback and the notification webhook above. Its own key, never
+    # DSNLAI_SECRET_KEY, which signs sessions. Empty refuses every webhook, and
+    # a deployment that is not development refuses to start without it.
     dsnlai_webhook_secret: str = ""
 
     # Malware scanning. Without a scanner the magic-byte heuristic applies and
@@ -213,6 +230,14 @@ class Settings(BaseSettings):
     @property
     def allowed_origins(self) -> list[str]:
         return [o.strip().rstrip("/") for o in self.dsnlai_allowed_origins.split(",") if o.strip()]
+
+    @property
+    def trusted_proxies(self) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+        return [
+            ipaddress.ip_network(p.strip(), strict=False)
+            for p in self.dsnlai_trusted_proxies.split(",")
+            if p.strip()
+        ]
 
     @property
     def allowed_upload_types(self) -> list[str]:

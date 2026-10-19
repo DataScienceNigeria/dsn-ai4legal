@@ -154,9 +154,21 @@ def decode_token(token: str) -> Principal:
     )
 
 def sign_webhook(payload: bytes, secret: str | None = None) -> str:
-    """Webhooks are signed and replay-protected (PRD section 12.1)."""
-    key = (secret or settings.dsnlai_secret_key).encode()
-    return hmac.new(key, payload, hashlib.sha256).hexdigest()
+    """Webhooks are signed and replay-protected (PRD section 12.1).
+
+    The key is DSNLAI_WEBHOOK_SECRET, never the token signing key. That key
+    used to be the fallback, and it was handed to n8n to sign with, so anything
+    that could read n8n's environment could mint a session for any role.
+    """
+    key = secret if secret is not None else settings.dsnlai_webhook_secret
+    if not key:
+        raise ValueError("DSNLAI_WEBHOOK_SECRET is not set, so nothing can be signed.")
+    return hmac.new(key.encode(), payload, hashlib.sha256).hexdigest()
 
 def verify_webhook(payload: bytes, signature: str, secret: str | None = None) -> bool:
-    return hmac.compare_digest(sign_webhook(payload, secret), signature)
+    """False for a missing key as well as a wrong signature: an unset secret
+    must refuse every callback rather than accept one signed with nothing."""
+    key = secret if secret is not None else settings.dsnlai_webhook_secret
+    if not key or not signature:
+        return False
+    return hmac.compare_digest(sign_webhook(payload, key), signature)

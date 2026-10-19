@@ -381,7 +381,7 @@ def archive(session: Session, principal, request: ArchiveRequest) -> tuple[Contr
     session.flush()
 
     name = request.filename or f"{reference} executed"
-    key = f"contracts/{reference}/executed/{digest[:12]}-{name}"
+    key = storage.upload_key(f"contracts/{reference}/executed", name)
     storage.store.put_immutable(key, request.data, request.content_type)
 
     document = Document(

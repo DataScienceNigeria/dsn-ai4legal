@@ -117,7 +117,7 @@ def _store_attachments(db, communication, message, entity: str) -> int:
 
         content_type = _content_type(item)
         try:
-            digest = storage.validate_upload(item.filename, content_type, data)
+            storage.validate_upload(item.filename, content_type, data)
         except ValidationFailed as refusal:
             audit.record(
                 db,
@@ -148,7 +148,7 @@ def _store_attachments(db, communication, message, entity: str) -> int:
             )
             continue
 
-        key = f"mail/{communication.id}/{digest[:12]}-{item.filename}"
+        key = storage.upload_key(f"mail/{communication.id}", item.filename)
         storage.store.put(key, data, content_type)
         db.add(
             Attachment(

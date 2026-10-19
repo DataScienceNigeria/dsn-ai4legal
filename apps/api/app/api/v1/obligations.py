@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime
 from fastapi import APIRouter, Query, Response
 from sqlalchemy import select
 
-from app.core import audit
+from app.core import access, audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Conflict, NotFound, ValidationFailed
 from app.db.models.contract import Contract, Obligation
@@ -69,7 +69,9 @@ def list_obligations(
     due_within_days: int | None = None,
     limit: int = Query(default=200, le=500),
 ) -> list[ObligationOut]:
-    stmt = select(Obligation).where(Obligation.entity == entity)
+    stmt = access.scope_obligations(
+        select(Obligation).where(Obligation.entity == entity), principal
+    )
     if status:
         stmt = stmt.where(Obligation.status == status)
     if matter_id:
@@ -88,6 +90,10 @@ def list_obligations(
 def contract_obligations(
     contract_id: uuid.UUID, db: Db, principal: CurrentUser
 ) -> list[ObligationOut]:
+    contract = db.get(Contract, contract_id)
+    if contract is None:
+        raise NotFound("That contract was not found.")
+    access.ensure_contract(db, principal, contract, "That contract was not found.")
     stmt = (
         select(Obligation)
         .where(Obligation.contract_id == contract_id)

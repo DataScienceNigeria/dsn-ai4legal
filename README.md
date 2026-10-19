@@ -113,6 +113,7 @@ deployment, and it says so rather than starting anyway:
 | Setting | Why |
 | --- | --- |
 | `DSNLAI_SECRET_KEY` | Signs every token. Outside development the platform refuses to start while it is the key in this repository, because anybody holding it could sign a token for any role |
+| `DSNLAI_WEBHOOK_SECRET` | Signs and verifies webhooks, including the n8n mail hand-off. Its own value, never `DSNLAI_SECRET_KEY`; outside development the platform refuses to start while it is empty, the development value, or equal to that key |
 | `DSNLAI_ALLOWED_ORIGINS` | The addresses the interface is served from. Outside development an empty list means no browser may call the API, and the log says so on startup |
 | `DSNLAI_STORAGE_BACKEND` | `azure` in production. The platform will not start if the container cannot be reached |
 

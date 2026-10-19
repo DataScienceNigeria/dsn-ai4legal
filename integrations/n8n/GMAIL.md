@@ -212,7 +212,7 @@ unread makes no difference now. The hand-off node should answer:
 | `401 unauthorized_client` (route B) | The delegation client ID does not match the service account's unique ID, or the impersonated address is wrong |
 | Mail from the wrong mailbox | Signed in as a delegate rather than as the account, or impersonating the wrong address |
 | No items, no error | Nothing in either range. Mail from the last `EAI_MAIL_REFRESH_DAYS` should always appear; if it does not, check the credential is on **Read the mailbox** and that the node ran once per range |
-| `403` at the hand-off | The signature: `DSNLAI_WEBHOOK_SECRET` in n8n does not match `DSNLAI_SECRET_KEY` on the API, or the Code node could not read `$env` |
+| `403` at the hand-off | The signature: `DSNLAI_WEBHOOK_SECRET` in n8n does not match `DSNLAI_WEBHOOK_SECRET` on the API, or the Code node could not read `$env` |
 | `422`, `These mailboxes are not approved` | Step 2c, or the address differs by a domain or a case |
 
 Then open the platform's **Inbox**. The message is there, unclassified, waiting

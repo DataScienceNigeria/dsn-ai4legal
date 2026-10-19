@@ -10,7 +10,7 @@ from fastapi import APIRouter, File, Form, Query, Response, UploadFile
 from sqlalchemy import or_, select
 
 from app.api.v1.counterparties import find_duplicates
-from app.core import audit
+from app.core import access, audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Forbidden, NotFound
 from app.db.models.contract import Contract, Obligation
@@ -88,7 +88,7 @@ def search_contracts(
     Row-level security applies the restricted-matter rules, so a restricted
     agreement is absent rather than redacted.
     """
-    stmt = select(Contract).where(Contract.entity == entity)
+    stmt = access.scope_contracts(select(Contract).where(Contract.entity == entity), principal)
 
     if agreement_type:
         stmt = stmt.where(Contract.agreement_type == agreement_type)
@@ -149,6 +149,7 @@ def get_contract(
     contract = db.get(Contract, contract_id)
     if contract is None:
         raise NotFound("That contract was not found.")
+    access.ensure_contract(db, principal, contract, "That contract was not found.")
     return _decorate(db, contract)
 
 
@@ -158,6 +159,7 @@ def provenance(contract_id: uuid.UUID, db: Db, principal: CurrentUser) -> dict:
     contract = db.get(Contract, contract_id)
     if contract is None:
         raise NotFound("That contract was not found.")
+    access.ensure_contract(db, principal, contract, "That contract was not found.")
 
     document = (
         db.get(Document, contract.executed_document_id)
@@ -304,6 +306,9 @@ def original(contract_id: uuid.UUID, db: Db, principal: CurrentUser) -> Response
     contract = db.get(Contract, contract_id)
     if contract is None or not contract.executed_document_id:
         raise NotFound("No executed file is held for that agreement.")
+    access.ensure_contract(
+        db, principal, contract, "No executed file is held for that agreement."
+    )
     document = db.get(Document, contract.executed_document_id)
     if document is None or not document.storage_key:
         raise NotFound("No executed file is held for that agreement.")

@@ -134,7 +134,9 @@ class WebhookTransport:
     name = "webhook"
 
     def available(self) -> bool:
-        return bool(settings.dsnlai_webhook_url)
+        # Unsigned events are not sent: the receiver has no way to tell them
+        # from forged ones.
+        return bool(settings.dsnlai_webhook_url and settings.dsnlai_webhook_secret)
 
     def send(self, message: Message) -> str:
         payload = json.dumps(
@@ -156,9 +158,7 @@ class WebhookTransport:
                 content=payload,
                 headers={
                     "Content-Type": "application/json",
-                    "X-DSNLAI-Signature": sign_webhook(
-                        payload, settings.dsnlai_webhook_secret or None
-                    ),
+                    "X-DSNLAI-Signature": sign_webhook(payload),
                 },
                 timeout=20.0,
             )

@@ -183,7 +183,7 @@ def add_evidence(
         )
 
     name = file.filename or "evidence"
-    key = f"contracts/{contract.reference}/evidence/{digest[:12]}-{name}"
+    key = storage.upload_key(f"contracts/{contract.reference}/evidence", name)
     storage.store.put(key, data, content_type)
 
     document = Document(

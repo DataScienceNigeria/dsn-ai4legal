@@ -221,13 +221,12 @@ def add_attachment(
     principal: CurrentUser,
     file: Annotated[UploadFile, File()],
 ) -> Attachment:
-    record = db.get(RequestRecord, request_id)
-    if record is None:
-        raise NotFound(REQUEST_NOT_FOUND)
+    # The same rule as reading the request: its requester or legal staff.
+    record = get_request(request_id, db, principal)
 
     data = file.file.read()
     content_type = file.content_type or "application/octet-stream"
-    digest = storage.validate_upload(file.filename or "", content_type, data)
+    storage.validate_upload(file.filename or "", content_type, data)
 
     clean, scan_detail = storage.scan_upload(data)
     if not clean:
@@ -247,7 +246,7 @@ def add_attachment(
             "This file was refused and has been quarantined.", {"file": scan_detail}
         )
 
-    key = f"requests/{record.reference}/{digest[:12]}-{file.filename}"
+    key = storage.upload_key(f"requests/{record.reference}", file.filename)
     storage.store.put(key, data, content_type)
 
     attachment = Attachment(
@@ -287,9 +286,7 @@ def get_attachment(
     by its own identifier alone would step around the separation the request
     is subject to.
     """
-    record = db.get(RequestRecord, request_id)
-    if record is None:
-        raise NotFound(REQUEST_NOT_FOUND)
+    record = get_request(request_id, db, principal)
 
     attachment = db.get(Attachment, attachment_id)
     if attachment is None or attachment.request_id != record.id:

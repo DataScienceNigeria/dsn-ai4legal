@@ -10,7 +10,7 @@ from fastapi import APIRouter, File, Response, UploadFile
 from sqlalchemy import func, select, text
 
 from app.api.v1.counterparties import registered_address
-from app.core import audit
+from app.core import access, audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
 from app.core.errors import Conflict, Forbidden, NotFound, Refused, ValidationFailed
 from app.db.models.contract import Approval, SignatureRequest
@@ -178,7 +178,7 @@ def _store_counterparty_paper(
     if existing is not None:
         return existing
 
-    key = f"matters/{matter.number}/counterparty/{digest[:12]}-{filename}"
+    key = storage.upload_key(f"matters/{matter.number}/counterparty", filename)
     storage.store.put(key, data, content_type)
 
     previous = list(
@@ -537,6 +537,7 @@ def get_document(document_id: uuid.UUID, db: Db, principal: CurrentUser) -> Docu
     document = db.get(Document, document_id)
     if document is None:
         raise NotFound(DOCUMENT_NOT_FOUND)
+    access.ensure_document(db, principal, document, DOCUMENT_NOT_FOUND)
     return _to_out(document)
 
 
@@ -552,6 +553,7 @@ def signed_copy(document_id: uuid.UUID, db: Db, principal: CurrentUser) -> Respo
     document = db.get(Document, document_id)
     if document is None:
         raise NotFound(DOCUMENT_NOT_FOUND)
+    access.ensure_document(db, principal, document, DOCUMENT_NOT_FOUND)
     if not document.storage_key:
         raise NotFound(
             "No signed copy is held for this document. It may not have been executed "
@@ -587,6 +589,7 @@ def get_hash(document_id: uuid.UUID, db: Db, principal: CurrentUser) -> dict:
     document = db.get(Document, document_id)
     if document is None:
         raise NotFound(DOCUMENT_NOT_FOUND)
+    access.ensure_document(db, principal, document, DOCUMENT_NOT_FOUND)
     return {
         "document_id": str(document.id),
         "content_hash": document.content_hash,
@@ -601,6 +604,7 @@ def download(document_id: uuid.UUID, db: Db, principal: CurrentUser) -> Response
     document = db.get(Document, document_id)
     if document is None:
         raise NotFound(DOCUMENT_NOT_FOUND)
+    access.ensure_document(db, principal, document, DOCUMENT_NOT_FOUND)
 
     # Their file, where we hold it.
     #
@@ -672,6 +676,10 @@ def download(document_id: uuid.UUID, db: Db, principal: CurrentUser) -> Response
 def list_documents(
     matter_id: uuid.UUID, db: Db, principal: CurrentUser
 ) -> list[DocumentOut]:
+    matter = db.get(Matter, matter_id)
+    if matter is None:
+        raise NotFound("That matter was not found.")
+    access.ensure_matter(db, principal, matter, "That matter was not found.")
     documents = db.execute(
         select(Document)
         .where(Document.matter_id == matter_id)
@@ -737,7 +745,7 @@ def save_document_source(
     except docx_import.NotADocx as exc:
         raise ValidationFailed("That file could not be read.", {"file": str(exc)}) from exc
 
-    key = f"matters/{matter.number}/counterparty/{digest[:12]}-{document.name}"
+    key = storage.upload_key(f"matters/{matter.number}/counterparty", document.name)
     storage.store.put(key, data, DOCX_MEDIA_TYPE)
 
     edited = Document(
