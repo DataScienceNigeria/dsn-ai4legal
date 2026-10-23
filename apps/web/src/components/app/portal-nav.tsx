@@ -1,13 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import * as React from "react";
 
 import { Icon } from "@/components/app/icons";
 import { useSession } from "@/components/app/session";
-import { Button } from "@/components/ui";
-import { logout } from "@/lib/api";
+import { SignOutButton } from "@/components/app/sign-out";
 import { cn } from "@/lib/utils";
 
 /*
@@ -61,7 +60,6 @@ const SIDE_LINKS = [
 export function PortalNav() {
   const { me } = useSession();
   const pathname = usePathname();
-  const router = useRouter();
 
   const hasWorkspace = (me?.roles ?? []).some((role) => WORKSPACE_ROLES.has(role));
 
@@ -82,18 +80,11 @@ export function PortalNav() {
         </Link>
       ) : null}
 
-      <Button
-        size="sm"
-        variant="destructive"
-        onClick={() => {
-          logout();
-          router.replace("/sign-in");
-        }}
-      >
+      <SignOutButton size="sm" variant="destructive">
         <Icon name="signout" className="h-4 w-4" />
         <span className="hidden sm:inline">Sign out</span>
         <span className="sr-only sm:hidden">Sign out</span>
-      </Button>
+      </SignOutButton>
     </nav>
   );
 }

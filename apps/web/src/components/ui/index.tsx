@@ -1014,9 +1014,14 @@ export function Modal({
     (field ?? panel.current?.querySelector<HTMLElement>("button:not([data-dismiss])"))?.focus();
   }, [open]);
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
 
-  return (
+  /*
+    Portalled to the body. Rendered in place, a dialog opened from the sidebar
+    sat inside the sidebar's stacking context, and the page's sticky headers
+    painted over it.
+  */
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:items-center sm:p-6">
       {dismissible ? (
         <button
@@ -1055,14 +1060,17 @@ export function Modal({
             </Button>
           ) : null}
         </div>
-        <div className="max-h-[70vh] space-y-4 overflow-y-auto p-5">{children}</div>
+        {React.Children.toArray(children).length ? (
+          <div className="max-h-[70vh] space-y-4 overflow-y-auto p-5">{children}</div>
+        ) : null}
         {footer ? (
           <div className="flex flex-wrap items-center justify-end gap-2 border-t bg-muted/30 px-5 py-3.5">
             {footer}
           </div>
         ) : null}
       </dialog>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

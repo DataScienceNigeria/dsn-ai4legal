@@ -20,9 +20,19 @@ const DECLARED: [keyof RequestDetail, string][] = [
   under each reads as a form someone is still filling in; a list of statements
   reads as the request.
 */
-function Detail({ label, children }: Readonly<{ label: string; children: React.ReactNode }>) {
+function Detail({
+  label,
+  stacked = false,
+  children,
+}: Readonly<{ label: string; stacked?: boolean; children: React.ReactNode }>) {
   return (
-    <div className="grid gap-x-3 gap-y-0.5 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)]">
+    <div
+      className={
+        stacked
+          ? "grid gap-y-1"
+          : "grid gap-x-3 gap-y-0.5 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)]"
+      }
+    >
       <dt className="text-sm text-muted-foreground">{label}</dt>
       <dd className="min-w-0 text-sm">{children}</dd>
     </div>
@@ -148,7 +158,7 @@ export function RequestPanel({
   const supplied = (
     <dl className="space-y-2.5">
       {request.purpose ? (
-        <Detail label="Purpose, in their words">
+        <Detail label="Purpose, in their words" stacked>
           <span className="whitespace-pre-wrap leading-relaxed">{request.purpose}</span>
         </Detail>
       ) : null}
@@ -214,7 +224,7 @@ export function RequestPanel({
           <div className="lg:border-l lg:pl-8">{supplied}</div>
         </CardBody>
       ) : (
-        <CardBody className="grid gap-x-8 gap-y-5 lg:grid-cols-2">
+        <CardBody className="space-y-5">
           <KeyValue
             rows={[
               ["Raised", formatDateTime(request.submitted_at)],
@@ -225,7 +235,7 @@ export function RequestPanel({
               ],
             ]}
           />
-          <div className="lg:border-l lg:pl-8">{supplied}</div>
+          <div className="border-t pt-5">{supplied}</div>
         </CardBody>
       )}
     </Card>

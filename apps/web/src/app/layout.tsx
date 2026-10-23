@@ -6,6 +6,7 @@ export const metadata: Metadata = {
   title: "Legal Operations Platform",
   description:
     "DSN and EqualyzAI legal operations. AI may recommend, an authorised human confirms.",
+  icons: { icon: "/favicon.png", apple: "/favicon.png" },
 };
 
 /*

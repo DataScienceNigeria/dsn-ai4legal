@@ -8,10 +8,10 @@ import * as React from "react";
 import { Icon, type IconName } from "@/components/app/icons";
 import { Notifications } from "@/components/app/notifications";
 import { Search } from "@/components/app/search";
+import { SignOutButton } from "@/components/app/sign-out";
 import { useSession } from "@/components/app/session";
 import { ThemeToggle } from "@/components/app/theme-toggle";
 import { Button, Spinner } from "@/components/ui";
-import { logout } from "@/lib/api";
 import { useApi } from "@/lib/hooks";
 import type { Me, NavCounts, SearchHit, SearchResults } from "@/lib/types";
 import { cn, entityTone, initials, titleCase } from "@/lib/utils";
@@ -187,6 +187,11 @@ const ENTITY_NAMES: Record<string, string> = {
   EAI: "EqualyzAI",
 };
 
+const ENTITY_LOGOS: Record<string, string> = {
+  DSN: "/dsn-logo.png",
+  EAI: "/eai-mark.png",
+};
+
 /*
   The organisation already tints the whole surface through the data-entity
   tokens in globals.css. That tint is deliberately faint, and faint colour is
@@ -297,7 +302,7 @@ function SidebarBrand({
       className={cn("flex items-center gap-3 border-b py-4", collapsed ? "flex-col px-2" : "px-4")}
     >
       <Image
-        src="/dsn-logo.png"
+        src={ENTITY_LOGOS[entity] ?? "/dsn-logo.png"}
         alt=""
         width={34}
         height={34}
@@ -496,13 +501,7 @@ function SidebarNav({
 }
 
 function SidebarFooter({ me, collapsed }: Readonly<{ me: Me; collapsed: boolean }>) {
-  const router = useRouter();
   const role = primaryRole(me.roles);
-
-  const signOut = () => {
-    logout();
-    router.replace("/sign-in");
-  };
 
   return (
     <div className={cn("border-t py-3", collapsed ? "px-2" : "px-3")}>
@@ -530,16 +529,15 @@ function SidebarFooter({ me, collapsed }: Readonly<{ me: Me; collapsed: boolean 
             <div className="truncate text-xs text-muted-foreground">{role}</div>
           </div>
         )}
-        <Button
+        <SignOutButton
           variant="ghost"
           size="sm"
           title="Sign out"
           aria-label="Sign out"
           className="h-9 w-9 shrink-0 px-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-          onClick={signOut}
         >
           <Icon name="signout" className="h-4 w-4" />
-        </Button>
+        </SignOutButton>
       </div>
     </div>
   );

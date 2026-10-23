@@ -44,7 +44,7 @@ import type {
 } from "@/lib/types";
 import { cn, decisionTone, entityTone, formatDateTime, titleCase } from "@/lib/utils";
 
-const RETENTION_COLS = "minmax(0,1fr) 6.875rem 8.75rem 8.125rem minmax(0,1.2fr)";
+const RETENTION_COLS = "minmax(10rem,1fr) 6.875rem 8.75rem 8.125rem minmax(20rem,1.6fr)";
 const EXPORT_COLS = "9.375rem minmax(0,1.4fr) 7.5rem 10rem";
 const DELETION_COLS = "8.75rem minmax(0,1.2fr) 7.5rem 11.25rem 10rem";
 const CONNECTOR_COLS =
@@ -133,7 +133,7 @@ function Retention() {
       <Card>
         <CardHeader title="Retention schedules" />
         <div className="table-scroll">
-          <div className="min-w-[55rem]">
+          <div className="min-w-[62rem]">
             <Row cols={RETENTION_COLS} head>
               <div>Record class</div>
               <div>Retain</div>
@@ -182,19 +182,21 @@ function Retention() {
                         </Button>
                       </div>
                     ) : (
-                      <div className="flex items-end gap-2">
-                        <Field label="Reason">
-                          <Input
-                            value={reason[policy.record_class] ?? ""}
-                            onChange={(event) =>
-                              setReason({
-                                ...reason,
-                                [policy.record_class]: event.target.value,
-                              })
-                            }
-                            placeholder="Why the hold is needed"
-                          />
-                        </Field>
+                      <div className="flex flex-wrap items-end gap-2">
+                        <div className="min-w-[14rem] flex-1">
+                          <Field label="Reason">
+                            <Input
+                              value={reason[policy.record_class] ?? ""}
+                              onChange={(event) =>
+                                setReason({
+                                  ...reason,
+                                  [policy.record_class]: event.target.value,
+                                })
+                              }
+                              placeholder="Why the hold is needed"
+                            />
+                          </Field>
+                        </div>
                         <Button
                           size="sm"
                           variant="destructive"

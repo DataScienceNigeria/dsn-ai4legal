@@ -62,7 +62,7 @@ wait_for() {
 stop_host() {
   pkill -f "uvicorn app.main:app" 2>/dev/null || true
   pkill -f "celery -A app.worker.celery_app" 2>/dev/null || true
-  pkill -f "next dev" 2>/dev/null || true
+  pkill -f "$WEB/node_modules/.bin/next dev" 2>/dev/null || true
   echo "Host processes stopped. Containers are still running."
 }
 
@@ -96,7 +96,7 @@ start_worker() {
 }
 
 start_web() {
-  if running "next dev"; then
+  if running "$WEB/node_modules/.bin/next dev"; then
     echo "  web already running."
     return
   fi
