@@ -12,22 +12,25 @@
     "predev": "npm run sync:superdoc",
     "prebuild": ""
   },
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
   "dependencies": {
+    "clsx": "2.1.1",
     "next": "15.5.28",
     "react": "19.0.9",
     "react-dom": "19.0.9",
     "superdoc": "2.8.0",
-    "clsx": "2.1.1",
     "tailwind-merge": "2.6.0"
   },
   "devDependencies": {
-    "@types/node": "22.10.7",
+    "@types/node": "^24.19.2",
     "@types/react": "19.0.7",
     "@types/react-dom": "19.0.3",
-    "typescript": "5.7.3",
-    "tailwindcss": "3.4.17",
-    "postcss": "8.5.1",
     "autoprefixer": "10.4.20",
+    "postcss": "8.5.1",
+    "tailwindcss": "3.4.17",
+    "typescript": "5.7.3",
     "vitest": "2.1.8"
   }
 }
