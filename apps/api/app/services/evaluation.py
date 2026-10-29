@@ -657,21 +657,29 @@ def sweep(session: Session, entity: str = "EAI") -> list[dict]:
 
     A capability nobody has measured for a quarter is not a capability anyone
     can defend, so the schedule does it whether or not anyone remembers.
+
+    Each capability is committed on its own. Recording a result appends to the
+    audit chain, which holds the chain lock until the transaction ends; one
+    transaction for the whole sweep held it through every later capability's
+    model calls, and every sign-in and audited write on the platform waited
+    behind it.
     """
     outcomes: list[dict] = []
-    for capability in session.execute(select(Capability)).scalars():
+    for capability in list(session.execute(select(Capability)).scalars()):
+        code = capability.code
         try:
             result = run(session, capability, entity)
+            session.commit()
         except NotMeasurable as exception:
-            outcomes.append(
-                {"capability": capability.code, "measured": False, "reason": str(exception)}
-            )
+            session.rollback()
+            outcomes.append({"capability": code, "measured": False, "reason": str(exception)})
             continue
         except Exception:
-            logger.exception("The evaluation of %s failed.", capability.code)
+            session.rollback()
+            logger.exception("The evaluation of %s failed.", code)
             outcomes.append(
                 {
-                    "capability": capability.code,
+                    "capability": code,
                     "measured": False,
                     "reason": "The run failed. The previous score stands.",
                 }
@@ -679,7 +687,7 @@ def sweep(session: Session, entity: str = "EAI") -> list[dict]:
             continue
         outcomes.append(
             {
-                "capability": capability.code,
+                "capability": code,
                 "measured": True,
                 "score": result.score,
                 "passed": result.passed,

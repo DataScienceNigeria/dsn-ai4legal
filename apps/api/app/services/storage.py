@@ -33,6 +33,16 @@ class StorageUnavailable(PlatformError):
         super().__init__(detail, 503)
 
 
+class DocumentMissing(StorageUnavailable):
+    """The store answered, and the key is not in it.
+
+    Told apart from an outage because the two call for different responses: a
+    store that cannot be reached will be back, a file that is gone will not.
+    """
+
+    code = "document_missing"
+
+
 class LocalStore:
     """A folder. Development only: a folder cannot refuse to be edited, so the
     immutability of an executed copy rests on the database constraint here."""
@@ -64,7 +74,7 @@ class LocalStore:
         try:
             return self._path(key).read_bytes()
         except FileNotFoundError as exc:
-            raise StorageUnavailable(f"{key} is not in the document store.") from exc
+            raise DocumentMissing(f"{key} is not in the document store.") from exc
 
     def keys(self) -> list[str]:
         if not self.root.exists():
@@ -182,10 +192,14 @@ class AzureStore:
         return key
 
     def get(self, key: str) -> bytes:
+        from azure.core.exceptions import ResourceNotFoundError
+
         try:
             return self._client().download_blob(key).readall()
         except StorageUnavailable:
             raise
+        except ResourceNotFoundError as exc:
+            raise DocumentMissing(f"{key} is not in the document store.") from exc
         except Exception as exc:
             raise StorageUnavailable(f"{key} could not be read from the document store.") from exc
 

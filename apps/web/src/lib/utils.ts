@@ -48,6 +48,19 @@ export function formatMoney(amount: number | null | undefined, currency = "NGN")
   }).format(amount);
 }
 
+/*
+  The rule a typed amount must meet, mirrored by `number_problem` in the API's
+  requests module: no sign, at most thirteen whole digits, which is what a
+  float carries into NUMERIC(18, 2) exactly, and at most two decimal places.
+*/
+export const AMOUNT_PATTERN = /^\d{0,13}(\.\d{0,2})?$/;
+
+export function groupDigits(raw: string): string {
+  const [whole, fraction] = raw.split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return fraction === undefined ? grouped : `${grouped}.${fraction}`;
+}
+
 export function relativeHours(hours: number): string {
   if (hours < 1) return `${Math.round(hours * 60)} minutes`;
   if (hours < 48) return `${Math.round(hours)} hours`;

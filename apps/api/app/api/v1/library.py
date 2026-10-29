@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
+import logging
 import re
 import uuid
 from datetime import UTC, date, datetime
@@ -41,6 +43,8 @@ from app.services import docx_import, memory, placeholders, storage
 from app.services.generation import GeneratedBlock, GenerationResult, render_docx
 
 router = APIRouter(tags=["library"])
+
+logger = logging.getLogger(__name__)
 
 TEMPLATE_NOT_FOUND = "That template was not found."
 IMPORT_NOT_FOUND = "That import was not found."
@@ -558,10 +562,13 @@ def preview_template(
     if chosen is None:
         raise NotFound("That template has no version to read yet.")
 
+    source = "blocks"
     if chosen.source_key:
-        # Imported paper is served as the paper. Rendering it back out of the
-        # blocks would return a tidied approximation of a document the reader
-        # is trying to check.
+        # Imported paper is served as the paper. When the file has gone from
+        # the store, the version is rebuilt from its saved text so it can still
+        # be read, and the response says so: the reader shows a banner, and the
+        # editor refuses to open it, because saving over a rebuilt copy would
+        # replace the paper with an approximation of it.
         try:
             return Response(
                 content=storage.store.get(chosen.source_key),
@@ -569,29 +576,51 @@ def preview_template(
                 headers={
                     "Content-Disposition": f'inline; filename="{template.code}.docx"',
                     "X-Template-Version": chosen.reference,
+                    "X-Template-Source": "original",
                 },
             )
-        except FileNotFoundError:
-            pass
+        except storage.DocumentMissing:
+            logger.error(
+                "Storage incident: %s %s points at %s, which is not in the document store. "
+                "Served a copy rebuilt from the saved text.",
+                template.code,
+                chosen.reference,
+                chosen.source_key,
+            )
+            source = "rebuilt"
 
-    blocks = [_preview_block(db, entry) for entry in (chosen.body or [])]
-    result = GenerationResult(
-        blocks=blocks,
-        values={},
-        checks=[],
-        content_hash="",
-        template_reference=chosen.reference,
-        clause_references=list(chosen.clause_references or []),
-    )
-    title = f"{template.name} ({chosen.reference})"
     return Response(
-        content=render_docx(result, title),
+        content=_render_version(db, template, chosen),
         media_type=DOCX_MEDIA_TYPE,
         headers={
             "Content-Disposition": f'inline; filename="{template.code}-{chosen.reference}.docx"',
             "X-Template-Version": chosen.reference,
+            "X-Template-Source": source,
         },
     )
+
+
+def _render_version(db, template: Template, version: TemplateVersion) -> bytes:
+    """A version as Word, assembled from its saved blocks."""
+    result = GenerationResult(
+        blocks=[_preview_block(db, entry) for entry in (version.body or [])],
+        values={},
+        checks=[],
+        content_hash="",
+        template_reference=version.reference,
+        clause_references=list(version.clause_references or []),
+    )
+    return render_docx(result, f"{template.name} ({version.reference})")
+
+
+def _source_missing(version: TemplateVersion) -> bool:
+    if not version.source_key:
+        return False
+    try:
+        storage.store.get(version.source_key)
+    except storage.DocumentMissing:
+        return True
+    return False
 
 
 def _preview_block(db, entry: dict) -> GeneratedBlock:
@@ -655,6 +684,13 @@ def save_template_source(
             "and edit that."
         )
 
+    if _source_missing(draft):
+        raise Conflict(
+            "The original file of this draft is missing, so an edit cannot be saved over "
+            "it. Start editing from the rebuilt version first, which records that the "
+            "original was replaced."
+        )
+
     data = file.file.read()
     digest = storage.validate_upload(f"{code}.docx", DOCX_MEDIA_TYPE, data)
     if digest == draft.source_hash:
@@ -684,6 +720,51 @@ def save_template_source(
         "saved": True,
         "saved_at": datetime.now(UTC).isoformat(),
     }
+
+
+@router.post("/templates/{code}/source/rebuild")
+def rebuild_template_source(code: str, db: Db, principal: CurrentUser) -> dict:
+    """Replace a draft's missing file with one rebuilt from its saved text.
+
+    Deliberate and recorded. The rebuilt file is an approximation of the
+    paper, so it only ever replaces the original when somebody chooses to, and
+    only when the original is actually gone.
+    """
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    template = db.execute(select(Template).where(Template.code == code)).scalar_one_or_none()
+    if template is None:
+        raise NotFound(TEMPLATE_NOT_FOUND)
+
+    draft = next(
+        (v for v in template.versions if v.status == VersionStatus.DRAFT.value), None
+    )
+    if draft is None:
+        raise Conflict("This template has no open draft to rebuild.")
+    if not _source_missing(draft):
+        raise Conflict(
+            "The original file of this draft is in the document store, so there is "
+            "nothing to rebuild."
+        )
+
+    data = _render_version(db, template, draft)
+    digest = hashlib.sha256(data).hexdigest()
+    missing_key = draft.source_key
+    draft.source_key = f"templates/{template.code}/{draft.reference}-rebuilt-{digest[:12]}.docx"
+    draft.source_hash = digest
+    storage.store.put(draft.source_key, data, DOCX_MEDIA_TYPE)
+
+    audit.record(
+        db,
+        action="template_source_rebuilt",
+        object_type="template",
+        object_id=template.code,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        before_state={"version": draft.reference, "missing_file": missing_key},
+        after_state={"version": draft.reference, "file": draft.source_key, "hash": digest},
+        detail="The original file was missing. Replaced with a copy rebuilt from the saved text.",
+    )
+    return {"revision": draft.reference, "rebuilt": True}
 
 
 @router.post("/templates/{code}/versions", response_model=TemplateVersionOut, status_code=201)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Annotated
 
 from fastapi import APIRouter, File, Request, Response, UploadFile
@@ -109,7 +110,49 @@ def validate_mandatory(request_type: RequestType, payload: RequestCreate) -> dic
         value = supplied.get(name)
         if value is None or (isinstance(value, str) and not value.strip()):
             errors[name] = f"{labels.get(name, name)} is required for this request type."
+
+    numbers = {f["name"] for f in (request_type.fields or []) if f.get("type") == "number"}
+    checks = [(name, supplied.get(name)) for name in numbers]
+    checks.append(("value_amount", payload.value_amount))
+    for name, value in checks:
+        if name in errors:
+            continue
+        problem = number_problem(value)
+        if problem:
+            errors[name] = f"{labels.get(name, 'Value')} {problem}"
     return errors
+
+
+#: Amounts are NUMERIC(18, 2) but arrive as floats, and Postgres converts a
+#: float to numeric at fifteen significant digits. Thirteen whole digits and two
+#: decimals is the most that survives that exactly.
+AMOUNT_LIMIT = Decimal("1e13")
+
+
+def number_problem(value: object) -> str | None:
+    """Why a number answer cannot be accepted, or None when it can.
+
+    The form sends digits only, but the API is the check that counts: a negative
+    fee was being stored, and a large one overflowed the column and came back as
+    a server error.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, bool):
+        return "must be a number."
+    try:
+        amount = Decimal(str(value).strip())
+    except InvalidOperation:
+        return "must be a number."
+    if not amount.is_finite():
+        return "must be a number."
+    if amount < 0:
+        return "cannot be negative."
+    if amount >= AMOUNT_LIMIT:
+        return "is too large. Use at most thirteen digits before the decimal point."
+    if amount.as_tuple().exponent < -2:
+        return "can have at most two decimal places."
+    return None
 
 
 @router.post("", response_model=RequestOut, status_code=201)

@@ -4,7 +4,7 @@ import Link from "next/link";
 import * as React from "react";
 import { createPortal } from "react-dom";
 
-import { cn } from "@/lib/utils";
+import { AMOUNT_PATTERN, cn, groupDigits } from "@/lib/utils";
 
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
@@ -175,6 +175,74 @@ export const inputClass =
 
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cn(inputClass, "h-10", props.className)} />;
+}
+
+/*
+  A number typed with its thousands grouped as it is entered, so 1000000 reads
+  as 1,000,000 before it is submitted. The value handed back carries no commas.
+  A keystroke the amount rule refuses is not taken, and the field says why
+  under itself rather than appearing not to work.
+*/
+export function NumberInput({
+  value,
+  onValueChange,
+  className,
+  ...props
+}: Readonly<
+  Omit<React.InputHTMLAttributes<HTMLInputElement>, "type" | "value" | "onChange"> & {
+    value: string;
+    onValueChange: (raw: string) => void;
+  }
+>) {
+  const ref = React.useRef<HTMLInputElement>(null);
+  const caret = React.useRef<number | null>(null);
+  const [refused, setRefused] = React.useState(false);
+  const shown = groupDigits(value);
+
+  React.useLayoutEffect(() => {
+    const field = ref.current;
+    if (field === null || caret.current === null) return;
+    let kept = 0;
+    let position = 0;
+    while (position < shown.length && kept < caret.current) {
+      if (shown[position] !== ",") kept += 1;
+      position += 1;
+    }
+    field.setSelectionRange(position, position);
+    caret.current = null;
+  }, [shown]);
+
+  return (
+    <div className="flex-1 space-y-1">
+      <input
+        {...props}
+        ref={ref}
+        type="text"
+        inputMode="decimal"
+        autoComplete="off"
+        value={shown}
+        onChange={(event) => {
+          const typed = event.target.value;
+          const raw = typed.replaceAll(",", "").trim();
+          if (!AMOUNT_PATTERN.test(raw)) {
+            setRefused(true);
+            return;
+          }
+          setRefused(false);
+          const before = typed.slice(0, event.target.selectionStart ?? typed.length);
+          caret.current = before.replaceAll(",", "").length;
+          onValueChange(raw);
+        }}
+        aria-invalid={refused || props["aria-invalid"]}
+        className={cn(inputClass, "h-10 w-full tabular-nums", className)}
+      />
+      {refused ? (
+        <p role="status" className="text-xs text-destructive">
+          Digits only, with up to two decimal places and no more than thirteen before the point.
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 /*

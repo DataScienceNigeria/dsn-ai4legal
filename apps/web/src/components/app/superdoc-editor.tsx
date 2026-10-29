@@ -129,6 +129,8 @@ export function SuperDocEditor({
   onExport,
   exportable = true,
   onAutosave,
+  onSource,
+  refuseRebuilt = false,
   height = "60vh",
 }: Readonly<{
   /* The API path the .docx comes from. A generated matter document, a template
@@ -144,6 +146,13 @@ export function SuperDocEditor({
      turns the editor into an autosaving one; without it nothing is written
      back and the surface is read-only in effect. */
   onAutosave?: (file: Blob) => Promise<void>;
+  /* Told what the API says it served, from X-Template-Source: "original" for
+     the stored file, "rebuilt" for a copy assembled from saved text because
+     the file is missing, "blocks" for a template that never had a file. */
+  onSource?: (kind: string | null) => void;
+  /* An editor must not open a rebuilt copy: an autosave would replace the
+     paper with an approximation of it. */
+  refuseRebuilt?: boolean;
   /* CSS length for the document surface. A page gives it the viewport; a
      dialog gives it what the dialog has. */
   height?: string;
@@ -165,6 +174,8 @@ export function SuperDocEditor({
   // does not tear the editor down and remount it mid-sentence.
   const autosaveRef = React.useRef(onAutosave);
   autosaveRef.current = onAutosave;
+  const sourceRef = React.useRef(onSource);
+  sourceRef.current = onSource;
 
   React.useEffect(() => {
     let cancelled = false;
@@ -177,6 +188,14 @@ export function SuperDocEditor({
           headers: { Authorization: `Bearer ${getToken() ?? ""}` },
         });
         if (!response.ok) throw new Error(`The document could not be fetched (${response.status}).`);
+
+        const kind = response.headers.get("X-Template-Source");
+        sourceRef.current?.(kind);
+        if (refuseRebuilt && kind === "rebuilt") {
+          throw new Error(
+            "The original file is missing. Editing would save over it with a rebuilt copy.",
+          );
+        }
 
         const blob = await response.blob();
 
@@ -269,7 +288,7 @@ export function SuperDocEditor({
       }
       instanceRef.current = null;
     };
-  }, [source, documentName, mode, user.name, user.email]);
+  }, [source, documentName, mode, user.name, user.email, refuseRebuilt]);
 
   /*
     Full screen is a container change rather than the Fullscreen API, because

@@ -17,12 +17,14 @@ import {
   Button,
   Card,
   CardBody,
+  Confirm,
   Empty,
   Field,
   MenuItem,
   Modal,
   Mono,
   More,
+  Notice,
   PageTitle,
   Pill,
   Refusal,
@@ -32,7 +34,7 @@ import {
 import { api, download, upload } from "@/lib/api";
 import { useAction, useApi, useQueryParams } from "@/lib/hooks";
 import type { Template, TemplateVersion } from "@/lib/types";
-import { formatDate, titleCase } from "@/lib/utils";
+import { cn, formatDate, titleCase } from "@/lib/utils";
 
 const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
@@ -201,6 +203,26 @@ export default function TemplatePage() {
   const [extracting, setExtracting] = React.useState(false);
   const [opening, setOpening] = React.useState(false);
   const [reason, setReason] = React.useState("");
+  const [sourceKind, setSourceKind] = React.useState<string | null>(null);
+  const [confirmingRebuild, setConfirmingRebuild] = React.useState(false);
+  const [generation, setGeneration] = React.useState(0);
+
+  React.useEffect(() => {
+    setSourceKind(null);
+  }, [editing]);
+
+  /*
+    The original file of the draft is gone. Editing the rebuilt copy would
+    autosave it over the paper, so it is a separate, confirmed step that the
+    API records, and the editor only opens once the rebuilt file is the draft.
+  */
+  const rebuild = useAction(async () => {
+    await api(`/templates/${code}/source/rebuild`, { method: "POST" });
+    setConfirmingRebuild(false);
+    setSourceKind(null);
+    setGeneration((value) => value + 1);
+    template.reload();
+  });
 
   /*
     An approved version is never edited in place, so editing needs a draft.
@@ -281,10 +303,48 @@ export default function TemplatePage() {
         />
       ) : null}
 
-      <Card className="overflow-hidden">
+      {sourceKind === "rebuilt" && !editing ? (
+        <Notice tone="warn" title="The original file could not be fetched">
+          This version is rebuilt from the saved text and may differ from the original Word
+          document, in formatting, tables and headers especially. The missing file has been
+          logged as a storage incident.
+        </Notice>
+      ) : null}
+
+      {sourceKind === "rebuilt" && editing ? (
+        <Notice tone="bad" title="The original file of this draft is missing">
+          <p>
+            Editing here would save over it with a copy rebuilt from the saved text, which may
+            differ from the original. You can start from the rebuilt version instead; that
+            replaces the missing file and is recorded on the audit trail.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button size="sm" variant="primary" onClick={() => setConfirmingRebuild(true)}>
+              Start editing from the rebuilt version
+            </Button>
+            <Button size="sm" onClick={() => setMode("read")}>
+              Back to reading
+            </Button>
+          </div>
+        </Notice>
+      ) : null}
+
+      <Confirm
+        open={confirmingRebuild}
+        title="Start from the rebuilt version?"
+        detail="The draft's missing file is replaced with a copy rebuilt from the saved text. Formatting the rebuild could not carry over is not recovered. This is recorded on the audit trail."
+        confirmLabel="Replace and start editing"
+        destructive
+        busy={rebuild.busy}
+        error={rebuild.error?.message ?? null}
+        onCancel={() => setConfirmingRebuild(false)}
+        onConfirm={() => void rebuild.run()}
+      />
+
+      <Card className={cn("overflow-hidden", editing && sourceKind === "rebuilt" && "hidden")}>
         <CardBody className="p-0">
           <SuperDocEditor
-            key={editing ? "edit" : "read"}
+            key={`${editing ? "edit" : "read"}-${generation}`}
             source={
               editing
                 ? `/templates/${code}/preview?version=${draft?.reference ?? ""}`
@@ -294,6 +354,8 @@ export default function TemplatePage() {
             mode={editing ? "editing" : "viewing"}
             exportable={false}
             onAutosave={editing ? save : undefined}
+            onSource={setSourceKind}
+            refuseRebuilt={editing}
             user={{ name: me?.name ?? "Legal", email: me?.email ?? "" }}
             height="min(calc(100vh - 15rem), 80vh)"
           />

@@ -13,6 +13,7 @@ import {
   Field,
   Input,
   Notice,
+  NumberInput,
   PageTitle,
   Refusal,
   Select,
@@ -28,7 +29,6 @@ type Answers = Record<string, string | boolean>;
 
 function inputType(type: string): string {
   if (type === "date") return "date";
-  if (type === "number") return "number";
   return "text";
 }
 
@@ -262,17 +262,26 @@ export default function NewRequest() {
                     <option value="false">No</option>
                   </Select>
                 ) : (
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type={inputType(field.type)}
-                      value={String(answers[field.name] ?? "")}
-                      onChange={(event) =>
-                        setAnswers((prev) => ({ ...prev, [field.name]: event.target.value }))
-                      }
-                      className="flex-1"
-                    />
+                  <div className="flex items-start gap-2">
+                    {field.type === "number" ? (
+                      <NumberInput
+                        value={String(answers[field.name] ?? "")}
+                        onValueChange={(raw) =>
+                          setAnswers((prev) => ({ ...prev, [field.name]: raw }))
+                        }
+                      />
+                    ) : (
+                      <Input
+                        type={inputType(field.type)}
+                        value={String(answers[field.name] ?? "")}
+                        onChange={(event) =>
+                          setAnswers((prev) => ({ ...prev, [field.name]: event.target.value }))
+                        }
+                        className="flex-1"
+                      />
+                    )}
                     {field.unit ? (
-                      <span className="shrink-0 text-sm text-muted-foreground">{field.unit}</span>
+                      <span className="shrink-0 pt-2.5 text-sm text-muted-foreground">{field.unit}</span>
                     ) : null}
                   </div>
                 )}
