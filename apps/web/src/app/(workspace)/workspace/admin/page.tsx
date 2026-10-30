@@ -1224,6 +1224,11 @@ function People() {
                     <Pill tone={user.mfa_enrolled ? "good" : "neutral"}>
                       {user.mfa_enrolled ? "Enrolled" : "Not enrolled"}
                     </Pill>
+                    {user.password_must_change ? (
+                      <div className="mt-1">
+                        <Pill tone="warn">Password not yet changed</Pill>
+                      </div>
+                    ) : null}
                   </div>
                   {canWrite ? (
                     <div className="flex items-center gap-1.5">

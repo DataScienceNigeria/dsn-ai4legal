@@ -135,7 +135,13 @@ function TemplateHeader({
             </MenuItem>
             {canExtract ? <MenuItem onClick={onExtract}>Extract clauses</MenuItem> : null}
             {canPropose ? (
-              <ProposeVersion kind="template" code={code} current={null} onDone={onChanged} />
+              <ProposeVersion
+                kind="template"
+                code={code}
+                current={null}
+                onDone={onChanged}
+                variant="default"
+              />
             ) : null}
           </More>
         </>

@@ -121,6 +121,50 @@ function SaveState({
   return <output className="shrink-0 text-xs text-muted-foreground">{label}</output>;
 }
 
+/*
+  The file the editor opens, fetched with the session's token and checked
+  before SuperDoc sees it. The API says in X-Template-Source whether it served
+  the stored file or a copy rebuilt because the file is missing; an editor
+  must not open a rebuilt copy, because an autosave would replace the paper
+  with an approximation of it.
+
+  SuperDoc edits Word files and nothing else. A signed copy is commonly a PDF
+  and their paper sometimes is, and both used to arrive here labelled as a
+  DOCX, so the editor tried to unzip a PDF and failed with a message about a
+  source it could not prepare. Checked here and named, because "could not be
+  prepared" tells the reader nothing they can act on.
+*/
+async function fetchWordFile(
+  source: string,
+  refuseRebuilt: boolean,
+  onSource: (kind: string | null) => void,
+): Promise<Blob> {
+  const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+  const response = await fetch(`${base}/api/v1${source}`, {
+    headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+  });
+  if (!response.ok) throw new Error(`The document could not be fetched (${response.status}).`);
+
+  const kind = response.headers.get("X-Template-Source");
+  onSource(kind);
+  if (refuseRebuilt && kind === "rebuilt") {
+    throw new Error("The original file is missing. Editing would save over it with a rebuilt copy.");
+  }
+
+  const blob = await response.blob();
+  const header = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
+  const isZip =
+    header[0] === 0x50 && header[1] === 0x4b && header[2] === 0x03 && header[3] === 0x04;
+  if (isZip) return blob;
+
+  const isPdf = String.fromCodePoint(...header.slice(0, 5)) === "%PDF-";
+  throw new Error(
+    isPdf
+      ? "This is a PDF. The editor works on Word files, so there is nothing here to edit."
+      : "This file is not a Word document, so the editor cannot open it.",
+  );
+}
+
 export function SuperDocEditor({
   source,
   documentName,
@@ -183,42 +227,9 @@ export function SuperDocEditor({
     async function mount() {
       setState("loading");
       try {
-        const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-        const response = await fetch(`${base}/api/v1${source}`, {
-          headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-        });
-        if (!response.ok) throw new Error(`The document could not be fetched (${response.status}).`);
-
-        const kind = response.headers.get("X-Template-Source");
-        sourceRef.current?.(kind);
-        if (refuseRebuilt && kind === "rebuilt") {
-          throw new Error(
-            "The original file is missing. Editing would save over it with a rebuilt copy.",
-          );
-        }
-
-        const blob = await response.blob();
-
-        /*
-          SuperDoc edits Word files and nothing else. A signed copy is commonly
-          a PDF and their paper sometimes is, and both used to arrive here
-          labelled as a DOCX, so the editor tried to unzip a PDF and failed
-          with a message about a source it could not prepare. Checked here and
-          named, because "could not be prepared" tells the reader nothing they
-          can act on.
-        */
-        const header = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
-        const isZip =
-          header[0] === 0x50 && header[1] === 0x4b && header[2] === 0x03 && header[3] === 0x04;
-        if (!isZip) {
-          const isPdf = String.fromCharCode(...header.slice(0, 5)) === "%PDF-";
-          throw new Error(
-            isPdf
-              ? "This is a PDF. The editor works on Word files, so there is nothing here to edit."
-              : "This file is not a Word document, so the editor cannot open it.",
-          );
-        }
-
+        const blob = await fetchWordFile(source, refuseRebuilt, (kind) =>
+          sourceRef.current?.(kind),
+        );
         const file = new File([blob], `${documentName}.docx`, { type: blob.type });
 
         const [{ SuperDoc }] = await Promise.all([
@@ -232,6 +243,13 @@ export function SuperDocEditor({
         instanceRef.current = new SuperDoc({
           selector: mountRef.current,
           toolbar: toolbarRef.current ?? undefined,
+          /*
+            Sized to the viewport by default, the toolbar laid out more than
+            its host holds beside the sidebar, and alignment, lists, indents
+            and the overflow control itself ran off the right edge. Sized to
+            its container, what does not fit goes into the overflow menu.
+          */
+          modules: { toolbar: { responsiveToContainer: true } },
           document: file,
           workerUrls: WORKER_URLS,
           documentMode: mode,
@@ -322,7 +340,7 @@ export function SuperDocEditor({
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div ref={toolbarRef} className="superdoc-toolbar-host min-h-10 flex-1 overflow-x-auto" />
+        <div ref={toolbarRef} className="superdoc-toolbar-host min-h-10 min-w-0 flex-1" />
         {onAutosave ? <SaveState state={saving} at={savedAt} error={saveError} /> : null}
         <Button
           size="sm"

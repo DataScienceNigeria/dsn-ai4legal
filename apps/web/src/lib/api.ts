@@ -160,18 +160,23 @@ export async function login(
   setToken(result.access_token);
 
   try {
-    const me = await api<{ roles: string[] }>("/auth/me");
-    // External counsel has one page and it is neither of the other two. They
-    // are not staff, so the workspace would refuse every screen in it, and they
-    // are not raising requests, so the portal has nothing for them.
-    if (me.roles.includes("consultant") && !me.roles.some((role) => WORKSPACE_ROLES.has(role))) {
-      return "/consultant";
-    }
-    const belongs = me.roles.some((role) => WORKSPACE_ROLES.has(role));
-    return belongs ? "/workspace" : "/portal";
+    const me = await api<{ roles: string[]; password_must_change?: boolean }>("/auth/me");
+    if (me.password_must_change) return "/account/password";
+    return homeFor(me.roles);
   } catch {
     return "/workspace";
   }
+}
+
+/*
+  Where an account belongs. External counsel has one page and it is neither of
+  the other two. They are not staff, so the workspace would refuse every screen
+  in it, and they are not raising requests, so the portal has nothing for them.
+*/
+export function homeFor(roles: string[]): string {
+  const belongs = roles.some((role) => WORKSPACE_ROLES.has(role));
+  if (roles.includes("consultant") && !belongs) return "/consultant";
+  return belongs ? "/workspace" : "/portal";
 }
 
 export async function stepUp(

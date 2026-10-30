@@ -1,10 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
+import { Spinner } from "@/components/ui";
 import { ApiError, api, getEntity, getToken, setEntity as persistEntity } from "@/lib/api";
 import type { Me } from "@/lib/types";
+
+export const PASSWORD_PAGE = "/account/password";
 
 type Status = "loading" | "ready" | "unauthenticated" | "unreachable";
 
@@ -104,6 +107,17 @@ export function SessionProvider({ children }: Readonly<{ children: React.ReactNo
     if (status === "unauthenticated") router.replace("/sign-in");
   }, [status, router]);
 
+  /*
+    An account whose password an administrator set goes nowhere until it has
+    chosen its own. The API refuses everything else anyway; sending the person
+    to the form is what makes that refusal a step rather than a wall of errors.
+  */
+  const pathname = usePathname();
+  const mustChange = Boolean(me?.password_must_change) && pathname !== PASSWORD_PAGE;
+  React.useEffect(() => {
+    if (mustChange) router.replace(PASSWORD_PAGE);
+  }, [mustChange, router]);
+
   const setEntity = React.useCallback((next: string) => {
     persistEntity(next);
     setEntityState(next);
@@ -133,5 +147,9 @@ export function SessionProvider({ children }: Readonly<{ children: React.ReactNo
     [me, status, error, entity, setEntity, load],
   );
 
-  return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
+  return (
+    <SessionContext.Provider value={value}>
+      {mustChange ? <Spinner label="Taking you to choose your password" /> : children}
+    </SessionContext.Provider>
+  );
 }

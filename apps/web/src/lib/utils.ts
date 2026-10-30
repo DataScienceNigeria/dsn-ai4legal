@@ -122,3 +122,40 @@ export function entityTone(code: string) {
     }
   );
 }
+
+/*
+  The password rule, mirrored by `new_password_problem` in the API's auth
+  module: twelve to two hundred characters, not the current password and not
+  the email address.
+*/
+export const MINIMUM_PASSWORD = 12;
+export const MAXIMUM_PASSWORD = 200;
+
+export function newPasswordProblem(next: string, current: string, email: string): string | null {
+  if (!next) return "Choose a new password.";
+  if (next.length < MINIMUM_PASSWORD) return `Use at least ${MINIMUM_PASSWORD} characters.`;
+  if (next.length > MAXIMUM_PASSWORD) return `Use at most ${MAXIMUM_PASSWORD} characters.`;
+  if (next === current) return "Choose a password different from the current one.";
+  if (next.trim().toLowerCase() === email.trim().toLowerCase()) {
+    return "Your email address cannot be your password.";
+  }
+  return null;
+}
+
+export const ENTITY_NAMES: Record<string, string> = {
+  DSN: "Data Science Nigeria",
+  EAI: "EqualyzAI",
+};
+
+export const ROLE_LABELS: Record<string, string> = {
+  requester: "Requester",
+  management: "Management",
+  counsel: "Legal",
+  head_of_legal: "Legal lead",
+  finance: "Finance",
+  procurement: "Procurement",
+  consultant: "Legal consultant",
+  admin: "Administrator",
+  auditor: "Auditor",
+  counterparty: "Counterparty",
+};

@@ -54,6 +54,7 @@ def administrator(session, *, email: str, name: str, password: str, entities: li
         name=name,
         work_email=email.lower(),
         password_hash=hash_password(password),
+        password_must_change=True,
         roles=[Role.ADMIN.value],
         specialisms=[],
         workload=0,

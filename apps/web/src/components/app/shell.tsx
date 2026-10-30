@@ -14,7 +14,7 @@ import { ThemeToggle } from "@/components/app/theme-toggle";
 import { Button, Spinner } from "@/components/ui";
 import { useApi } from "@/lib/hooks";
 import type { Me, NavCounts, SearchHit, SearchResults } from "@/lib/types";
-import { cn, entityTone, initials, titleCase } from "@/lib/utils";
+import { cn, ENTITY_NAMES, entityTone, initials, ROLE_LABELS, titleCase } from "@/lib/utils";
 
 /*
   The roles on each item mirror the require_role call on the endpoint behind
@@ -182,11 +182,6 @@ const NAV: { group: string; items: NavItem[] }[] = [
 
 const SIDEBAR_KEY = "dsn-lai-sidebar";
 
-const ENTITY_NAMES: Record<string, string> = {
-  DSN: "Data Science Nigeria",
-  EAI: "EqualyzAI",
-};
-
 const ENTITY_LOGOS: Record<string, string> = {
   DSN: "/dsn-logo.png",
   EAI: "/eai-mark.png",
@@ -200,19 +195,6 @@ const ENTITY_LOGOS: Record<string, string> = {
   in one place, `entityTone`, because both organisations appear together here
   and anywhere else that lists them.
 */
-
-const ROLE_LABELS: Record<string, string> = {
-  requester: "Requester",
-  management: "Management",
-  counsel: "Legal",
-  head_of_legal: "Legal lead",
-  finance: "Finance",
-  procurement: "Procurement",
-  consultant: "Legal consultant",
-  admin: "Administrator",
-  auditor: "Auditor",
-  counterparty: "Counterparty",
-};
 
 function permitted(roles: string[], item: NavItem): boolean {
   return item.roles.some((role) => roles.includes(role));
@@ -517,18 +499,25 @@ function SidebarFooter({ me, collapsed }: Readonly<{ me: Me; collapsed: boolean 
         )}
       </Link>
       <div className={cn("flex items-center gap-2", collapsed && "flex-col justify-center")}>
-        <span
-          title={collapsed ? `${me.name}, ${role}` : undefined}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-sm font-semibold text-brand-foreground"
+        <Link
+          href="/account"
+          title={collapsed ? `${me.name}, ${role}. Account settings` : "Account settings"}
+          aria-label="Account settings"
+          className={cn(
+            "flex min-w-0 items-center gap-2 rounded-md text-foreground no-underline transition-colors hover:bg-foreground/[0.06]",
+            collapsed ? "justify-center" : "flex-1 -m-1 p-1",
+          )}
         >
-          {initials(me.name)}
-        </span>
-        {collapsed ? null : (
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium">{me.name}</div>
-            <div className="truncate text-xs text-muted-foreground">{role}</div>
-          </div>
-        )}
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-sm font-semibold text-brand-foreground">
+            {initials(me.name)}
+          </span>
+          {collapsed ? null : (
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">{me.name}</span>
+              <span className="block truncate text-xs text-muted-foreground">{role}</span>
+            </span>
+          )}
+        </Link>
         <SignOutButton
           variant="ghost"
           size="sm"

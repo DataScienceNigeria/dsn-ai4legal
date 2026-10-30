@@ -13,6 +13,9 @@ export type Me = {
   */
   mfa_required: boolean;
   mfa_enrolled: boolean;
+  /* The password was set by an administrator and has not been replaced. The
+     API refuses everything but the change until it is. */
+  password_must_change: boolean;
 };
 
 export type Sla = {
@@ -664,6 +667,7 @@ export type UserRow = {
   workload_ceiling: number;
   active: boolean;
   mfa_enrolled: boolean;
+  password_must_change: boolean;
   last_login: string | null;
 };
 

@@ -49,6 +49,11 @@ class User(UUIDPrimaryKey, Timestamped, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     work_email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
     password_hash: Mapped[str | None] = mapped_column(String(255))
+    # Set when somebody else chose the password, so it is shared until the
+    # person replaces it. The account can do nothing else until they do.
+    password_must_change: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
     roles: Mapped[list[str]] = mapped_column(ARRAY(String(32)), default=list)
     specialisms: Mapped[list[str]] = mapped_column(ARRAY(String(64)), default=list)
     delegate_id: Mapped[uuid.UUID | None] = mapped_column(

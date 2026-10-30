@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core import context
 from app.core.config import settings
-from app.core.errors import Forbidden, Unauthenticated
+from app.core.errors import Forbidden, PasswordChangeRequired, Unauthenticated
 from app.core.security import Principal, decode_token
 from app.db.session import AppSession, apply_security_context, owner_session
 from app.domain.enums import Role
@@ -57,7 +57,7 @@ def _local_account(principal: Principal) -> Principal:
             entities=user.entity_codes or principal.entities,
             authenticated_at=principal.authenticated_at,
             session_id=principal.session_id,
-            extra=principal.extra,
+            extra={**principal.extra, "password_must_change": bool(user.password_must_change)},
         )
 
 
@@ -67,7 +67,31 @@ def _remembered(principal: Principal) -> Principal:
     return principal
 
 
+#: What an account whose password somebody else set may still reach: who it
+#: is, and the change itself.
+PASSWORD_CHANGE_PATHS = frozenset({"/api/v1/auth/me", "/api/v1/auth/password"})
+
+
+def _password_changed(principal: Principal, request: Request) -> Principal:
+    """Refuse everything but the change while the password is somebody else's.
+
+    Checked on the server rather than left to the interface, because a token is
+    as good from a script as from the browser. Local accounts only: a federated
+    account's password belongs to the directory.
+    """
+    if (
+        settings.dsnlai_auth_mode == "local"
+        and principal.extra.get("password_must_change")
+        and request.url.path not in PASSWORD_CHANGE_PATHS
+    ):
+        raise PasswordChangeRequired(
+            "Your password was set by an administrator. Choose your own before you continue."
+        )
+    return principal
+
+
 def get_principal(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> Principal:
     if credentials is None or not credentials.credentials:
@@ -81,7 +105,9 @@ def get_principal(
         # every endpoint that reads only claims kept working, and the first one
         # to look the account up answered with a refusal that named the wrong
         # cause.
-        return _remembered(_local_account(decode_token(credentials.credentials)))
+        return _password_changed(
+            _remembered(_local_account(decode_token(credentials.credentials))), request
+        )
 
     from app.core import oidc
 

@@ -297,6 +297,36 @@
   color: hsl(var(--foreground));
 }
 
+/*
+  Most toolbar controls are not buttons but `.sd-toolbar-item` divs, and their
+  icons carry SuperDoc's own dark grey fill. On the dark card that grey all but
+  disappeared, the overflow control that holds alignment, lists and indents
+  among them, so the icons take the foreground colour here. Disabled items
+  keep SuperDoc's own dimming on top of it.
+*/
+.dark .superdoc-toolbar-host .superdoc-toolbar .sd-toolbar-item,
+.dark .superdoc-toolbar-host .superdoc-toolbar .sd-toolbar-button__caret {
+  color: hsl(var(--foreground));
+}
+
+.dark .superdoc-toolbar-host .superdoc-toolbar .sd-font-combobox__input,
+.dark .superdoc-toolbar-host .superdoc-toolbar .sd-button-label {
+  color: hsl(var(--foreground));
+}
+
+.dark .superdoc-toolbar-host .superdoc-toolbar .overflow-menu_items {
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+}
+
+.dark .superdoc-toolbar-host .superdoc-toolbar .sd-toolbar-item svg,
+.dark .superdoc-toolbar-host .superdoc-toolbar .sd-toolbar-item svg path,
+.dark .superdoc-toolbar-host .superdoc-toolbar .sd-toolbar-button__caret svg,
+.dark .superdoc-toolbar-host .superdoc-toolbar .sd-toolbar-button__caret svg path {
+  fill: currentColor;
+  color: hsl(var(--foreground));
+}
+
 .dark .superdoc-toolbar-host .superdoc-toolbar button:hover {
   background: hsl(var(--accent));
 }

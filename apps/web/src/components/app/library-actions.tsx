@@ -53,11 +53,15 @@ export function ProposeVersion({
   code,
   current,
   onDone,
+  variant = "dark",
 }: Readonly<{
   kind: "clause" | "template";
   code: string;
   current: { house_position?: string; unacceptable_position?: string | null; fallbacks?: Fallback[] } | null;
   onDone: () => void;
+  /* "default" inside a More menu, which takes away a button's fill: the dark
+     variant's light text was left on the menu's light panel. */
+  variant?: "dark" | "default";
 }>) {
   const [open, setOpen] = React.useState(false);
   const [summary, setSummary] = React.useState("");
@@ -106,7 +110,7 @@ export function ProposeVersion({
 
   return (
     <>
-      <Button size="sm" variant="dark" onClick={() => setOpen(true)}>
+      <Button size="sm" variant={variant} onClick={() => setOpen(true)}>
         <Icon name="rename" className="h-4 w-4" />
         Propose a change
       </Button>

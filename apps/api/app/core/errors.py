@@ -40,6 +40,12 @@ class Forbidden(PlatformError):
         super().__init__(detail, status.HTTP_403_FORBIDDEN)
 
 
+class PasswordChangeRequired(Forbidden):
+    """The account's password was set by somebody else and has not been replaced."""
+
+    code = "password_change_required"
+
+
 class Unauthenticated(PlatformError):
     code = "unauthenticated"
 

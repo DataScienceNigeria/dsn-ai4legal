@@ -937,6 +937,7 @@ def _user_row(user: User) -> dict:
         "workload_ceiling": user.workload_ceiling,
         "active": user.active,
         "mfa_enrolled": user.mfa_enrolled_at is not None,
+        "password_must_change": bool(user.password_must_change),
         "last_login": user.last_login,
     }
 
@@ -1043,6 +1044,7 @@ def create_user(payload: UserCreate, db: Db, principal: CurrentUser) -> dict:
         name=payload.name.strip(),
         work_email=email,
         password_hash=hash_password(payload.password),
+        password_must_change=True,
         roles=roles,
         specialisms=[s.strip() for s in payload.specialisms if s.strip()],
         workload=0,
@@ -1068,6 +1070,7 @@ def create_user(payload: UserCreate, db: Db, principal: CurrentUser) -> dict:
             "roles": roles,
             "entities": entities,
             "password_set": True,
+            "must_change_at_first_sign_in": True,
         },
     )
     return _user_row(user)
@@ -1150,6 +1153,7 @@ def set_user_password(
     user = _person(db, user_id)
 
     user.password_hash = hash_password(payload.password)
+    user.password_must_change = True
     audit.record(
         db,
         action="user_password_set",

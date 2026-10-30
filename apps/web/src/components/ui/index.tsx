@@ -467,6 +467,9 @@ export function More({
   } | null>(null);
   const trigger = React.useRef<HTMLButtonElement>(null);
   const menu = React.useRef<HTMLDivElement>(null);
+  const [mounted, setMounted] = React.useState(false);
+
+  React.useEffect(() => setMounted(true), []);
 
   /*
     The menu wants its right edge under the button's, but a button near the
@@ -537,11 +540,18 @@ export function More({
           &#9662;
         </span>
       </Button>
-      {open
+      {/*
+        Mounted while closed, only hidden. A menu row that opens a dialog owns
+        that dialog's state; unmounting the rows when the menu closed, which a
+        click on the row does, took the dialog down in the same click, so
+        "Propose a change" and "Playbook" opened nothing.
+      */}
+      {mounted
         ? createPortal(
             <div
               ref={menu}
               role="menu"
+              hidden={!open}
               onClick={() => setOpen(false)}
               style={{
                 top: at ? at.top : 0,
@@ -560,7 +570,7 @@ export function More({
                 it", which lit the whole menu up at once and told the reader
                 nothing about what they were about to press.
               */
-              className="fixed z-50 flex w-max min-w-[14rem] flex-col gap-0.5 rounded-lg border bg-popover p-1.5 shadow-lg [&_a]:w-full [&_button]:h-9 [&_button]:w-full [&_button]:justify-start [&_button]:border-transparent [&_button]:bg-transparent [&_button]:font-normal [&_button:hover]:bg-muted"
+              className="fixed z-50 flex w-max min-w-[14rem] flex-col gap-0.5 rounded-lg border bg-popover p-1.5 shadow-lg [&[hidden]]:hidden [&_a]:w-full [&_button]:h-9 [&_button]:w-full [&_button]:justify-start [&_button]:border-transparent [&_button]:bg-transparent [&_button]:font-normal [&_button:hover]:bg-muted"
             >
               {children}
             </div>,

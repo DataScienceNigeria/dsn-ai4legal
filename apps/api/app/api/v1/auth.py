@@ -18,7 +18,7 @@ from app.core import audit, mfa
 from app.core.config import settings
 from app.core.deps import AnonDb, CurrentUser, client_ip
 from app.core.errors import Conflict, Unauthenticated, ValidationFailed
-from app.core.security import create_access_token, verify_password
+from app.core.security import create_access_token, hash_password, verify_password
 from app.db.models.organisation import User
 from app.db.session import owner_session
 from app.schemas.common import Ack
@@ -72,6 +72,32 @@ class MeResponse(BaseModel):
     step_up_valid: bool
     mfa_enrolled: bool = False
     mfa_required: bool = False
+    password_must_change: bool = False
+
+
+#: The same floor an administrator's password for somebody else must meet.
+MINIMUM_PASSWORD = 12
+MAXIMUM_PASSWORD = 200
+
+
+class PasswordChange(BaseModel):
+    current_password: str = ""
+    new_password: str = ""
+
+
+def new_password_problem(new: str, current: str, email: str) -> str | None:
+    """Why a chosen password cannot be used, or None. Mirrored in the browser."""
+    if not new:
+        return "Choose a new password."
+    if len(new) < MINIMUM_PASSWORD:
+        return f"Use at least {MINIMUM_PASSWORD} characters."
+    if len(new) > MAXIMUM_PASSWORD:
+        return f"Use at most {MAXIMUM_PASSWORD} characters."
+    if new == current:
+        return "Choose a password different from the current one."
+    if new.strip().lower() == email.strip().lower():
+        return "Your email address cannot be your password."
+    return None
 
 
 def _consume_recovery_code(user: User, code: str) -> bool:
@@ -295,7 +321,62 @@ def me(principal: CurrentUser, db: AnonDb) -> MeResponse:
         < settings.dsnlai_step_up_window_minutes * 60,
         mfa_enrolled=bool(user and user.mfa_enrolled),
         mfa_required=mfa.is_required_for(principal.roles),
+        password_must_change=bool(
+            settings.dsnlai_auth_mode == "local" and user and user.password_must_change
+        ),
     )
+
+
+@router.post("/password")
+def change_password(
+    payload: PasswordChange, principal: CurrentUser, db: AnonDb, request: Request
+) -> Ack:
+    """Change your own password, knowing the current one.
+
+    The only call an account whose password somebody else set may make. The
+    current password is asked for even then: a session left open is not the
+    person, and a wrong one counts towards the lockout like a wrong sign-in.
+    """
+    if settings.dsnlai_auth_mode != "local":
+        raise Conflict("Passwords are managed by your organisation's sign-in provider.")
+
+    user = db.execute(
+        select(User).where(User.id == uuid.UUID(principal.user_id))
+    ).scalar_one_or_none()
+    if user is None or not user.password_hash:
+        raise Unauthenticated("That account was not found.")
+    if _locked(user):
+        raise Unauthenticated(LOCKED_OUT)
+
+    errors: dict[str, str] = {}
+    if not payload.current_password:
+        errors["current_password"] = "Enter your current password."
+    elif not verify_password(payload.current_password, user.password_hash):
+        _count_failure(user)
+        errors["current_password"] = "That is not your current password."
+    problem = new_password_problem(
+        payload.new_password, payload.current_password, user.work_email
+    )
+    if problem:
+        errors["new_password"] = problem
+    if errors:
+        raise ValidationFailed("Your password was not changed.", errors)
+
+    was_required = bool(user.password_must_change)
+    user.password_hash = hash_password(payload.new_password)
+    user.password_must_change = False
+    user.failed_login_count = 0
+    audit.record(
+        db,
+        action="user_password_changed",
+        object_type="app_user",
+        object_id=str(user.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        ip_address=client_ip(request),
+        after_state={"subject": user.work_email, "replaced_assigned_password": was_required},
+    )
+    return Ack(message="Your password has been changed.")
 
 
 @router.post("/step-up")
