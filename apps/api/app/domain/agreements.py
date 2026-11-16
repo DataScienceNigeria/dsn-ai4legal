@@ -8,8 +8,10 @@ Five places invented their own vocabulary, so the library held a
 ``unknown`` and stay that way.
 
 The list here is the one in the Guide to Engaging the Legal Team, section 3C,
-and nothing else is offered. A type nobody in the organisation can name is a
-type nobody can hold a position on.
+and nothing else is offered, except Programme and Community Participation
+and Content, Media and Intellectual Property, which the legal team's playbook
+added in November 2026. A type nobody in the
+organisation can name is a type nobody can hold a position on.
 """
 
 from __future__ import annotations
@@ -26,6 +28,8 @@ AGREEMENT_TYPES: dict[str, str] = {
     "data_sharing_agreement": "Data Sharing or Data Processing Agreement",
     "memorandum_of_understanding": "Memorandum of Understanding",
     "grant_agreement": "Grant Agreement",
+    "programme_community_participation": "Programme and Community Participation",
+    "content_media_ip": "Content, Media and Intellectual Property",
     "other": "Other",
 }
 

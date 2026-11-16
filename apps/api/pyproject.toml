@@ -26,6 +26,8 @@ dependencies = [
     # Pure Python, no transitive dependencies. The enrolment QR is drawn on
     # the server so the secret is encoded once, by the same code that issued it.
     "segno>=1.6",
+    # Reads the legal team's playbook and clause library workbook, and writes it back.
+    "openpyxl>=3.1",
     # Reads the text layer of a signed PDF for search. Pure Python. A scan with
     # no text layer yields nothing and is archived without being searchable.
     "pypdf>=5.0",

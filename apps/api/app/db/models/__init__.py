@@ -23,7 +23,16 @@ from app.db.models.governance import (
     Product,
 )
 from app.db.models.intake import Attachment, Request, RequestType
-from app.db.models.library import Clause, ClauseVersion, Playbook, Template, TemplateVersion
+from app.db.models.library import (
+    Clause,
+    ClausePrecedent,
+    ClauseVariant,
+    ClauseVersion,
+    LibraryImport,
+    Playbook,
+    Template,
+    TemplateVersion,
+)
 from app.db.models.matter import (
     ConsultantReview,
     DecisionRecord,
@@ -52,7 +61,10 @@ __all__ = [
     "Baseline",
     "Capability",
     "Clause",
+    "ClausePrecedent",
+    "ClauseVariant",
     "ClauseVersion",
+    "LibraryImport",
     "Communication",
     "ComplianceItem",
     "ConfigSetting",

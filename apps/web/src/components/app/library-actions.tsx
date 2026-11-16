@@ -25,7 +25,7 @@ import {
 } from "@/components/ui";
 import { api, download, postForm } from "@/lib/api";
 import { useAction, useApi } from "@/lib/hooks";
-import type { Clause, Fallback } from "@/lib/types";
+import type { Clause, Fallback, Playbook } from "@/lib/types";
 import { titleCase } from "@/lib/utils";
 
 const AUTHORITIES = ["house", "fallback_1", "fallback_2", "fallback_3", "outside"];
@@ -55,9 +55,14 @@ export function ProposeVersion({
   onDone,
   variant = "dark",
 }: Readonly<{
-  kind: "clause" | "template";
+  kind: "clause" | "variant" | "template";
   code: string;
-  current: { house_position?: string; unacceptable_position?: string | null; fallbacks?: Fallback[] } | null;
+  current: {
+    house_position?: string;
+    standard_position?: string | null;
+    unacceptable_position?: string | null;
+    fallbacks?: Fallback[];
+  } | null;
   onDone: () => void;
   /* "default" inside a More menu, which takes away a button's fill: the dark
      variant's light text was left on the menu's light panel. */
@@ -66,6 +71,7 @@ export function ProposeVersion({
   const [open, setOpen] = React.useState(false);
   const [summary, setSummary] = React.useState("");
   const [housePosition, setHousePosition] = React.useState("");
+  const [standardPosition, setStandardPosition] = React.useState("");
   const [unacceptable, setUnacceptable] = React.useState("");
   const [fallbacks, setFallbacks] = React.useState<(Fallback & { id: string })[]>([]);
   const [effective, setEffective] = React.useState("");
@@ -74,6 +80,7 @@ export function ProposeVersion({
   React.useEffect(() => {
     if (!open) return;
     setHousePosition(current?.house_position ?? "");
+    setStandardPosition(current?.standard_position ?? "");
     setUnacceptable(current?.unacceptable_position ?? "");
     setFallbacks(
       (current?.fallbacks ?? []).map((fallback) => ({
@@ -84,12 +91,17 @@ export function ProposeVersion({
   }, [open, current]);
 
   const propose = useAction(async () => {
-    const path = kind === "clause" ? `/clauses/${code}/versions` : `/templates/${code}/versions`;
+    const path = {
+      clause: `/clauses/${code}/versions`,
+      variant: `/clause-variants/${code}/versions`,
+      template: `/templates/${code}/versions`,
+    }[kind];
     await api(path, {
       method: "POST",
       body: {
         change_summary: summary,
         house_position: housePosition || undefined,
+        standard_position: kind === "variant" ? standardPosition || undefined : undefined,
         unacceptable_position: unacceptable || undefined,
         fallbacks: fallbacks.length ? fallbacks : undefined,
         effective_date: effective || undefined,
@@ -116,7 +128,7 @@ export function ProposeVersion({
       </Button>
       <Modal
         open={open}
-        title={`Propose a new ${kind} version`}
+        title={`Propose a new ${kind === "template" ? "template" : "clause"} version`}
         subtitle="This creates a draft. It is not house position and cannot generate anything until it is published."
         width="lg"
         onClose={() => setOpen(false)}
@@ -133,11 +145,30 @@ export function ProposeVersion({
           </>
         }
       >
-        <Field label="What is changing and why" required hint="This becomes the provenance line on the version.">
-          <Textarea value={summary} onChange={(event) => setSummary(event.target.value)} />
+        <Field
+          label="What is changing and why"
+          required
+          hint="At least 10 characters. This becomes the provenance line on the version."
+          error={propose.error?.fieldErrors.change_summary}
+        >
+          <Textarea value={summary} maxLength={1000} onChange={(event) => setSummary(event.target.value)} />
         </Field>
 
-        {kind === "clause" ? (
+        {kind === "variant" ? (
+          <Field
+            label="Standard position"
+            hint="The playbook's statement of what we ask for. Left as it is, it carries over."
+            error={propose.error?.fieldErrors.standard_position}
+          >
+            <Textarea
+              value={standardPosition}
+              maxLength={4000}
+              onChange={(event) => setStandardPosition(event.target.value)}
+            />
+          </Field>
+        ) : null}
+
+        {kind === "template" ? null : (
           <>
             <Field label="House position" hint="Left as it is, the current wording carries over.">
               <Textarea
@@ -208,7 +239,7 @@ export function ProposeVersion({
               <Textarea value={unacceptable} onChange={(event) => setUnacceptable(event.target.value)} />
             </Field>
           </>
-        ) : null}
+        )}
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Effective from" hint="Left blank, it takes effect on publication.">
@@ -333,15 +364,10 @@ export function ClauseDiff({ category }: Readonly<{ category: string }>) {
   );
 }
 
-type RequiredClause = {
-  name: string;
-  category: string;
-  absent_severity: string;
-};
-
-const ABSENT_TONE: Record<string, "bad" | "warn" | "neutral"> = {
+export const ABSENT_TONE: Record<string, "bad" | "warn" | "neutral"> = {
   critical: "bad",
   major: "warn",
+  material: "warn",
   minor: "neutral",
 };
 
@@ -352,11 +378,13 @@ const ABSENT_TONE: Record<string, "bad" | "warn" | "neutral"> = {
 */
 export function PlaybookView({ agreementType }: Readonly<{ agreementType: string }>) {
   const [open, setOpen] = React.useState(false);
-  const playbook = useApi<{
-    name: string;
-    version: number;
-    required_clauses: RequiredClause[];
-  }>(open ? `/playbooks/${agreementType}` : null, [agreementType, open]);
+  const found = useApi<{ playbooks: Playbook[] }>(
+    open ? `/playbooks/${agreementType}` : null,
+    [agreementType, open],
+  );
+  const playbooks = found.data?.playbooks ?? [];
+  const [chosen, setChosen] = React.useState<string>("");
+  const playbook = playbooks.find((item) => item.id === chosen) ?? playbooks[0];
 
   return (
     <>
@@ -366,23 +394,35 @@ export function PlaybookView({ agreementType }: Readonly<{ agreementType: string
       </Button>
       <Modal
         open={open}
-        title={playbook.data?.name ?? `Playbook for ${titleCase(agreementType)}`}
+        title={playbook?.name ?? `Playbook for ${titleCase(agreementType)}`}
         subtitle="What every agreement of this type has to contain before it can be issued."
         onClose={() => setOpen(false)}
       >
         <DataState
-          loading={playbook.loading}
-          errorMessage={playbook.error?.message}
+          loading={found.loading}
+          errorMessage={found.error?.message}
           errorTitle="No playbook is published for that agreement type"
           isEmpty={false}
         >
-          <ul className="space-y-1.5 text-sm">
-            {(playbook.data?.required_clauses ?? []).map((clause) => (
+          {playbooks.length > 1 ? (
+            <Field label="Sub-type" hint="Each sub-type has its own playbook.">
+              <Select value={playbook?.id ?? ""} onChange={(event) => setChosen(event.target.value)}>
+                {playbooks.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                    {item.active ? "" : " (not published)"}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          ) : null}
+          <ul className="mt-3 space-y-1.5 text-sm">
+            {(playbook?.required_clauses ?? []).map((clause) => (
               <li
-                key={`${clause.category}-${clause.name}`}
+                key={`${clause.category}-${clause.variant ?? clause.name}`}
                 className="flex flex-wrap items-center gap-2 rounded-md border p-2.5"
               >
-                <Mono>{clause.category}</Mono>
+                <Mono>{clause.variant ?? clause.category}</Mono>
                 <span className="min-w-0 flex-1 font-medium">{clause.name}</span>
                 <Pill tone={ABSENT_TONE[clause.absent_severity] ?? "neutral"}>
                   {titleCase(clause.absent_severity)} if absent
@@ -390,9 +430,10 @@ export function PlaybookView({ agreementType }: Readonly<{ agreementType: string
               </li>
             ))}
           </ul>
-          {playbook.data ? (
+          {playbook ? (
             <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-              Version {playbook.data.version}. A clause marked critical stops issue outright;
+              Version {playbook.version}
+              {playbook.active ? "" : ", not published yet"}. A clause marked critical stops issue outright;
               major and minor are reported and can be accepted with a reason.
             </p>
           ) : null}
@@ -413,17 +454,6 @@ export function PlaybookView({ agreementType }: Readonly<{ agreementType: string
   library could only be revised, never extended. The first version is a draft
   like any other and still has to be published.
 */
-const AGREEMENT_TYPES = [
-  "nda_mutual",
-  "master_services_agreement",
-  "consultant_engagement",
-  "data_sharing_agreement",
-  "partnership_agreement",
-  "lease_agreement",
-  "ip_assignment",
-  "other",
-];
-
 /*
   One upload, two things out of it. The document is kept as the document so it
   can be read and edited as itself, and the same file is split into blocks so
@@ -433,29 +463,76 @@ const AGREEMENT_TYPES = [
   It arrives as a draft. Publishing is the separate, separately authorised
   step, so importing a file still cannot put anything into production.
 */
+type Term = { key: string; label: string };
+
+const JURISDICTION = /^[A-Za-z][A-Za-z .,'()-]{1,63}$/;
+
+export function templateProblems(values: {
+  name: string;
+  agreementType: string;
+  appliesTo: string;
+  jurisdiction: string;
+  subtype: string;
+  file: File | null;
+}): Record<string, string> {
+  const errors: Record<string, string> = {};
+  const name = values.name.trim();
+  if (!name) errors.name = "Give the template a name.";
+  else if (name.length > 255) errors.name = "Keep the name to 255 characters.";
+  if (!values.agreementType) errors.agreement_type = "Choose an agreement type from the list.";
+  if (!values.appliesTo) errors.applies_to = "Choose DSN, EqualyzAI or both.";
+  const place = values.jurisdiction.trim().replace(/\s+/g, " ");
+  if (!place) errors.jurisdiction = "Name the jurisdiction, for example Nigeria.";
+  else if (!JURISDICTION.test(place))
+    errors.jurisdiction = "Use letters, spaces and basic punctuation, up to 64 characters.";
+  if (values.subtype.trim().length > 128) errors.subtype = "Keep the sub-type to 128 characters.";
+  if (!values.file) errors.file = "Choose the Word document.";
+  else if (!values.file.name.toLowerCase().endsWith(".docx")) errors.file = "Upload a Word .docx file.";
+  else if (values.file.size === 0) errors.file = "The file is empty.";
+  return errors;
+}
+
+const TEMPLATE_FIELDS = ["name", "agreement_type", "subtype", "applies_to", "jurisdiction", "file"];
+
 export function AddTemplate({ onDone }: Readonly<{ onDone: () => void }>) {
+  const { entity } = useSession();
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState("");
   const [agreementType, setAgreementType] = React.useState("");
+  const [subtype, setSubtype] = React.useState("");
+  const [appliesTo, setAppliesTo] = React.useState(entity);
+  const [jurisdiction, setJurisdiction] = React.useState("Nigeria");
   const [file, setFile] = React.useState<File | null>(null);
+  const [problems, setProblems] = React.useState<Record<string, string>>({});
   const input = React.useRef<HTMLInputElement>(null);
+  const form = React.useRef<HTMLDivElement>(null);
+  const vocabulary = useApi<{ agreement_types: Term[] }>(open ? "/lifecycle/vocabulary" : null, [open]);
 
   const send = useAction(async () => {
-    if (!file) return;
-    const form = new FormData();
-    form.append("file", file);
-    form.append("name", name.trim());
-    form.append("agreement_type", agreementType);
-    await postForm("/templates/import", form);
+    const found = templateProblems({ name, agreementType, appliesTo, jurisdiction, subtype, file });
+    setProblems(found);
+    const first = TEMPLATE_FIELDS.find((key) => found[key]);
+    if (first || !file) {
+      form.current?.querySelector<HTMLElement>(`[data-field="${first}"]`)?.focus();
+      return;
+    }
+    const body = new FormData();
+    body.append("file", file);
+    body.append("name", name.trim());
+    body.append("agreement_type", agreementType);
+    body.append("subtype", subtype.trim());
+    body.append("applies_to", appliesTo);
+    body.append("jurisdiction", jurisdiction.trim());
+    await postForm("/templates/import", body);
     onDone();
     setOpen(false);
     setName("");
     setAgreementType("");
+    setSubtype("");
     setFile(null);
   });
 
-  const ready = file && name.trim() && agreementType;
-  const errors = send.error?.fieldErrors ?? {};
+  const errors = { ...(send.error?.fieldErrors ?? {}), ...problems };
 
   return (
     <>
@@ -470,62 +547,101 @@ export function AddTemplate({ onDone }: Readonly<{ onDone: () => void }>) {
         onClose={() => setOpen(false)}
         footer={
           <>
+            {send.error && !Object.keys(send.error.fieldErrors).length ? (
+              <span className="mr-auto text-sm text-destructive">{send.error.message}</span>
+            ) : null}
             <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="primary" disabled={!ready || send.busy} onClick={() => void send.run()}>
+            <Button variant="primary" disabled={send.busy} onClick={() => void send.run()}>
               {send.busy ? "Reading the document" : "Add it as a draft"}
             </Button>
           </>
         }
       >
-        {send.error ? (
-          <Refusal
-            title="That template was not added"
-            reason={send.error.message}
-            reasons={Object.values(errors)}
-          />
-        ) : null}
-
-        <Field label="What is it called" required error={errors.name}>
-          <Input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Mutual non-disclosure agreement"
-          />
-        </Field>
-
-        <Field
-          label="Agreement type"
-          required
-          hint="What the platform routes and tiers on. It decides which playbook applies."
-          error={errors.agreement_type}
-        >
-          <Select value={agreementType} onChange={(event) => setAgreementType(event.target.value)}>
-            <option value="">Choose a type</option>
-            {AGREEMENT_TYPES.map((value) => (
-              <option key={value} value={value}>
-                {titleCase(value)}
-              </option>
-            ))}
-          </Select>
-        </Field>
-
-        <Field label="The document" required error={errors.file}>
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              ref={input}
-              type="file"
-              accept=".docx"
-              className="hidden"
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+        <div ref={form} className="space-y-4">
+          <Field label="What is it called" required error={errors.name}>
+            <Input
+              data-field="name"
+              value={name}
+              maxLength={255}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Consultancy agreement, Frontend Engineer"
             />
-            <Button size="sm" onClick={() => input.current?.click()}>
-              Choose a .docx
-            </Button>
-            <span className="min-w-0 truncate text-sm text-muted-foreground">
-              {file ? `${file.name}, ${Math.max(1, Math.round(file.size / 1024))} KB` : "Nothing chosen"}
-            </span>
+          </Field>
+
+          <Field
+            label="Agreement type"
+            required
+            hint="What the platform routes and tiers on. It decides which playbook applies."
+            error={errors.agreement_type}
+          >
+            <Select
+              data-field="agreement_type"
+              value={agreementType}
+              onChange={(event) => setAgreementType(event.target.value)}
+            >
+              <option value="">Choose a type</option>
+              {(vocabulary.data?.agreement_types ?? []).map((term) => (
+                <option key={term.key} value={term.key}>
+                  {term.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          <Field
+            label="Sub-type"
+            hint="As the playbook names it, for example Frontend Engineer. Leave blank if the type has none."
+            error={errors.subtype}
+          >
+            <Input
+              data-field="subtype"
+              value={subtype}
+              maxLength={128}
+              onChange={(event) => setSubtype(event.target.value)}
+            />
+          </Field>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Applies to" required error={errors.applies_to}>
+              <Select
+                data-field="applies_to"
+                value={appliesTo}
+                onChange={(event) => setAppliesTo(event.target.value)}
+              >
+                <option value="">Choose who uses it</option>
+                <option value="DSN">DSN</option>
+                <option value="EAI">EqualyzAI</option>
+                <option value="BOTH">Both entities</option>
+              </Select>
+            </Field>
+            <Field label="Jurisdiction" required error={errors.jurisdiction}>
+              <Input
+                data-field="jurisdiction"
+                value={jurisdiction}
+                maxLength={64}
+                onChange={(event) => setJurisdiction(event.target.value)}
+              />
+            </Field>
           </div>
-        </Field>
+
+          <Field label="The document" required error={errors.file}>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={input}
+                type="file"
+                accept=".docx"
+                className="hidden"
+                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              />
+              <Button size="sm" data-field="file" onClick={() => input.current?.click()}>
+                Choose a .docx
+              </Button>
+              <span className="min-w-0 truncate text-sm text-muted-foreground">
+                {file ? `${file.name}, ${Math.max(1, Math.round(file.size / 1024))} KB` : "Nothing chosen"}
+              </span>
+            </div>
+          </Field>
+        </div>
       </Modal>
     </>
   );

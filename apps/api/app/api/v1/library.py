@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 import difflib
 import hashlib
 import logging
@@ -15,20 +16,23 @@ from sqlalchemy import select
 
 from app.core import audit
 from app.core.deps import CurrentUser, Db, WorkingEntity
-from app.core.errors import Conflict, NotFound, ValidationFailed
+from app.core.errors import Conflict, NotFound, Refused, ValidationFailed
 from app.db.models.library import (
     Clause,
+    ClauseVariant,
     ClauseVersion,
     Playbook,
     Template,
     TemplateImport,
     TemplateVersion,
 )
+from app.domain import library_mapping
 from app.domain.enums import Role, VersionStatus
 from app.schemas.common import Ack
 from app.schemas.matters import (
     ClauseCreate,
     ClauseOut,
+    ClauseVariantOut,
     ClauseVersionOut,
     ImportAcceptance,
     ImportCandidateAcceptance,
@@ -39,7 +43,7 @@ from app.schemas.matters import (
     VersionDiffLine,
     VersionProposal,
 )
-from app.services import docx_import, memory, placeholders, storage
+from app.services import docx_import, library_workbook, memory, placeholders, storage
 from app.services.generation import GeneratedBlock, GenerationResult, render_docx
 
 router = APIRouter(tags=["library"])
@@ -51,15 +55,38 @@ IMPORT_NOT_FOUND = "That import was not found."
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
-def _current_clause_version(clause: Clause) -> ClauseVersion | None:
+def _current_of(versions) -> ClauseVersion | None:
     today = date.today()
     approved = [
         v
-        for v in clause.versions
+        for v in versions
         if v.status == VersionStatus.APPROVED.value
         and (v.effective_date is None or v.effective_date <= today)
     ]
     return max(approved, key=lambda v: (v.major, v.minor), default=None)
+
+
+def _current_clause_version(clause: Clause) -> ClauseVersion | None:
+    """The clause's own line of versions. A variant's versions are its own."""
+    return _current_of(v for v in clause.versions if v.variant_id is None)
+
+
+def _clause_out(clause: Clause, entity: str | None) -> ClauseOut:
+    model = ClauseOut.model_validate(clause)
+    own = [v for v in clause.versions if v.variant_id is None]
+    current = _current_of(own)
+    model.current = ClauseVersionOut.model_validate(current) if current else None
+    model.versions = [ClauseVersionOut.model_validate(v) for v in own]
+    model.variants = []
+    for variant in clause.variants:
+        if entity and entity not in variant.entities:
+            continue
+        out = ClauseVariantOut.model_validate(variant)
+        chosen = _current_of(variant.versions)
+        out.current = ClauseVersionOut.model_validate(chosen) if chosen else None
+        out.versions = [ClauseVersionOut.model_validate(v) for v in variant.versions]
+        model.variants.append(out)
+    return model
 
 
 def _current_template_version(template: Template) -> TemplateVersion | None:
@@ -78,32 +105,22 @@ def list_clauses(db: Db, principal: CurrentUser, entity: WorkingEntity) -> list[
     """A requester never sees the clause library (PRD section 5.2)."""
     principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     clauses = list(db.execute(select(Clause).order_by(Clause.category)).scalars())
-    out = []
-    for clause in clauses:
-        if entity not in (clause.entity_applicability or []):
-            continue
-        model = ClauseOut.model_validate(clause)
-        current = _current_clause_version(clause)
-        model.current = ClauseVersionOut.model_validate(current) if current else None
-        model.versions = [ClauseVersionOut.model_validate(v) for v in clause.versions]
-        out.append(model)
-    return out
+    return [
+        _clause_out(clause, entity)
+        for clause in clauses
+        if entity in (clause.entity_applicability or [])
+    ]
 
 
 @router.get("/clauses/{category}")
-def get_clause(category: str, db: Db, principal: CurrentUser) -> ClauseOut:
+def get_clause(category: str, db: Db, principal: CurrentUser, entity: WorkingEntity) -> ClauseOut:
     principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
     clause = db.execute(
         select(Clause).where(Clause.category == category.upper())
     ).scalar_one_or_none()
     if clause is None:
         raise NotFound("That clause category was not found.")
-
-    model = ClauseOut.model_validate(clause)
-    current = _current_clause_version(clause)
-    model.current = ClauseVersionOut.model_validate(current) if current else None
-    model.versions = [ClauseVersionOut.model_validate(v) for v in clause.versions]
-    return model
+    return _clause_out(clause, entity)
 
 
 @router.post("/clauses", response_model=ClauseOut, status_code=201)
@@ -175,8 +192,17 @@ def propose_clause_version(
     ).scalar_one_or_none()
     if clause is None:
         raise NotFound("That clause category was not found.")
+    if clause.variants and not any(v.variant_id is None for v in clause.versions):
+        raise Conflict(
+            f"{clause.category} is held as variants, one per entity and agreement type. "
+            "Propose the change on the variant it applies to."
+        )
 
-    open_drafts = [v for v in clause.versions if v.status == VersionStatus.DRAFT.value]
+    open_drafts = [
+        v
+        for v in clause.versions
+        if v.status == VersionStatus.DRAFT.value and v.variant_id is None
+    ]
     if open_drafts:
         raise Conflict(
             f"{open_drafts[0].reference} is already an open proposal on this clause. "
@@ -214,6 +240,93 @@ def propose_clause_version(
         actor_id=principal.user_id,
         actor_label=principal.name,
         after_state={"summary": payload.change_summary},
+    )
+    return version
+
+
+CHANGE_SUMMARY_MAX = 1000
+
+
+def _checked_proposal(payload: VersionProposal) -> None:
+    errors: dict[str, str] = {}
+    if not payload.change_summary.strip():
+        errors["change_summary"] = "Say what changes and why."
+    elif len(payload.change_summary) > CHANGE_SUMMARY_MAX:
+        errors["change_summary"] = f"Keep the summary to {CHANGE_SUMMARY_MAX} characters."
+    for name, value, limit in (
+        ("house_position", payload.house_position, 20000),
+        ("standard_position", payload.standard_position, 4000),
+        ("unacceptable_position", payload.unacceptable_position, 4000),
+    ):
+        if value is not None and len(value) > limit:
+            errors[name] = f"This is {len(value)} characters; the limit is {limit}."
+        elif value is not None and name == "house_position" and not value.strip():
+            errors[name] = "The wording cannot be empty."
+    for index, fallback in enumerate(payload.fallbacks or []):
+        if not fallback.text.strip() or len(fallback.text) > 4000:
+            errors[f"fallbacks.{index}"] = "Each fallback needs text of at most 4000 characters."
+    if errors:
+        raise ValidationFailed("The proposal has problems.", errors)
+
+
+@router.post(
+    "/clause-variants/{code}/versions", response_model=ClauseVersionOut, status_code=201
+)
+def propose_variant_version(
+    code: str, payload: VersionProposal, db: Db, principal: CurrentUser, entity: WorkingEntity
+) -> ClauseVersion:
+    """A change to one variant, as a draft that supersedes only that variant."""
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    _checked_proposal(payload)
+    variant = db.execute(
+        select(ClauseVariant).where(ClauseVariant.code == code.upper())
+    ).scalar_one_or_none()
+    if variant is None or entity not in variant.entities:
+        raise NotFound("That clause variant was not found.")
+
+    open_drafts = [v for v in variant.versions if v.status == VersionStatus.DRAFT.value]
+    if open_drafts:
+        raise Conflict(
+            f"{open_drafts[0].reference} is already an open proposal on this variant. "
+            "Publish or withdraw it first."
+        )
+
+    current = _current_of(variant.versions)
+    major, minor = library_workbook.next_number(variant.versions, current)
+    version = ClauseVersion(
+        clause_id=variant.clause_id,
+        variant_id=variant.id,
+        reference=f"{variant.code}-v{major}.{minor}",
+        major=major,
+        minor=minor,
+        status=VersionStatus.DRAFT.value,
+        house_position=payload.house_position or (current.house_position if current else ""),
+        standard_position=payload.standard_position
+        or (current.standard_position if current else None),
+        fallbacks=[f.model_dump() for f in (payload.fallbacks or [])]
+        or (current.fallbacks if current else []),
+        unacceptable_position=payload.unacceptable_position
+        or (current.unacceptable_position if current else None),
+        effective_date=payload.effective_date,
+        review_date=payload.review_date,
+        supersedes_id=current.id if current else None,
+        provenance=payload.change_summary.strip(),
+    )
+    if not version.house_position.strip():
+        raise ValidationFailed(
+            "The proposal has problems.", {"house_position": "The wording cannot be empty."}
+        )
+    db.add(version)
+    db.flush()
+
+    audit.record(
+        db,
+        action="clause_version_proposed",
+        object_type="clause_version",
+        object_id=version.reference,
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        after_state={"variant": variant.code, "summary": payload.change_summary},
     )
     return version
 
@@ -282,24 +395,14 @@ def publish_version(reference: str, db: Db, principal: CurrentUser) -> Ack:
     if version.status != VersionStatus.DRAFT.value:
         raise Conflict(f"{reference} is {version.status} and cannot be published again.")
 
-    today = date.today()
-    if version.supersedes_id:
-        model = ClauseVersion if clause_version else TemplateVersion
-        previous = db.get(model, version.supersedes_id)
-        if previous:
-            previous.status = VersionStatus.SUPERSEDED.value
-            # The old position stays in memory and is marked. A question about
-            # a position we used to hold has a real answer, and the reference
-            # the model cites has to keep resolving; what it must not do is
-            # present it as current.
-            memory.supersede(db, "clause", previous.reference, reference)
+    if clause_version is not None and clause_version.variant_id is not None:
+        _require_sources([clause_version])
+    model = ClauseVersion if clause_version else TemplateVersion
+    _approve(db, model, version, uuid.UUID(principal.user_id))
 
-    version.status = VersionStatus.APPROVED.value
-    version.approved_by_id = uuid.UUID(principal.user_id)
-    version.approval_date = today
-    version.effective_date = version.effective_date or today
-
-    if clause_version is not None:
+    if clause_version is not None and clause_version.variant_id is not None:
+        memory.index_variant_versions(db, [clause_version])
+    elif clause_version is not None:
         clause = db.get(Clause, clause_version.clause_id)
         entities = (clause.entity_applicability if clause else None) or ["EAI"]
         for entity in entities:
@@ -322,6 +425,49 @@ def publish_version(reference: str, db: Db, principal: CurrentUser) -> Ack:
     return Ack(
         message=(f"{reference} published. The previous version is superseded and remains readable.")
     )
+
+
+def _require_sources(versions: list[ClauseVersion]) -> None:
+    """Approved wording is published only once it cites where it came from."""
+    unsourced = sorted({v.variant.code for v in versions if v.variant and not v.variant.source_url})
+    if unsourced:
+        raise Refused(
+            "Wording with no source link cannot be published.",
+            [
+                f"{code} has no Source. Add the SharePoint link in the workbook and import "
+                "it again."
+                for code in unsourced
+            ],
+        )
+
+
+def _approve(db, model, version, approver: uuid.UUID) -> None:
+    """Approve one draft and supersede what it replaces, atomically."""
+    today = date.today()
+    if version.supersedes_id:
+        previous = db.get(model, version.supersedes_id)
+        if previous:
+            previous.status = VersionStatus.SUPERSEDED.value
+            # The old position stays in memory and is marked. A question about
+            # a position we used to hold has a real answer, and the reference
+            # the model cites has to keep resolving; what it must not do is
+            # present it as current.
+            memory.supersede(db, "clause", previous.reference, version.reference)
+
+    version.status = VersionStatus.APPROVED.value
+    version.approved_by_id = approver
+    version.approval_date = today
+    version.effective_date = version.effective_date or today
+    if getattr(version, "variant_id", None) and version.review_date is None:
+        version.review_date = _months_later(today, library_mapping.REVIEW_MONTHS)
+
+
+def _months_later(start: date, months: int) -> date:
+    month = start.month - 1 + months
+    year = start.year + month // 12
+    month = month % 12 + 1
+    day = min(start.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
 
 
 @router.post("/versions/{reference}/reject")
@@ -398,10 +544,13 @@ def import_agreement_template(
     db: Db,
     principal: CurrentUser,
     entity: WorkingEntity,
-    file: Annotated[UploadFile, File()],
-    name: Annotated[str, Form()],
-    agreement_type: Annotated[str, Form()],
+    file: Annotated[UploadFile | None, File()] = None,
+    name: Annotated[str, Form()] = "",
+    agreement_type: Annotated[str, Form()] = "",
     code: Annotated[str | None, Form()] = None,
+    applies_to: Annotated[str | None, Form()] = None,
+    jurisdiction: Annotated[str | None, Form()] = None,
+    subtype: Annotated[str | None, Form()] = None,
 ) -> dict:
     """Take a Word agreement and make it a template, as a draft.
 
@@ -415,6 +564,9 @@ def import_agreement_template(
     step, so importing a file still cannot put anything into production.
     """
     principal.require_role(Role.HEAD_OF_LEGAL, Role.COUNSEL, Role.ADMIN)
+    entities, place, sub = _template_metadata(
+        name, agreement_type, applies_to, jurisdiction, subtype, file is not None
+    )
 
     data = file.file.read()
     filename = file.filename or "template.docx"
@@ -462,6 +614,9 @@ def import_agreement_template(
         code=template_code,
         name=name.strip(),
         agreement_type=agreement_type.strip(),
+        subtype=sub,
+        entity_applicability=entities,
+        jurisdiction=place,
         owner_id=uuid.UUID(principal.user_id),
     )
     db.add(template)
@@ -505,6 +660,46 @@ def import_agreement_template(
             "publish it when it is right. Nothing generates from a draft."
         ),
     }
+
+
+TEMPLATE_ENTITIES = {"DSN": ["DSN"], "EAI": ["EAI"], "BOTH": ["DSN", "EAI"]}
+JURISDICTION = re.compile(r"[A-Za-z][A-Za-z .,'()-]{1,63}")
+
+
+def _template_metadata(
+    name: str,
+    agreement_type: str,
+    applies_to: str | None,
+    jurisdiction: str | None,
+    subtype: str | None,
+    has_file: bool,
+) -> tuple[list[str], str, str]:
+    """Check what the template is for before the file is read."""
+    from app.domain import agreements
+
+    errors: dict[str, str] = {}
+    if not name.strip():
+        errors["name"] = "Give the template a name."
+    elif len(name.strip()) > 255:
+        errors["name"] = "Keep the name to 255 characters."
+    if not agreements.is_known(agreement_type.strip()):
+        errors["agreement_type"] = "Choose an agreement type from the list."
+    entities = TEMPLATE_ENTITIES.get((applies_to or "").strip().upper())
+    if entities is None:
+        errors["applies_to"] = "Choose DSN, EqualyzAI or both."
+    place = " ".join((jurisdiction or "").split())
+    if not place:
+        errors["jurisdiction"] = "Name the jurisdiction, for example Nigeria."
+    elif not JURISDICTION.fullmatch(place):
+        errors["jurisdiction"] = "Use letters, spaces and basic punctuation, up to 64 characters."
+    sub = " ".join((subtype or "").split())
+    if len(sub) > 128:
+        errors["subtype"] = "Keep the sub-type to 128 characters."
+    if not has_file:
+        errors["file"] = "Choose the Word document."
+    if errors:
+        raise ValidationFailed("The template details have problems.", errors)
+    return entities, place, sub
 
 
 def _code_from(name: str) -> str:
@@ -857,20 +1052,158 @@ def review_due(db: Db, principal: CurrentUser, within_days: int = 30) -> list[di
     return sorted(due, key=lambda row: row["review_date"])
 
 
-@router.get("/playbooks/{agreement_type}")
-def get_playbook(agreement_type: str, db: Db, principal: CurrentUser) -> dict:
-    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
-    playbook = db.execute(
-        select(Playbook).where(Playbook.agreement_type == agreement_type)
-    ).scalar_one_or_none()
-    if playbook is None:
-        raise NotFound("No playbook is published for that agreement type.")
-    return {
+def playbook_out(playbook: Playbook, db=None) -> dict:
+    out = {
+        "id": str(playbook.id),
         "agreement_type": playbook.agreement_type,
+        "entity": playbook.entity,
+        "subtype": playbook.subtype,
         "name": playbook.name,
         "version": playbook.version,
+        "active": playbook.active,
         "required_clauses": playbook.required_clauses,
     }
+    if db is not None:
+        out["drafts"] = len(_playbook_drafts(db, playbook))
+    return out
+
+
+def _playbook_variants(db, playbook: Playbook) -> list[ClauseVariant]:
+    codes = [r.get("variant") for r in playbook.required_clauses or [] if r.get("variant")]
+    if not codes:
+        return []
+    return list(db.execute(select(ClauseVariant).where(ClauseVariant.code.in_(codes))).scalars())
+
+
+def _playbook_drafts(db, playbook: Playbook) -> list[ClauseVersion]:
+    return [
+        version
+        for variant in _playbook_variants(db, playbook)
+        for version in variant.versions
+        if version.status == VersionStatus.DRAFT.value
+    ]
+
+
+def playbooks_for(db, agreement_type: str | None, entity: str) -> list[Playbook]:
+    """The playbooks that can apply to an agreement type in an entity."""
+    return list(
+        db.execute(
+            select(Playbook)
+            .where(
+                Playbook.agreement_type == agreement_type,
+                (Playbook.entity == entity) | Playbook.entity.is_(None),
+            )
+            .order_by(Playbook.subtype)
+        ).scalars()
+    )
+
+
+@router.get("/playbooks")
+def list_playbooks(db: Db, principal: CurrentUser, entity: WorkingEntity) -> list[dict]:
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    return [
+        playbook_out(playbook, db)
+        for playbook in db.execute(
+            select(Playbook)
+            .where((Playbook.entity == entity) | Playbook.entity.is_(None))
+            .order_by(Playbook.agreement_type, Playbook.subtype)
+        ).scalars()
+    ]
+
+
+@router.get("/playbooks/{agreement_type}")
+def get_playbook(
+    agreement_type: str, db: Db, principal: CurrentUser, entity: WorkingEntity
+) -> dict:
+    """Every playbook for the type in this entity, one per sub-type."""
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    found = playbooks_for(db, agreement_type, entity)
+    if not found:
+        raise NotFound("No playbook is published for that agreement type.")
+    return {
+        "agreement_type": agreement_type,
+        "playbooks": [playbook_out(playbook) for playbook in found],
+    }
+
+
+@router.post("/playbooks/{playbook_id}/publish")
+def publish_playbook(playbook_id: uuid.UUID, db: Db, principal: CurrentUser) -> Ack:
+    """Publish every draft the playbook relies on, then put it into use.
+
+    The same authority and fresh authentication as publishing one version,
+    because this is publishing many. Each version is approved and recorded on
+    its own, so the audit trail reads the same as if each had been done by
+    hand.
+    """
+    principal.require_role(Role.HEAD_OF_LEGAL, Role.ADMIN)
+    principal.require_step_up("publish a playbook")
+
+    playbook = db.get(Playbook, playbook_id, with_for_update=True)
+    if playbook is None:
+        raise NotFound("That playbook was not found.")
+
+    variants = _playbook_variants(db, playbook)
+    codes = {r.get("variant") for r in playbook.required_clauses or [] if r.get("variant")}
+    if not playbook.required_clauses:
+        raise Refused(
+            "This playbook cannot be published.",
+            [
+                f"{playbook.name} has no approved clauses yet. Its wording is still reference "
+                "wording; mark the chosen versions as approved template wording and import "
+                "the workbook again."
+            ],
+        )
+    missing = sorted(codes - {v.code for v in variants})
+    unusable = sorted(
+        v.code
+        for v in variants
+        if not any(
+            x.status in (VersionStatus.DRAFT.value, VersionStatus.APPROVED.value)
+            for x in v.versions
+        )
+    )
+    if missing or unusable:
+        raise Refused(
+            "This playbook cannot be published.",
+            [f"{code} has no version to publish." for code in [*missing, *unusable]],
+        )
+
+    drafts = _playbook_drafts(db, playbook)
+    _require_sources(drafts)
+    approver = uuid.UUID(principal.user_id)
+    for version in drafts:
+        _approve(db, ClauseVersion, version, approver)
+        audit.record(
+            db,
+            action="version_published",
+            object_type="clause_version",
+            object_id=version.reference,
+            actor_id=principal.user_id,
+            actor_label=principal.name,
+            after_state={"status": VersionStatus.APPROVED.value, "playbook": playbook.name},
+        )
+    db.flush()
+    memory.index_variant_versions(db, drafts)
+
+    was_active = playbook.active
+    playbook.active = True
+    audit.record(
+        db,
+        action="playbook_published",
+        object_type="playbook",
+        object_id=str(playbook.id),
+        actor_id=principal.user_id,
+        actor_label=principal.name,
+        entity=playbook.entity,
+        before_state={"active": was_active},
+        after_state={"active": True, "versions_published": [v.reference for v in drafts]},
+    )
+    db.commit()
+    return Ack(
+        message=(
+            f"{playbook.name} is in use. {len(drafts)} clause versions were published with it."
+        )
+    )
 
 
 @router.get("/template-imports/{import_id}")

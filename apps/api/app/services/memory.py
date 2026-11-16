@@ -37,7 +37,11 @@ WEIGHTS = {
     "decision": 1.2,
     "contract": 1.0,
     "matter_paper": 0.9,
+    "precedent": 0.8,
 }
+
+#: How many bodies go to the embedder in one call when a batch is indexed.
+EMBED_BATCH = 64
 
 
 def _embed(bodies: list[str]) -> list[list[float] | None]:
@@ -314,28 +318,136 @@ def index_finding(session: Session, finding, matter=None) -> MemoryChunk | None:
     )
 
 
-def index_clause_version(session: Session, version, category: str, entity: str) -> MemoryChunk:
-    """An approved clause: the house position and what it will fall back to."""
+def _clause_body(version) -> str:
     fallbacks = " ".join(
         f"Fallback {item.get('rank')}, requires {item.get('required_authority')}: "
         f"{item.get('text')}"
         for item in (version.fallbacks or [])
     )
     body = version.house_position
+    if getattr(version, "standard_position", None):
+        body = f"Standard position: {version.standard_position}\n\n{body}"
     if fallbacks:
         body += f"\n\nFallbacks: {fallbacks}"
     if version.unacceptable_position:
         body += f"\n\nUnacceptable: {version.unacceptable_position}"
+    return body
 
+
+def index_clause_version(
+    session: Session, version, category: str, entity: str, title: str | None = None
+) -> MemoryChunk:
+    """An approved clause: the house position and what it will fall back to."""
     return write(
         session,
         entity=entity,
         source_type="clause",
         source_reference=version.reference,
-        title=f"{category}, house position",
-        body=body,
+        title=title or f"{category}, house position",
+        body=_clause_body(version),
         source_detail="Approved clause, house position and ranked fallbacks",
     )
+
+
+def write_many(session: Session, records: list[dict]) -> list[MemoryChunk]:
+    """Record several things at once, embedding them in batches.
+
+    Publishing a playbook approves a few dozen clause versions together, and
+    one embedding call each would hold the request open for minutes.
+    """
+    chunks: list[MemoryChunk] = []
+    for start in range(0, len(records), EMBED_BATCH):
+        window = records[start : start + EMBED_BATCH]
+        vectors = _embed([f"{r['title']}\n{r['body']}" for r in window])
+        for record, vector in zip(window, vectors, strict=True):
+            session.execute(
+                delete(MemoryChunk).where(
+                    MemoryChunk.source_type == record["source_type"],
+                    MemoryChunk.source_reference == record["source_reference"],
+                    MemoryChunk.entity == record["entity"],
+                )
+            )
+            chunk = MemoryChunk(
+                **record,
+                restricted=False,
+                weight=WEIGHTS.get(record["source_type"], 1.0),
+                embedding=vector,
+            )
+            session.add(chunk)
+            chunks.append(chunk)
+    return chunks
+
+
+def variant_title(version, variant) -> str:
+    from app.domain.library_mapping import type_label
+
+    return (
+        f"{variant.title}, {type_label(variant.agreement_type, variant.subtype)}, "
+        f"house position"
+    )[:255]
+
+
+def index_variant_versions(session: Session, versions: list) -> list[MemoryChunk]:
+    """Approved versions of clause variants, each in every entity it serves."""
+    return write_many(
+        session,
+        [
+            {
+                "entity": entity,
+                "source_type": "clause",
+                "source_reference": version.reference,
+                "source_detail": "Approved clause, house position and ranked fallbacks",
+                "title": variant_title(version, version.variant),
+                "body": _clause_body(version),
+            }
+            for version in versions
+            for entity in version.variant.entities
+        ],
+    )
+
+
+def index_precedents(session: Session, precedents: list) -> list[MemoryChunk]:
+    """Wording seen before, labelled so it is never read as house position.
+
+    Memory answers only with what it can cite, so wording with no source link
+    is kept in the library and left out of memory.
+    """
+    from app.domain.library_mapping import type_label
+
+    records = []
+    for precedent in precedents:
+        if not precedent.source_url:
+            session.execute(
+                delete(MemoryChunk).where(
+                    MemoryChunk.source_type == "precedent",
+                    MemoryChunk.source_reference
+                    == (precedent.reference or f"PRC-{precedent.fingerprint[:12]}"),
+                )
+            )
+            continue
+        prohibited = precedent.kind == "prohibited"
+        detail = (
+            "Prohibited wording: never to be accepted"
+            if prohibited
+            else "Reference wording from a signed agreement, not house position"
+        )
+        scope = precedent.entity_scope
+        for entity in ["DSN", "EAI"] if scope == "BOTH" else [scope]:
+            records.append(
+                {
+                    "entity": entity,
+                    "source_type": "precedent",
+                    "source_reference": precedent.reference or f"PRC-{precedent.fingerprint[:12]}",
+                    "source_detail": detail,
+                    "title": (
+                        f"{'Prohibited' if prohibited else 'Reference'} wording, "
+                        f"{precedent.title}, "
+                        f"{type_label(precedent.agreement_type, precedent.subtype)}"
+                    )[:255],
+                    "body": precedent.text,
+                }
+            )
+    return write_many(session, records)
 
 
 def supersede(session: Session, source_type: str, source_reference: str, replacement: str) -> None:

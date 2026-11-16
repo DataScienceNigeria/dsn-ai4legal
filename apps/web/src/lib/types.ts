@@ -378,6 +378,7 @@ export type ClauseVersion = {
   minor: number;
   status: string;
   house_position: string;
+  standard_position?: string | null;
   fallbacks: Fallback[];
   unacceptable_position: string | null;
   usage_conditions: string | null;
@@ -385,18 +386,83 @@ export type ClauseVersion = {
   approval_date: string | null;
   effective_date: string | null;
   review_date: string | null;
+  provenance?: string | null;
+};
+
+export type ClauseVariant = {
+  id: string;
+  code: string;
+  title: string;
+  entity_scope: string;
+  agreement_type: string;
+  subtype: string;
+  transaction_role: string;
+  source_url: string | null;
+  current: ClauseVersion | null;
+  versions: ClauseVersion[];
 };
 
 export type Clause = {
   id: string;
   category: string;
   name: string;
+  family?: string | null;
   owner_id: string | null;
   entity_applicability: string[];
   jurisdiction: string;
   required_for_types: string[];
   current: ClauseVersion | null;
   versions: ClauseVersion[];
+  variants?: ClauseVariant[];
+};
+
+export type RequiredClause = {
+  category: string;
+  name: string;
+  absent_severity: string;
+  variant?: string;
+  family?: string;
+};
+
+export type Playbook = {
+  id: string;
+  agreement_type: string;
+  entity: string | null;
+  subtype: string;
+  name: string;
+  version: number;
+  active: boolean;
+  required_clauses: RequiredClause[];
+  drafts?: number;
+};
+
+export type WorkbookIssue = {
+  sheet: string;
+  row: number | null;
+  column: string | null;
+  level: "error" | "warning";
+  message: string;
+};
+
+export type WorkbookImport = {
+  id: string;
+  filename: string;
+  status: string;
+  source_hash: string;
+  created_at: string;
+  uploaded_by: string | null;
+  applied_at: string | null;
+  applied_by: string | null;
+  errors: number;
+  warnings: number;
+  excluded_rows: number;
+  structural: boolean;
+  can_apply: boolean;
+  playbooks: { key: string; name: string; clauses: number }[];
+  summary: Record<string, number>;
+  issues?: WorkbookIssue[];
+  written?: Record<string, number>;
+  message?: string;
 };
 
 export type TemplatePlaceholder = {
@@ -428,6 +494,7 @@ export type Template = {
   code: string;
   name: string;
   agreement_type: string;
+  subtype?: string;
   owner_id: string | null;
   entity_applicability: string[];
   jurisdiction: string;

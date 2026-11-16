@@ -4,6 +4,7 @@ import Link from "next/link";
 import * as React from "react";
 
 import { useRoles } from "@/components/app/session";
+import { ReviewPlaybookSelect, useReviewPlaybooks } from "@/components/app/workbook-import";
 import { StepUpGate } from "@/components/app/step-up";
 import {
   Actions,
@@ -585,10 +586,11 @@ function ReviewDialog({
   const [raised, setRaised] = React.useState<Finding[] | null>(null);
   const paper = documents.filter((document) => document.document_type === "counterparty");
   const chosen = paper.find((document) => document.id === documentId);
+  const playbooks = useReviewPlaybooks(open ? matterId : null);
 
   const review = useAction(async () => {
     const findings = await api<Finding[]>(
-      `/ai/review/${matterId}${query({ document_id: documentId })}`,
+      `/ai/review/${matterId}${query({ document_id: documentId, playbook_id: playbooks.playbookId })}`,
       { method: "POST" },
     );
     setRaised(findings);
@@ -660,7 +662,11 @@ function ReviewDialog({
         ) : (
           <>
             <Button onClick={onClose}>Cancel</Button>
-            <Button variant="primary" disabled={!documentId} onClick={() => void review.run()}>
+            <Button
+              variant="primary"
+              disabled={!documentId || Boolean(playbooks.missing)}
+              onClick={() => void review.run()}
+            >
               Run the review
             </Button>
           </>
@@ -697,6 +703,7 @@ function ReviewDialog({
           </Select>
         </Field>
       )}
+      {!review.busy && paper.length ? <ReviewPlaybookSelect state={playbooks} /> : null}
       {review.error ? (
         <Refusal
           title="The review was refused"

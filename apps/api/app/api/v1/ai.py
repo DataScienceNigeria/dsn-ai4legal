@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Response
@@ -615,8 +615,13 @@ def position_history(
         raise NotFound("That clause category was not found.")
 
     current = max(
-        (v for v in clause.versions if v.status == VersionStatus.APPROVED.value),
-        key=lambda v: (v.major, v.minor),
+        (
+            v
+            for v in clause.versions
+            if v.status == VersionStatus.APPROVED.value
+            and (v.variant_id is None or entity in v.variant.entities)
+        ),
+        key=lambda v: (v.approval_date or date.min, v.major, v.minor),
         default=None,
     )
     if current is None:
@@ -1183,12 +1188,102 @@ def first_draft(matter_id: uuid.UUID, brief: str, db: Db, principal: CurrentUser
     }
 
 
+def _matter_agreement_type(db, matter: Matter) -> str | None:
+    if not matter.request_type_id:
+        return None
+    from app.db.models.intake import RequestType
+
+    request_type = db.get(RequestType, matter.request_type_id)
+    return request_type.agreement_type if request_type else None
+
+
+def _review_playbooks(db, matter: Matter) -> list[Playbook]:
+    from app.api.v1.library import playbooks_for
+
+    return [
+        playbook
+        for playbook in playbooks_for(db, _matter_agreement_type(db, matter), matter.entity)
+        if playbook.active
+    ]
+
+
+@router.get("/review/{matter_id}/playbooks")
+def review_playbooks(matter_id: uuid.UUID, db: Db, principal: CurrentUser) -> list[dict]:
+    """The playbooks a review of this matter can run against, one per sub-type."""
+    principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
+    matter = db.get(Matter, matter_id)
+    if matter is None:
+        raise NotFound("That matter was not found.")
+    return [
+        {"id": str(p.id), "name": p.name, "subtype": p.subtype, "version": p.version}
+        for p in _review_playbooks(db, matter)
+    ]
+
+
+def _playbook_positions(db, playbook: Playbook, entity: str) -> str:
+    """The house positions the playbook names, stated rather than retrieved.
+
+    Retrieval ranks by likeness, and two hundred clauses across eleven
+    agreement types look alike. The playbook says exactly which versions
+    apply, so those are given in full and nothing else is.
+    """
+    from app.db.models.library import ClausePrecedent, ClauseVariant
+
+    codes = [r["variant"] for r in playbook.required_clauses or [] if r.get("variant")]
+    if not codes:
+        return ""
+    variants = {
+        v.code: v
+        for v in db.execute(select(ClauseVariant).where(ClauseVariant.code.in_(codes))).scalars()
+    }
+    lines = []
+    for code in codes:
+        variant = variants.get(code)
+        current = (
+            max(
+                (v for v in variant.versions if v.status == VersionStatus.APPROVED.value),
+                key=lambda v: (v.major, v.minor),
+                default=None,
+            )
+            if variant
+            else None
+        )
+        if current is None:
+            continue
+        entry = [f"{variant.clause.category} {current.reference}, {variant.title}"]
+        if current.standard_position:
+            entry.append(f"  Standard position: {current.standard_position}")
+        for fallback in current.fallbacks or []:
+            entry.append(
+                f"  Fallback {fallback.get('rank')} ({fallback.get('required_authority')}): "
+                f"{fallback.get('text')}"
+            )
+        if current.unacceptable_position:
+            entry.append(f"  Red line: {current.unacceptable_position}")
+        lines.append("\n".join(entry))
+
+    prohibited = [
+        p
+        for p in db.execute(
+            select(ClausePrecedent).where(
+                ClausePrecedent.kind == "prohibited",
+                ClausePrecedent.agreement_type.in_([playbook.agreement_type, "all"]),
+                ClausePrecedent.entity_scope.in_([entity, "BOTH"]),
+            )
+        ).scalars()
+    ]
+    for precedent in prohibited:
+        lines.append(f"Prohibited wording, never acceptable: {precedent.text[:1500]}")
+    return "\n\n".join(lines)
+
+
 @router.post("/review/{matter_id}", response_model=list[FindingOut], status_code=201)
 def review_counterparty_paper(
     matter_id: uuid.UUID,
     document_id: uuid.UUID,
     db: Db,
     principal: CurrentUser,
+    playbook_id: uuid.UUID | None = None,
 ) -> list[ReviewFinding]:
     """Compare counterparty paper to the playbook and rank the difference, M06."""
     principal.require_role(Role.COUNSEL, Role.HEAD_OF_LEGAL, Role.ADMIN)
@@ -1211,16 +1306,22 @@ def review_counterparty_paper(
             ],
         )
 
-    agreement_type = None
-    if matter.request_type_id:
-        from app.db.models.intake import RequestType
-
-        request_type = db.get(RequestType, matter.request_type_id)
-        agreement_type = request_type.agreement_type if request_type else None
-
-    playbook = db.execute(
-        select(Playbook).where(Playbook.agreement_type == agreement_type)
-    ).scalar_one_or_none()
+    agreement_type = _matter_agreement_type(db, matter)
+    candidates = _review_playbooks(db, matter)
+    if playbook_id is not None:
+        playbook = next((p for p in candidates if p.id == playbook_id), None)
+        if playbook is None:
+            raise Refused(
+                "This draft cannot be reviewed against that playbook.",
+                ["It is not a published playbook for this matter's entity and agreement type."],
+            )
+    elif len(candidates) > 1:
+        raise Refused(
+            "Choose the playbook this draft is reviewed against.",
+            [f"{p.name}" for p in candidates],
+        )
+    else:
+        playbook = candidates[0] if candidates else None
     if playbook is None:
         raise Refused(
             "This draft cannot be reviewed.",
@@ -1229,6 +1330,7 @@ def review_counterparty_paper(
                 "meaningless without house positions and fallbacks."
             ],
         )
+    positions = _playbook_positions(db, playbook, matter.entity)
 
     chunks = retrieval.retrieve(
         db,
@@ -1244,7 +1346,8 @@ def review_counterparty_paper(
     )
 
     required = "\n".join(
-        f"- {c.get('category')}: {c.get('name')}, absent severity {c.get('absent_severity')}"
+        f"- {c.get('category')}{' ' + c['variant'] if c.get('variant') else ''}: "
+        f"{c.get('name')}, absent severity {c.get('absent_severity')}"
         for c in playbook.required_clauses
     )
 
@@ -1255,9 +1358,10 @@ def review_counterparty_paper(
             entity=matter.entity,
             data_class=DataClass(matter.classification),
             user_content=(
-                f"Playbook for {agreement_type}, version {playbook.version}.\n"
+                f"Playbook {playbook.name}, version {playbook.version}.\n"
                 f"Clauses this playbook requires:\n{required}\n\n"
-                "Compare the counterparty draft below against the approved clauses in the "
+                + (f"House positions for those clauses:\n{positions}\n\n" if positions else "")
+                + "Compare the counterparty draft below against the approved clauses in the "
                 "retrieved material, and report both altered terms and required clauses "
                 "that are absent."
             ),

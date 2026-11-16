@@ -5,6 +5,7 @@ import * as React from "react";
 import { useRoles, useSession } from "@/components/app/session";
 import { DecisionPill, SeverityPill } from "@/components/app/status";
 import { SuperDocEditor } from "@/components/app/superdoc-editor";
+import { ReviewPlaybookSelect, useReviewPlaybooks } from "@/components/app/workbook-import";
 import {
   Button,
   Card,
@@ -175,9 +176,11 @@ export default function Review() {
     );
   });
 
+  const playbooks = useReviewPlaybooks(active);
   const rereview = useAction(async () => {
     if (!paper) return;
-    await api(`/ai/review/${active}?document_id=${paper.id}`, { method: "POST" });
+    const chosen = playbooks.playbookId ? `&playbook_id=${playbooks.playbookId}` : "";
+    await api(`/ai/review/${active}?document_id=${paper.id}${chosen}`, { method: "POST" });
     findings.reload();
     rounds.reload();
   });
@@ -205,6 +208,7 @@ export default function Review() {
                 </option>
               ))}
             </Select>
+            {paper && canEdit ? <ReviewPlaybookSelect state={playbooks} label={false} /> : null}
             {paper && canEdit ? (
               <>
                 <Button

@@ -10,6 +10,7 @@ import {
   ProposeVersion,
 } from "@/components/app/library-actions";
 import { useRoles, useSession } from "@/components/app/session";
+import { ClauseVariants, ExportWorkbook, PlaybookList } from "@/components/app/workbook-import";
 import {
   Card,
   CardBody,
@@ -23,8 +24,11 @@ import {
   Row,
   Spinner,
   Tabs,
+  Button,
+  Input,
+  Select,
 } from "@/components/ui";
-import { useApi } from "@/lib/hooks";
+import { useApi, useQueryParams } from "@/lib/hooks";
 import type { Clause, Template } from "@/lib/types";
 import { formatDate, titleCase } from "@/lib/utils";
 
@@ -50,6 +54,23 @@ function ClauseTab({
   // With nothing published the split layout reads as a broken table: a 16rem
   // sidebar holding nothing beside an empty pane, narrower than every other
   // screen. Empty, it is one full-width card like the templates tab.
+  const [search, setSearch] = React.useState("");
+  const [family, setFamily] = React.useState("all");
+  const families = Array.from(
+    new Set((clauses.data ?? []).map((clause) => clause.family).filter((value): value is string => Boolean(value))),
+  ).sort((a, b) => a.localeCompare(b));
+  const needle = search.trim().toLowerCase();
+  const listed = (clauses.data ?? []).filter(
+    (clause) =>
+      (family === "all" || clause.family === family) &&
+      (!needle ||
+        clause.name.toLowerCase().includes(needle) ||
+        clause.category.toLowerCase().includes(needle) ||
+        (clause.variants ?? []).some(
+          (variant) => variant.code.toLowerCase().includes(needle) || variant.title.toLowerCase().includes(needle),
+        )),
+  );
+
   if (!clauses.loading && !clauses.data?.length) {
     return (
       <Card>
@@ -79,11 +100,31 @@ function ClauseTab({
               title="Categories"
               actions={canPropose ? <NewClause onDone={() => clauses.reload()} /> : null}
             />
+            <div className="space-y-2 border-b px-4 pb-3">
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search clauses or CLV codes"
+                aria-label="Search clauses"
+              />
+              {families.length ? (
+                <Select value={family} onChange={(event) => setFamily(event.target.value)} aria-label="Family">
+                  <option value="all">All families</option>
+                  {families.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </Select>
+              ) : null}
+            </div>
             <div className="max-h-[560px] overflow-y-auto">
               {clauses.loading ? (
                 <Spinner />
+              ) : listed.length === 0 ? (
+                <Empty title="No clause matches" />
               ) : (
-                clauses.data?.map((clause) => (
+                listed.map((clause) => (
                   <button
                     key={clause.id}
                     onClick={() => onSelect(clause.category)}
@@ -93,13 +134,25 @@ function ClauseTab({
                   >
                     <div className="text-sm font-medium">{clause.name}</div>
                     <Mono>{clause.current?.reference ?? clause.category}</Mono>
+                    {clause.variants?.length ? (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {clause.variants.length} {clause.variants.length === 1 ? "variant" : "variants"}
+                      </span>
+                    ) : null}
                   </button>
                 ))
               )}
             </div>
           </Card>
 
-          {current?.current ? (
+          {current?.variants?.length ? (
+            <ClauseVariants
+              key={current.id}
+              clause={current}
+              canPropose={canPropose}
+              onChanged={() => clauses.reload()}
+            />
+          ) : current?.current ? (
             <div className="space-y-4">
               <Card>
                 <CardHeader
@@ -195,7 +248,12 @@ export default function Library() {
   const { entity } = useSession();
   const { has } = useRoles();
   const canPropose = has("counsel", "head_of_legal", "admin");
+  const params = useQueryParams();
   const [tab, setTab] = React.useState("clauses");
+  React.useEffect(() => {
+    const wanted = params.get("tab");
+    if (wanted && ["clauses", "templates", "playbooks"].includes(wanted)) setTab(wanted);
+  }, [params]);
   const [selected, setSelected] = React.useState<string | null>(null);
 
   const clauses = useApi<Clause[]>("/clauses", [entity]);
@@ -218,6 +276,18 @@ export default function Library() {
           "The single source of truth for house position. Only an approved, effective version " +
           "may be used for generation, and a superseded version stays readable."
         }
+        actions={
+          canPropose ? (
+            <>
+              <Link href="/workspace/library/import">
+                <Button size="sm" variant="primary">
+                  Import workbook
+                </Button>
+              </Link>
+              <ExportWorkbook />
+            </>
+          ) : null
+        }
       />
 
       {reviews.data?.some((row) => row.overdue) ? (
@@ -233,6 +303,7 @@ export default function Library() {
         tabs={[
           { id: "clauses", label: "Clauses", badge: clauses.data?.length },
           { id: "templates", label: "Templates", badge: templates.data?.length },
+          { id: "playbooks", label: "Playbooks" },
         ]}
         active={tab}
         onChange={setTab}
@@ -246,6 +317,7 @@ export default function Library() {
           onSelect={setSelected}
         />
       ) : null}
+      {tab === "playbooks" ? <PlaybookList entity={entity} /> : null}
       {tab === "templates" ? (
         <div className="space-y-4">
         <Card>
@@ -277,7 +349,9 @@ export default function Library() {
                       {template.name}
                     </Link>
                     <div className="text-xs text-muted-foreground">
-                      {titleCase(template.agreement_type)}, {template.jurisdiction}
+                      {titleCase(template.agreement_type)}
+                      {template.subtype ? `, ${template.subtype}` : ""}, {template.jurisdiction},{" "}
+                      {template.entity_applicability.length > 1 ? "both entities" : template.entity_applicability[0]}
                     </div>
                   </div>
                   <Mono>{template.current?.reference ?? "No approved version"}</Mono>

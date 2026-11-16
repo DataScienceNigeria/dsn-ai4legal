@@ -114,6 +114,7 @@ class ClauseVersionOut(ApiModel):
     minor: int
     status: str
     house_position: str
+    standard_position: str | None = None
     fallbacks: list[FallbackPosition]
     unacceptable_position: str | None
     usage_conditions: str | None
@@ -121,18 +122,34 @@ class ClauseVersionOut(ApiModel):
     approval_date: date | None
     effective_date: date | None
     review_date: date | None
+    provenance: str | None = None
+
+
+class ClauseVariantOut(ApiModel):
+    id: UUID
+    code: str
+    title: str
+    entity_scope: str
+    agreement_type: str
+    subtype: str
+    transaction_role: str
+    source_url: str | None
+    current: ClauseVersionOut | None = None
+    versions: list[ClauseVersionOut] = Field(default_factory=list)
 
 
 class ClauseOut(ApiModel):
     id: UUID
     category: str
     name: str
+    family: str | None = None
     owner_id: UUID | None
     entity_applicability: list[str]
     jurisdiction: str
     required_for_types: list[str]
     current: ClauseVersionOut | None = None
     versions: list[ClauseVersionOut] = Field(default_factory=list)
+    variants: list[ClauseVariantOut] = Field(default_factory=list)
 
 
 class TemplateVariable(BaseModel):
@@ -186,6 +203,7 @@ class TemplateOut(ApiModel):
     code: str
     name: str
     agreement_type: str
+    subtype: str = ""
     owner_id: UUID | None
     entity_applicability: list[str]
     jurisdiction: str
@@ -196,6 +214,7 @@ class TemplateOut(ApiModel):
 class VersionProposal(BaseModel):
     change_summary: str
     house_position: str | None = None
+    standard_position: str | None = None
     fallbacks: list[FallbackPosition] | None = None
     unacceptable_position: str | None = None
     body: list[dict] | None = None
