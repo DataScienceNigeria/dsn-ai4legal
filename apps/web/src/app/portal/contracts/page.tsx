@@ -412,19 +412,13 @@ export default function PortalContracts() {
     <div className="space-y-6">
       <PageTitle
         title="Your agreements"
-        subtitle={
-          "Once an agreement is signed, your team runs it. Tell Legal when something goes wrong " +
-          "and ask them when something needs to change."
-        }
+        subtitle="View your signed agreements and ask Legal about an issue or proposed change."
       />
 
       {mine.loading ? (
         <Spinner />
       ) : rows.length === 0 ? (
-        <Empty
-          title="No signed agreement came from your requests yet"
-          detail="Agreements appear here once they have been signed by both parties."
-        />
+        <Empty title="No signed agreements are linked to your requests." />
       ) : (
         <div className="space-y-4">
           {rows.map((contract) => (

@@ -638,10 +638,7 @@ export default function Capabilities() {
     <div className="space-y-6">
       <PageTitle
         title="AI capabilities"
-        subtitle={
-          "Every AI use is a named capability with an owner, a data-class ceiling, a tier " +
-          "ceiling, a route and a gate. Nothing runs as an unnamed model call."
-        }
+        subtitle="Monitor the AI features used by the platform and review their performance."
       />
 
       {disabled.length ? (
@@ -661,11 +658,7 @@ export default function Capabilities() {
       <Card>
         <CardHeader
           title="Capability register"
-          subtitle={
-            "A run records what a capability scored. Nothing switches itself off: where a gate " +
-            "is set to stop calls, it stops them and says so, and every other failure waits for " +
-            "somebody to act on it."
-          }
+          subtitle="See whether each capability is available, when it was last measured and whether it meets its threshold."
         />
         <div className="table-scroll">
           <div className="min-w-[68rem]">
@@ -756,7 +749,7 @@ export default function Capabilities() {
         <Card>
           <CardHeader
             title="Usage and quality"
-            subtitle="Human correction rate is the primary live quality signal."
+            subtitle="Review calls, correction rates and cost."
           />
           <div>
             <Row cols="minmax(0,1fr) 4.375rem 6.875rem 5.625rem" head>
@@ -793,7 +786,7 @@ export default function Capabilities() {
         </Card>
 
         <Card>
-          <CardHeader title="Recent interactions" subtitle="Route, sources, and the human decision" />
+          <CardHeader title="Recent interactions" subtitle="Review recent runs and any failures." />
           <div className="max-h-[420px] overflow-y-auto">
             {interactions.loading ? (
               <Spinner />
@@ -826,12 +819,6 @@ export default function Capabilities() {
           </div>
         </Card>
       </div>
-
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        No AI capability may send an external communication, alter permissions, publish a clause
-        version, approve an item or trigger a signature request. Those actions are unavailable to
-        the model layer by construction, not by instruction.
-      </p>
     </div>
   );
 }

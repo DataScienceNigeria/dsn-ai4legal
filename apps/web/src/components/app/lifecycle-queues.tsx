@@ -474,9 +474,8 @@ export function Issues({ entity }: Readonly<{ entity: string }>) {
 
   return (
     <div className="space-y-4">
-      <Notice tone="info" title="Where these come from">
-        The department running a contract tells Legal when something goes wrong, from the
-        agreement's own page in the portal. Legal decides what it means.
+      <Notice tone="info" title="Agreement issues">
+        Track problems reported against signed agreements.
       </Notice>
 
       <Card>
@@ -514,7 +513,7 @@ export function Issues({ entity }: Readonly<{ entity: string }>) {
                   ? "Nothing is open"
                   : scope === "resolved"
                     ? "Nothing has been resolved yet"
-                    : "No issue has been raised in this entity"
+                    : "No agreement issues have been reported."
               }
             >
               {rows.map((issue) => (
@@ -721,10 +720,8 @@ export function Changes({ entity }: Readonly<{ entity: string }>) {
 
   return (
     <div className="space-y-4">
-      <Notice tone="info" title="No material change is made informally">
-        A change that affects contractual rights is a document. Approving one opens a matter that
-        drafts it, and the contract it produces points back at the one it changes rather than
-        replacing it.
+      <Notice tone="info" title="Agreement changes">
+        Review requests to amend, renew, suspend or end an agreement.
       </Notice>
 
       <Card>
@@ -746,7 +743,7 @@ export function Changes({ entity }: Readonly<{ entity: string }>) {
               errorMessage={changes.error?.message}
               errorTitle="Change requests are not available to you"
               isEmpty={rows.length === 0}
-              emptyTitle="No change has been asked for in this entity"
+              emptyTitle="No agreement changes are waiting for review."
             >
               {rows.map((change) => (
                 <Row key={change.id} cols={CHANGE_COLS}>

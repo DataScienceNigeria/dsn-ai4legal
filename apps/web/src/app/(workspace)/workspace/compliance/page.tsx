@@ -560,7 +560,7 @@ function RecordFiling({ item, onFiled }: Readonly<{ item: ComplianceItem; onFile
   record after the first year.
 */
 const EMPTY_BY_TAB: Record<string, string> = {
-  all: "Nothing is on the calendar for this entity",
+  all: "Nothing is due or scheduled for this organisation.",
   due_soon: "Nothing is due soon",
   overdue: "Nothing is overdue",
   completed: "Nothing has been filed yet",
@@ -605,11 +605,7 @@ export default function Compliance() {
     <div className="space-y-6">
       <PageTitle
         title="Compliance calendar"
-        subtitle={
-          "What the organisation itself owes a regulator, as opposed to what a contract owes a " +
-          "counterparty. Each filing has an accountable owner, the evidence it needs, and the " +
-          "version of the rule that applied at the time."
-        }
+        subtitle="Track regulatory filings and other compliance obligations."
         actions={canFile ? <AddRequirement onAdded={all.reload} /> : undefined}
       />
 

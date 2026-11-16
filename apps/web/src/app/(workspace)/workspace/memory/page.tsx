@@ -174,8 +174,7 @@ function ConversationList({
   if (conversations.length === 0) {
     return (
       <p className="px-3 py-6 text-sm leading-relaxed text-muted-foreground">
-        No conversations yet. Ask something and this thread is kept, so an answer someone relied
-        on can be reopened with its citations intact.
+        Start a conversation to search Legal's records.
       </p>
     );
   }
@@ -376,7 +375,7 @@ export default function Memory() {
 
   const strapline = active
     ? `${active.message_count} message${plural(active.message_count)}, kept with its citations`
-    : `Over the approved library, executed agreements, decision records and playbooks in ${entity}`;
+    : "Ask questions about approved clauses, playbooks, decisions and signed agreements.";
 
   React.useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -464,7 +463,7 @@ export default function Memory() {
           </Button>
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-base font-semibold text-heading">
-              {active ? active.title : "Ask memory"}
+              {active ? active.title : "Legal memory"}
             </h1>
             <p className="truncate text-xs text-muted-foreground">{strapline}</p>
           </div>
@@ -477,12 +476,12 @@ export default function Memory() {
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-5">
-          {loading ? <Spinner label="Opening your conversations" /> : null}
+          {loading ? <Spinner label="Loading your conversations" /> : null}
           {!loading && active ? <Thread turns={active.turns} pending={pending} /> : null}
           {!loading && !active ? (
             <div className="mx-auto max-w-reading space-y-4 py-6">
               <div>
-                <h2 className="text-xl font-semibold text-heading">Ask memory</h2>
+                <h2 className="text-xl font-semibold text-heading">Legal memory</h2>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                   This memory builds itself from normal work. Decision entries, accepted redlines,
                   approved fallback usage and executed agreements are indexed on the events that
@@ -549,9 +548,7 @@ export default function Memory() {
             </Button>
           </div>
           <p className="mt-2 text-2xs leading-relaxed text-muted-foreground">
-            Enter sends, shift and enter starts a line. Retrieval filters by entity, role and
-            matter access before ranking rather than after, so a record you cannot open never
-            enters the candidate set. The thread is yours alone: nobody else can open it.
+            Press Enter to send. Press Shift and Enter to start a new line.
           </p>
         </form>
       </section>

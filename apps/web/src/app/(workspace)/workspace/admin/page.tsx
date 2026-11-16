@@ -119,9 +119,8 @@ function Retention() {
 
   return (
     <div className="space-y-4">
-      <Notice tone="info" title="A hold outranks every role">
-        While a record class is under legal hold no role can delete anything in it, including the
-        platform administrator. Lifting a hold is an audited act.
+      <Notice tone="info" title="Legal holds">
+        A legal hold prevents deletion until it is lifted by an authorised person.
       </Notice>
 
       {toggle.error ? (
@@ -203,7 +202,7 @@ function Retention() {
                           disabled={toggle.busy || (reason[policy.record_class] ?? "") === ""} loading={toggle.busy}
                           onClick={() => toggle.run(policy.record_class, true)}
                         >
-                          Place a hold
+                          Place a legal hold
                         </Button>
                       </div>
                     )}
@@ -259,9 +258,8 @@ function Boundary() {
 
   return (
     <div className="space-y-4">
-      <Notice tone="warn" title="Nobody approves their own export or deletion">
-        Bulk export and deletion both need a second authorised user, and the platform refuses the
-        person who raised the request. Restricted content is never exportable in bulk.
+      <Notice tone="warn" title="Export and deletion">
+        Exports and deletions require a second authorised approver.
       </Notice>
 
       {error ? <Refusal title="That action was refused" reason={error.message} /> : null}
@@ -271,8 +269,8 @@ function Boundary() {
 
       <Card>
         <CardHeader
-          title="Request a bulk export"
-          subtitle="Somebody else approves it. Restricted content is never included, whoever asks."
+          title="Request an export"
+          subtitle="Restricted content is not included."
         />
         <CardBody>
           <div className="grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
@@ -297,10 +295,7 @@ function Boundary() {
               />
             </Field>
           </div>
-          <div className="mt-4 flex items-center justify-between gap-3 border-t pt-4">
-            <p className="text-xs text-muted-foreground">
-              Internal and below. Five export requests a day, per person.
-            </p>
+          <div className="mt-4 flex items-center justify-end gap-3 border-t pt-4">
             <Button
               variant="primary"
               disabled={requestExport.busy || form.reason.trim() === ""} loading={requestExport.busy}
@@ -354,7 +349,7 @@ function Boundary() {
       <Card>
         <CardHeader
           title="Deletion requests"
-          subtitle="An approved deletion produces a certificate, and the certificate is retained."
+          subtitle="Approved deletions create a retained certificate."
         />
         <div className="table-scroll">
           <div className="min-w-[56.25rem]">
@@ -460,17 +455,12 @@ function Connectors() {
 
   return (
     <div className="space-y-4">
-      <Notice tone="info" title="A route has to exist here before anything travels it">
-        Each connector is code that knows how to talk to one thing, so they arrive with a
-        deployment rather than from this screen. What the register answers is which routes exist,
-        who owns each, and what each may carry.
+      <Notice tone="info" title="Connected services">
+        Review approved connections and the data each connection may access or send.
       </Notice>
 
       <Card>
-        <CardHeader
-          title="Every route in and out of the platform"
-          subtitle="A connector that is not registered here cannot carry anything anywhere."
-        />
+        <CardHeader title="Connection register" />
         <div className="table-scroll">
           <div className="min-w-[68rem]">
             <Row cols={CONNECTOR_COLS} head>
@@ -534,8 +524,7 @@ function Connectors() {
 
       <Card>
         <CardHeader
-          title="What actually went through them"
-          subtitle="The register says what a route may carry. This says what it carried."
+          title="Recent connection activity"
           actions={
             <Select value={chosen} onChange={(event) => setChosen(event.target.value)}>
               <option value="">All connectors</option>
@@ -1149,16 +1138,13 @@ function People() {
 
   return (
     <div className="space-y-4">
-      <Notice tone="info" title="Reach is role and entity together">
-        A role says what somebody may do, an entity says where, and somebody on DSN alone cannot
-        open an EAI matter. Nobody is deleted: suspension stops them at their next request and
-        leaves their name on the work they did.
+      <Notice tone="info" title="People and access">
+        Manage roles, organisation access and practice areas.
       </Notice>
 
       <Card>
         <CardHeader
-          title="People and effective permission"
-          subtitle="Permission is the intersection of role, entity and matter access."
+          title="People and permissions"
           actions={canWrite ? <AddPerson onDone={() => users.reload()} /> : null}
         />
         <div className="table-scroll">
@@ -1517,11 +1503,11 @@ function Audit() {
   is whichever was typed last.
 */
 const ORGANISATION_FIELDS: { name: keyof OrganisationRow; label: string; hint?: string }[] = [
-  { name: "legal_name", label: "Legal name", hint: "Exactly as registered. This is what every agreement calls this entity." },
+  { name: "legal_name", label: "Legal name", hint: "Enter the organisation's registered name." },
   { name: "trading_name", label: "Trading name", hint: "Only where it differs from the legal name." },
   { name: "registration_number", label: "Registration number" },
   { name: "tax_identification_number", label: "Tax identification number" },
-  { name: "registered_address", label: "Registered address", hint: "One line, as it should read in a preamble." },
+  { name: "registered_address", label: "Registered address", hint: "Enter the address as it should appear in an agreement." },
   { name: "default_jurisdiction", label: "Governing law", hint: "Used where a template leaves the jurisdiction blank." },
   { name: "contact_email", label: "Contact email" },
   { name: "contact_phone", label: "Contact phone" },
@@ -1569,7 +1555,7 @@ function OrganisationCard({
             <span>{record.legal_name}</span>
           </span>
         }
-        subtitle={`Every agreement ${record.entity_code} signs names this entity by these particulars.`}
+        subtitle="These details are used in agreements and official records."
         actions={
           record.incomplete.length ? (
             <Pill tone="warn">{record.incomplete.length} still to fill</Pill>
@@ -1617,13 +1603,9 @@ function OrganisationCard({
 
         <Actions>
           <Button variant="primary" disabled={!changed || save.busy} onClick={() => void save.run()}>
-            {save.busy ? "Saving" : "Save these particulars"}
+            {save.busy ? "Saving" : "Save organisation details"}
           </Button>
           {changed ? <Button onClick={() => setDraft({})}>Discard changes</Button> : null}
-          <span className="text-xs text-muted-foreground sm:ml-auto">
-            These values are copied verbatim into executed contracts, so the change is audited
-            with both states.
-          </span>
         </Actions>
       </CardBody>
     </Card>
@@ -1654,8 +1636,7 @@ function Organisations() {
         ) : null}
       </DataState>
       <p className="text-xs text-muted-foreground">
-        {`These are ${entity}'s particulars only. Switch organisation in the sidebar to read or
-        change ${other}'s.`}
+        {`Switch organisation to view or edit ${other}'s details.`}
       </p>
     </div>
   );
@@ -1685,8 +1666,8 @@ function QualitySamples() {
           issued without review, and the sample is how that stays justifiable.
         </Notice>
       ) : (
-        <Notice tone="good" title="Every sampled document has been read">
-          The monthly sample is clear.
+        <Notice tone="good" title="Monthly quality review">
+          Review documents selected for quality checks.
         </Notice>
       )}
 
@@ -1695,7 +1676,7 @@ function QualitySamples() {
       ) : null}
 
       <Card>
-        <CardHeader title="Monthly quality sample" subtitle="Documents issued by tier 1 automation" />
+        <CardHeader title="Documents selected for review" subtitle="Documents issued by tier 1 automation" />
         <div className="table-scroll">
           <div className="min-w-[56.25rem]">
             <Row cols={SAMPLE_COLS} head>
@@ -1709,7 +1690,7 @@ function QualitySamples() {
               loading={samples.loading}
               errorMessage={samples.error?.message}
               isEmpty={rows.length === 0}
-              emptyTitle="Nothing has been sampled yet"
+              emptyTitle="No documents have been selected for this period."
             >
               {rows.map((row) => (
                 <Row key={row.id} cols={SAMPLE_COLS}>
@@ -1774,14 +1755,13 @@ function QualitySamples() {
 }
 
 export default function Administration() {
-  const { entity } = useSession();
   const [tab, setTab] = React.useState("retention");
 
   return (
     <div className="space-y-6">
       <PageTitle
         title="Administration"
-        subtitle={`Retention, the data boundary, connectors, people and the audit trail. Entity ${entity}.`}
+        subtitle="Manage people, organisation details, integrations, retention and audit records."
       />
 
       <Tabs

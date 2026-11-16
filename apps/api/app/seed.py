@@ -159,8 +159,8 @@ def seed_request_types(session) -> dict[str, RequestType]:
     definitions = [
         {
             "code": "nda_mutual",
-            "business_label": "We want to sign an NDA",
-            "description": "A mutual confidentiality agreement before sharing information.",
+            "business_label": "Sign an NDA",
+            "description": "Use this before sharing confidential information.",
             "agreement_type": "nda_mutual",
             "practice_code": "COM",
             "sla_hours": 8,
@@ -171,19 +171,19 @@ def seed_request_types(session) -> dict[str, RequestType]:
             "fields": [
                 {
                     "name": "counterparty",
-                    "label": "Who is it with",
+                    "label": "Who is the other party?",
                     "type": "string",
                     "mandatory": True,
                 },
                 {
                     "name": "purpose",
-                    "label": "What will you share",
+                    "label": "What information will be shared?",
                     "type": "text",
                     "mandatory": True,
                 },
                 {
                     "name": "required_date",
-                    "label": "When do you need it",
+                    "label": "When do you need the NDA?",
                     "type": "date",
                     "mandatory": True,
                 },
@@ -204,8 +204,10 @@ def seed_request_types(session) -> dict[str, RequestType]:
         },
         {
             "code": "consultant_engagement",
-            "business_label": "We are engaging a consultant",
-            "description": "An individual or firm doing defined work for a fee.",
+            "business_label": "Engage a consultant",
+            "description": (
+                "Request an agreement for an individual or firm providing defined services."
+            ),
             "agreement_type": "consultant_engagement",
             "practice_code": "EMP",
             "sla_hours": 48,
@@ -218,19 +220,24 @@ def seed_request_types(session) -> dict[str, RequestType]:
                     "type": "string",
                     "mandatory": True,
                 },
-                {"name": "scope", "label": "What will they do", "type": "text", "mandatory": True},
+                {
+                    "name": "scope",
+                    "label": "What work will they carry out?",
+                    "type": "text",
+                    "mandatory": True,
+                },
                 {
                     "name": "value_amount",
-                    "label": "Fee",
+                    "label": "Total fee",
                     "type": "number",
                     "unit": "NGN",
-                    "help_text": "The total fee, in naira, excluding VAT.",
+                    "help_text": "Enter the total fee excluding VAT.",
                     "mandatory": True,
                 },
                 {"name": "required_date", "label": "Start date", "type": "date", "mandatory": True},
                 {
                     "name": "exclusivity",
-                    "label": "Is the engagement exclusive",
+                    "label": "Is this engagement exclusive?",
                     "type": "boolean",
                     "mandatory": False,
                 },
@@ -239,8 +246,8 @@ def seed_request_types(session) -> dict[str, RequestType]:
         },
         {
             "code": "their_paper",
-            "business_label": "A partner sent us their contract",
-            "description": "Review a document the other side drafted.",
+            "business_label": "Review another party's contract",
+            "description": "Ask Legal to review a draft received from another party.",
             "agreement_type": "master_services_agreement",
             "practice_code": "COM",
             "sla_hours": 72,
@@ -248,21 +255,27 @@ def seed_request_types(session) -> dict[str, RequestType]:
             "fields": [
                 {
                     "name": "counterparty",
-                    "label": "Who sent it",
+                    "label": "Who sent the contract?",
                     "type": "string",
                     "mandatory": True,
                 },
-                {"name": "purpose", "label": "What is it for", "type": "text", "mandatory": True},
+                {
+                    "name": "purpose",
+                    "label": "What is the contract for?",
+                    "type": "text",
+                    "mandatory": True,
+                },
                 {
                     "name": "required_date",
-                    "label": "When do they need a response",
+                    "label": "When is your response due?",
                     "type": "date",
                     "mandatory": True,
                 },
                 {
                     "name": "their_paper",
-                    "label": "Their paper",
+                    "label": "Their draft",
                     "type": "boolean",
+                    "help_text": "Attach the contract received from the other party.",
                     "mandatory": False,
                     "default": True,
                 },
@@ -271,8 +284,8 @@ def seed_request_types(session) -> dict[str, RequestType]:
         },
         {
             "code": "data_sharing",
-            "business_label": "We are sharing or receiving data",
-            "description": "A data-sharing or data-processing arrangement.",
+            "business_label": "Share or receive data",
+            "description": "Request a data-sharing or data-processing agreement.",
             "agreement_type": "data_sharing_agreement",
             "practice_code": "DPR",
             "sla_hours": 72,
@@ -281,25 +294,25 @@ def seed_request_types(session) -> dict[str, RequestType]:
             "fields": [
                 {
                     "name": "counterparty",
-                    "label": "Who is the other party",
+                    "label": "Who is the other party?",
                     "type": "string",
                     "mandatory": True,
                 },
                 {
                     "name": "purpose",
-                    "label": "What is the data for",
+                    "label": "Why is the data being shared?",
                     "type": "text",
                     "mandatory": True,
                 },
                 {
                     "name": "data_categories",
-                    "label": "What data is involved",
+                    "label": "What data will be shared?",
                     "type": "text",
                     "mandatory": True,
                 },
                 {
                     "name": "required_date",
-                    "label": "When do you need it",
+                    "label": "When do you need the agreement?",
                     "type": "date",
                     "mandatory": True,
                 },
@@ -308,8 +321,8 @@ def seed_request_types(session) -> dict[str, RequestType]:
         },
         {
             "code": "partnership",
-            "business_label": "We are entering a partnership",
-            "description": "A collaboration or partnership agreement.",
+            "business_label": "Enter a partnership",
+            "description": "Request an agreement for a proposed collaboration.",
             "agreement_type": "partnership_agreement",
             "practice_code": "COM",
             "sla_hours": 72,
@@ -318,26 +331,26 @@ def seed_request_types(session) -> dict[str, RequestType]:
             "fields": [
                 {
                     "name": "counterparty",
-                    "label": "Who is the partner",
+                    "label": "Who is the partner?",
                     "type": "string",
                     "mandatory": True,
                 },
                 {
                     "name": "purpose",
-                    "label": "What will you do together",
+                    "label": "What will each party do?",
                     "type": "text",
                     "mandatory": True,
                 },
                 {
                     "name": "value_amount",
-                    "label": "Value, if any",
+                    "label": "Estimated value, if known",
                     "type": "number",
                     "unit": "NGN",
                     "mandatory": False,
                 },
                 {
                     "name": "required_date",
-                    "label": "Target date",
+                    "label": "Target start date",
                     "type": "date",
                     "mandatory": True,
                 },
@@ -353,10 +366,15 @@ def seed_request_types(session) -> dict[str, RequestType]:
             "sla_hours": 48,
             "sort_order": 9,
             "fields": [
-                {"name": "purpose", "label": "What do you need", "type": "text", "mandatory": True},
+                {
+                    "name": "purpose",
+                    "label": "What do you need from Legal?",
+                    "type": "text",
+                    "mandatory": True,
+                },
                 {
                     "name": "required_date",
-                    "label": "When do you need it",
+                    "label": "When do you need it?",
                     "type": "date",
                     "mandatory": False,
                 },

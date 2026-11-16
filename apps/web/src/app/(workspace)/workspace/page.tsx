@@ -49,11 +49,6 @@ export default function DeliveryDashboard() {
     <div className="space-y-6">
       <PageTitle
         title={greeting(me?.name)}
-        subtitle={
-          "Every figure here is computed from recorded lifecycle transitions, not from " +
-          "manually entered dates, so a number on this page can always be traced to an event. " +
-          "Every figure is also a link to the records behind it."
-        }
         actions={
           <>
             <Link href="/workspace/matters" className="no-underline">
@@ -62,7 +57,7 @@ export default function DeliveryDashboard() {
               </Button>
             </Link>
             <More>
-              <MenuItem href="/workspace/triage">Triage queue</MenuItem>
+              <MenuItem href="/workspace/triage">Triage</MenuItem>
               <MenuItem href="/workspace/review">Review queue</MenuItem>
               <MenuItem href="/workspace/metrics">Metrics</MenuItem>
             </More>
@@ -114,7 +109,7 @@ export default function DeliveryDashboard() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader title="Workload by owner" subtitle="Open matters, and how many are past target" />
+          <CardHeader title="Workload by owner" subtitle="Open matters by owner" />
           <div>
             <Row cols="minmax(0,1fr) 5.625rem 5.625rem" head>
               <div>Owner</div>
@@ -157,7 +152,7 @@ export default function DeliveryDashboard() {
         </Card>
 
         <Card>
-          <CardHeader title="Ageing" subtitle="Days since the matter was accepted" />
+          <CardHeader title="Ageing" subtitle="Time since each matter was accepted" />
           <CardBody className="space-y-2.5">
             {data.ageing.map((bucket) => (
               <div key={bucket.label} className="flex items-center gap-3">
@@ -175,7 +170,7 @@ export default function DeliveryDashboard() {
         </Card>
 
         <Card>
-          <CardHeader title="By tier" subtitle="Tier is derived by rule, never chosen by the requester" />
+          <CardHeader title="By tier" />
           <div>
             {Object.entries(data.by_tier).length === 0 ? (
               <Empty title="Nothing open" />
@@ -197,7 +192,7 @@ export default function DeliveryDashboard() {
         <Card>
           <CardHeader
             title="Weekly update"
-            subtitle="Generated, not written. The Legal lead approves before circulation."
+            subtitle="Review before sharing."
             actions={<Link href="/workspace/capabilities" className="text-xs">AI usage</Link>}
           />
           <CardBody className="space-y-3 text-sm">

@@ -77,8 +77,8 @@ export function MfaEnrolment() {
   return (
     <Card>
       <CardHeader
-        title="Second factor"
-        subtitle="Publishing house position, issuing a signature request, restricting a matter and changing configuration all need one."
+        title="Two-step verification"
+        subtitle="Set up an authenticator to protect your account and sensitive actions."
         actions={(() => {
           if (data && !data.enabled) return <Pill tone="neutral">Switched off</Pill>;
           if (data?.enrolled) return <Pill tone="good">Enrolled</Pill>;
@@ -88,7 +88,7 @@ export function MfaEnrolment() {
               disabled={!data || start.busy}
               onClick={() => void start.run(false)}
             >
-              Enrol an authenticator
+              Set up an authenticator
             </Button>
           );
         })()}
@@ -139,7 +139,7 @@ export function MfaEnrolment() {
 
       <Modal
         open={open}
-        title="Enrol an authenticator"
+        title="Set up an authenticator"
         subtitle="Scan the code with your authenticator app, then enter the number it shows. The factor is not active until that number is accepted."
         onClose={() => setOpen(false)}
         footer={

@@ -950,7 +950,7 @@ export function Notice({
   children,
 }: Readonly<{
   tone?: Tone;
-  title: string;
+  title?: string;
   children?: React.ReactNode;
 }>) {
   return (
@@ -965,8 +965,10 @@ export function Notice({
         tone === "neutral" && "border-border bg-muted",
       )}
     >
-      <div className="text-sm font-semibold">{title}</div>
-      {children ? <div className="mt-1 text-sm leading-relaxed">{children}</div> : null}
+      {title ? <div className="text-sm font-semibold">{title}</div> : null}
+      {children ? (
+        <div className={cn("text-sm leading-relaxed", title && "mt-1")}>{children}</div>
+      ) : null}
     </div>
   );
 }

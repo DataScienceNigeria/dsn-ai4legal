@@ -35,25 +35,25 @@ const SIDE_LINKS = [
     href: "/portal",
     icon: "plus" as const,
     label: "Raise a request",
-    detail: "Contracts, advice, anything legal",
+    detail: "Ask Legal for help",
   },
   {
     href: "/portal/status",
     icon: "matters" as const,
     label: "My requests",
-    detail: "What you have asked for, and where it is",
+    detail: "View your requests and their status",
   },
   {
     href: "/portal/contracts",
     icon: "archive" as const,
     label: "Your agreements",
-    detail: "Signed and running. Report a problem or ask for a change",
+    detail: "View signed agreements and request a change",
   },
   {
     href: "/portal/assessments",
     icon: "assessments" as const,
     label: "Data protection",
-    detail: "Assessments for what your team builds",
+    detail: "Start or view an assessment",
   },
 ];
 

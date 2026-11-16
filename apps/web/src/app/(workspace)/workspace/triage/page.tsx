@@ -16,11 +16,8 @@ export default function TriageQueue() {
   return (
     <div className="space-y-6">
       <PageTitle
-        title="Triage queue"
-        subtitle={
-          "Sorted by declared deadline, then by age. A request stays a request until Legal " +
-          "accepts it, and the matter number is issued at acceptance rather than at submission."
-        }
+        title="Triage"
+        subtitle="Review new legal requests and decide what happens next."
       />
 
       <Card>
@@ -44,10 +41,7 @@ export default function TriageQueue() {
           ) : error ? (
             <Empty title="The queue is not available to you" detail={error.message} />
           ) : !data?.length ? (
-            <Empty
-              title="Nothing is waiting"
-              detail="Every request in this entity has been accepted, returned or closed."
-            />
+            <Empty title="No requests are waiting for review." />
           ) : (
             data.map((row) => (
               <Link

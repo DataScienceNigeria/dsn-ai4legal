@@ -192,16 +192,12 @@ export default function Review() {
   return (
     <div className="space-y-6">
       <PageTitle
-        title="Their paper, against our playbook"
-        subtitle={
-          "Findings cover both altered terms and required clauses that are absent. Every " +
-          "suggestion is a draft until a named person accepts it, and every change to their " +
-          "document is typed by a person."
-        }
+        title="Contract review"
+        subtitle="Compare a counterparty draft with our Legal Playbook and review missing or changed clauses."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Select value={active} onChange={(event) => setMatterId(event.target.value)}>
-              {inReview.length === 0 ? <option value="">No matter is in review</option> : null}
+              {inReview.length === 0 ? <option value="">Select a matter</option> : null}
               {inReview.map((matter) => (
                 <option key={matter.id} value={matter.id}>
                   {matter.number}, {matter.title}
@@ -264,8 +260,8 @@ export default function Review() {
 
       {!active ? (
         <Empty
-          title="Nothing is under review"
-          detail="Upload counterparty paper on a matter and run the comparison to populate this screen."
+          title="No contracts are being reviewed."
+          detail="Upload the counterparty draft to a matter to begin."
         />
       ) : findings.loading ? (
         <Spinner />

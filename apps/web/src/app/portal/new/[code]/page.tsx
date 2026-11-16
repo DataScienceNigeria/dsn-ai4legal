@@ -48,6 +48,18 @@ const ENTITY_NAMES: Record<string, string> = {
   EAI: "EqualyzAI",
 };
 
+const ENTITY_HINTS: Record<string, string> = {
+  data_sharing:
+    "Choose the organisation that will sign the agreement or carry out the activity. This cannot be changed after submission.",
+  something_else:
+    "Choose the organisation that will carry out the activity. This cannot be changed after submission.",
+};
+
+const ENTITY_HINT =
+  "Choose the organisation that will sign the agreement. This cannot be changed after submission.";
+
+const COUNTERPARTY_PAPER = "their_paper";
+
 export default function NewRequest() {
   const { code } = useParams<{ code: string }>();
   const router = useRouter();
@@ -134,7 +146,8 @@ export default function NewRequest() {
     return order
       .map((section) => ({
         ...section,
-        title: `${section.letter}. ${section.title}`,
+        title: section.key === "brief" ? "About the request" : `${section.letter}. ${section.title}`,
+        intent: section.key === "brief" ? "Provide the main details." : section.intent,
         fields: shown.filter((field) => owner(field) === section.key),
         held: fields.filter((field) => owner(field) === section.key).length,
       }))
@@ -148,15 +161,13 @@ export default function NewRequest() {
   const entities = me?.entities ?? [];
   const fieldErrors = submit.error?.fieldErrors ?? {};
   const hasProgressive = fields.some((field) => field.progressive);
+  const counterpartyPaper = type.code === COUNTERPARTY_PAPER;
 
 
 
   return (
     <div className="space-y-6">
-      <PageTitle
-        title={type.business_label}
-        subtitle="You are only asked what this request type requires."
-      />
+      <PageTitle title={type.business_label} />
 
       {submit.error ? (
         <Refusal
@@ -168,8 +179,8 @@ export default function NewRequest() {
 
       <Card>
         <CardHeader
-          title="Which organisation is this for?"
-          subtitle="The two are separate legal entities. This decides which paper is used, which approvals apply and who can see the matter afterwards, so it cannot be changed later without raising the request again."
+          title="Which organisation is making this request?"
+          subtitle={ENTITY_HINTS[type.code] ?? ENTITY_HINT}
         />
         <CardBody>
           {entities.length > 1 ? (
@@ -307,8 +318,12 @@ export default function NewRequest() {
       */}
       <Card>
         <CardHeader
-          title="Anything already written"
-          subtitle="A brief, a term sheet, their draft, a scope document. Attach as many as you have."
+          title="Documents"
+          subtitle={
+            counterpartyPaper
+              ? "Attach any supporting brief, term sheet or scope document."
+              : "Attach any draft, brief, term sheet or scope document."
+          }
         />
         <CardBody className="space-y-3">
           <input
@@ -334,8 +349,9 @@ export default function NewRequest() {
 
           {files.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Nothing attached. A request without the document that explains it usually comes
-              back with a question.
+              {counterpartyPaper
+                ? "No files attached. Attach the contract before submitting this request."
+                : "No files attached. Attach the relevant document if one is available."}
             </p>
           ) : (
             <div className="space-y-1.5">
@@ -374,16 +390,16 @@ export default function NewRequest() {
 
       <Card>
         <CardHeader
-          title="What data is involved?"
-          subtitle="A yes on any of these sets a privacy flag on the matter and tells the legal team."
+          title="Does this involve any of the following?"
+          subtitle="Select all that apply. Legal will review any data protection issues."
         />
         <CardBody className="space-y-2">
           {(
             [
               ["personal_data", "Personal data about identifiable people"],
-              ["special_category_data", "Special-category data, for example health or biometric data"],
-              ["third_party_confidential", "Confidential information belonging to a third party"],
-              ["leaves_nigeria", "Data that will leave Nigeria"],
+              ["special_category_data", "Sensitive personal data, such as health or biometric data"],
+              ["third_party_confidential", "Confidential information belonging to another person or organisation"],
+              ["leaves_nigeria", "Personal data that will be transferred outside Nigeria"],
             ] as const
           ).map(([key, label]) => (
             <label
@@ -432,8 +448,8 @@ export default function NewRequest() {
           Cancel
         </Button>
         <span className="text-sm text-muted-foreground">
-          Submitting as {me?.name} for {ENTITY_NAMES[raisingFor] ?? raisingFor}. You will get an
-          acknowledgment within a minute.
+          Submitting for {ENTITY_NAMES[raisingFor] ?? raisingFor} as {me?.name}. You will receive an
+          acknowledgement after submission.
         </span>
       </div>
 

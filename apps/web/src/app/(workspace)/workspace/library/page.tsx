@@ -235,7 +235,7 @@ function ClauseTab({
           ) : current ? (
             <Empty
               title={`${current.name} has no approved version`}
-              detail="A draft exists but nothing is effective, so this category cannot be used for generation yet."
+              detail="This clause cannot be used until an approved version is published."
             />
           ) : (
             <Empty title="Choose a clause category" />
@@ -272,10 +272,7 @@ export default function Library() {
     <div className="space-y-6">
       <PageTitle
         title="Templates and clauses"
-        subtitle={
-          "The single source of truth for house position. Only an approved, effective version " +
-          "may be used for generation, and a superseded version stays readable."
-        }
+        subtitle="Manage approved templates and clause wording."
         actions={
           canPropose ? (
             <>
@@ -323,7 +320,7 @@ export default function Library() {
         <Card>
           <CardHeader
             title="Templates"
-            subtitle="Only an approved, effective version may generate"
+            subtitle="Only approved and effective templates can be used to draft documents."
             actions={canPropose ? <AddTemplate onDone={() => templates.reload()} /> : null}
           />
           <div>
@@ -370,11 +367,6 @@ export default function Library() {
 
         </div>
       ) : null}
-
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        Publication requires the clause-owner role and a fresh authentication, and it supersedes
-        the previous version atomically. Legal staff may propose a change but cannot publish one alone.
-      </p>
     </div>
   );
 }

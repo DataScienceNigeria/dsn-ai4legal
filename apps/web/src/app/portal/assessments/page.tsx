@@ -107,7 +107,7 @@ function ImportTemplate() {
 
   return (
     <>
-      <Button onClick={() => setOpen(true)}>Upload a completed template</Button>
+      <Button onClick={() => setOpen(true)}>Upload an assessment</Button>
       <Modal
         open={open}
         title="Upload a DPIA you have already written"
@@ -235,10 +235,7 @@ export default function PortalAssessments() {
     <div className="space-y-6">
       <PageTitle
         title="Data protection assessments"
-        subtitle={
-          "Before a product handles personal data, the team building it describes what it " +
-          "does with that data. Legal reads it, scores it and decides."
-        }
+        subtitle="Start an assessment before a project collects, uses, shares or stores personal data."
         actions={
           <div className="flex flex-wrap gap-2">
             <ImportTemplate />
@@ -253,8 +250,8 @@ export default function PortalAssessments() {
         <Spinner />
       ) : rows.length === 0 ? (
         <Empty
-          title="You have not started an assessment"
-          detail="Start one when your team is building something that will collect or process personal data."
+          title="You have not started an assessment."
+          detail="Start one before development begins if the project will collect or process personal data."
         />
       ) : (
         <div className="space-y-3">
@@ -298,7 +295,7 @@ export default function PortalAssessments() {
       <Card>
         <CardHeader
           title="When an assessment is needed"
-          subtitle="If any of these describe what your team is building, start one before the build does."
+          subtitle="Start an assessment before development begins if any of the following applies."
         />
         <CardBody>
           <ul className="ml-5 list-disc space-y-1.5 text-sm leading-relaxed marker:text-muted-foreground">

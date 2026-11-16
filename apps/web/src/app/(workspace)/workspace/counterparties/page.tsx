@@ -425,9 +425,8 @@ function Positions() {
 
   return (
     <div className="space-y-4">
-      <Notice tone="info" title="What we have actually agreed before">
-        The house position is what we ask for. This is what we settled on, matter by matter, and
-        the authority under which each concession was granted.
+      <Notice tone="info" title="Negotiated positions">
+        See positions accepted in previous matters and the approval recorded for each one.
       </Notice>
 
       <Card>
@@ -478,7 +477,7 @@ function Positions() {
               </div>
             </DataState>
           ) : (
-            <Empty title="Choose a clause category to see what has been conceded" />
+            <Empty title="Select a clause category to view previous negotiated positions." />
           )}
         </CardBody>
       </Card>
@@ -552,7 +551,7 @@ function Parties({ entity }: Readonly<{ entity: string }>) {
     <Card>
       <CardHeader
         title="Counterparties"
-        subtitle="A name change updates the record and keeps the identifier."
+        subtitle="One record for each organisation."
         actions={
           <>
             <Input
@@ -644,9 +643,8 @@ function Vendors({ entity }: Readonly<{ entity: string }>) {
 
   return (
     <div className="space-y-4">
-      <Notice tone="info" title="Renewal is the moment risk becomes visible">
-        The renewal check surfaces outstanding security findings, expired assessments and
-        unresolved performance issues before the term rolls over.
+      <Notice tone="info" title="Vendor reviews and renewals">
+        Track review status, open findings and renewal dates.
       </Notice>
 
       {checkRenewal.error ? (
@@ -670,7 +668,7 @@ function Vendors({ entity }: Readonly<{ entity: string }>) {
               errorMessage={vendors.error?.message}
               errorTitle="Vendors are not available to you"
               isEmpty={rows.length === 0}
-              emptyTitle="No vendor record exists yet"
+              emptyTitle="No vendor records found."
             >
               {rows.map((vendor) => (
                 <Row key={vendor.id} cols={VENDOR_COLS}>
@@ -720,10 +718,7 @@ export default function Counterparties() {
     <div className="space-y-6">
       <PageTitle
         title="Counterparties and vendors"
-        subtitle={
-          "One permanent identity per counterparty, and one record per vendor carrying the " +
-          "contracts, reviews and renewal risk that belong to it."
-        }
+        subtitle="Manage organisations and vendors we work with."
       />
 
       <Tabs

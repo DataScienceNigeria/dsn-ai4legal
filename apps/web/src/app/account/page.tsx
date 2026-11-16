@@ -19,12 +19,12 @@ export default function AccountPage() {
 
   return (
     <div className="space-y-6">
-      <PageTitle title="Account settings" subtitle="Your profile, your password and your second factor." />
+      <PageTitle title="Account settings" subtitle="Manage your profile, password and two-step verification." />
 
       <Card>
         <CardHeader
           title="Profile"
-          subtitle="Set by an administrator. Ask one if any of this is wrong."
+          subtitle="Contact an administrator if any profile information is incorrect."
         />
         <CardBody>
           <KeyValue

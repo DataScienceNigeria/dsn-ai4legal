@@ -219,8 +219,7 @@ def create_request(
         body=(
             f"Thank you. Your request {record.reference} has been received.\n\n"
             f"What happens next: Legal will assess it and either accept it as a matter, "
-            f"answer it and close it, or come back to you for more information. "
-            f"You can expect an update within {request_type.sla_hours} working hours.\n\n"
+            "answer it and close it, or come back to you for more information.\n\n"
             "This message is administrative. It contains no legal position or advice."
         ),
         record_reference=record.reference,

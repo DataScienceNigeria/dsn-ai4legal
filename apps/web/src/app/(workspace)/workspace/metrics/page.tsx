@@ -228,19 +228,16 @@ function Improvement({ entity }: Readonly<{ entity: string }>) {
       {unset > 0 ? (
         <Notice
           tone="warn"
-          title={`${unset} of ${rows.length} measures have no baseline`}
+          title={`${unset} measures need a baseline`}
         >
           {canEdit
-            ? "A target is not accepted as met without one, so those rows report no reading whatever the platform measures. Set on the row."
+            ? "Set a baseline before using current results to assess improvement."
             : "A target is not accepted as met without one. The legal lead records them."}
         </Notice>
       ) : null}
 
       <Card>
-        <CardHeader
-          title="Every KPI against baseline and target"
-          subtitle="The measurement definition sits beside each figure, so the number can be argued with."
-        />
+        <CardHeader title="Performance against baseline and target" />
         <div className="table-scroll">
           <div className="min-w-[68rem]">
             <Row cols={KPI_COLS} head>
@@ -272,10 +269,7 @@ function Improvement({ entity }: Readonly<{ entity: string }>) {
 function ConcededClauses({ report }: Readonly<{ report: ExposureReport }>) {
   return (
     <Card>
-      <CardHeader
-        title="Clauses conceded most often"
-        subtitle="Evidence for revising the playbook, rather than impression."
-      />
+      <CardHeader title="Clauses accepted outside the house position" />
       <div className="table-scroll">
         <div className="min-w-[35rem]">
           <Row cols="minmax(0,1fr) 7.5rem 11.25rem" head>
@@ -329,9 +323,7 @@ function Exposure({ entity }: Readonly<{ entity: string }>) {
             />
           </div>
 
-          <Notice tone="info" title="What this counts">
-            {data.note}
-          </Notice>
+          <Notice tone="info">Review accepted deviations and unusual contract positions.</Notice>
 
           <ConcededClauses report={data} />
 
@@ -346,7 +338,7 @@ function Exposure({ entity }: Readonly<{ entity: string }>) {
           <Card>
             <CardHeader
               title="Contracts on an unusual liability position"
-              subtitle="A critical or material liability deviation was accepted, or the agreement carries no limitation at all."
+              subtitle="Contracts with an accepted material liability deviation or no liability cap."
             />
             <CardBody>
               {data.unusual_liability_positions.length === 0 ? (
@@ -384,8 +376,8 @@ function Patterns({ entity }: Readonly<{ entity: string }>) {
   return (
     <Card>
       <CardHeader
-        title="Which clauses are challenged, by whom, with what outcome"
-        subtitle="A concession rate appears only once a finding has been decided, so undecided points do not flatter it."
+        title="Clause negotiation patterns"
+        subtitle="See which clauses are challenged and how those points were resolved."
       />
       <div className="table-scroll">
         <div className="min-w-[51.25rem]">
@@ -451,10 +443,6 @@ function Accuracy({ entity }: Readonly<{ entity: string }>) {
       emptyTitle="Nothing has been classified"
     >
       <div className="space-y-6">
-        <Notice tone="info" title="The gate">
-          {data?.gate}
-        </Notice>
-
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Kpi label="Messages classified" value={data?.messages ?? 0} />
           <Kpi
@@ -471,10 +459,7 @@ function Accuracy({ entity }: Readonly<{ entity: string }>) {
         </div>
 
         <Card>
-          <CardHeader
-            title="Accuracy per classification category"
-            subtitle="A correction is a false positive for the suggested category and a false negative for the one Legal chose."
-          />
+          <CardHeader title="Accuracy by category" />
           <div className="table-scroll">
             <div className="min-w-[47.5rem]">
               <Row cols={ACCURACY_COLS} head>
@@ -509,8 +494,8 @@ function Accuracy({ entity }: Readonly<{ entity: string }>) {
 
         <Card>
           <CardHeader
-            title="Monthly quality sample"
-            subtitle="Every tier 1 document issued without a drafting cycle lands here for review."
+            title="Monthly quality review"
+            subtitle="Review documents selected for quality checks."
           />
           <div className="table-scroll">
             <div className="min-w-[45rem]">
@@ -587,10 +572,7 @@ export default function Metrics() {
     <div className="space-y-6">
       <PageTitle
         title="Metrics"
-        subtitle={
-          "Improvement against baseline, exposure carried by the agreements we signed, and " +
-          "the measured accuracy of every capability that runs."
-        }
+        subtitle="Track service, risk and quality measures."
       />
 
       {tabs.length > 1 ? (

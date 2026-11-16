@@ -322,11 +322,8 @@ export default function Inbox() {
   return (
     <div className="space-y-6">
       <PageTitle
-        title="Inbox intelligence"
-        subtitle={
-          "The platform reads the approved mailbox, classifies what arrives and proposes a " +
-          "next step. It never speaks for Legal, and nothing is sent without a person."
-        }
+        title="Legal inbox"
+        subtitle="Review messages that may need legal action."
       />
 
       <Tabs

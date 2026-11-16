@@ -98,7 +98,7 @@ export default function Matters() {
     <div className="space-y-6">
       <PageTitle
         title="Matters"
-        subtitle="A matter is the container for a piece of legal work. Everything attaches to it."
+        subtitle="Track legal work, its owner, status and next action."
       />
 
       {owner || tier ? (
@@ -169,12 +169,6 @@ export default function Matters() {
           </div>
         </div>
       </Card>
-
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        Row-level security scopes this list in the database. A matter in the other entity, or a
-        restricted matter you are not named on, is absent rather than hidden, so no title or
-        reference to it can appear here.
-      </p>
     </div>
   );
 }

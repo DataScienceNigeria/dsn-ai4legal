@@ -65,13 +65,10 @@ export default function Assessments() {
     <div className="space-y-6">
       <PageTitle
         title="Privacy and AI assessments"
-        subtitle={
-          "Assessment is a workflow with stages, owners, evidence and an accountable owner, " +
-          "not a form completed at the end."
-        }
+        subtitle="Start and manage assessments for products or projects that use personal data or AI."
         actions={
           <Button variant="primary" onClick={() => setStarting(true)}>
-            Start a DPIA
+            Start an assessment
           </Button>
         }
       />
@@ -109,7 +106,7 @@ export default function Assessments() {
       {loading ? (
         <Spinner />
       ) : !data?.length ? (
-        <Empty title="No assessment is open in this entity" />
+        <Empty title="No assessments are open." />
       ) : (
         <div className="grid gap-4 lg:gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
           <Card>

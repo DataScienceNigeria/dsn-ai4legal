@@ -72,7 +72,7 @@ export default function MyRequests() {
         subtitle={
           waiting
             ? `${waiting} of these is waiting on you. Everything else is with Legal.`
-            : "Status is updated by lifecycle events, not by anyone typing it in."
+            : "View your legal requests and their current status."
         }
         actions={
           <div className="flex flex-wrap items-center gap-3">
@@ -85,7 +85,7 @@ export default function MyRequests() {
               />
             ) : null}
             <Button variant="primary" onClick={() => router.push("/portal")}>
-              New request
+              Raise a request
             </Button>
           </div>
         }
@@ -96,10 +96,7 @@ export default function MyRequests() {
       ) : error ? (
         <Empty title="Your requests could not be loaded" detail={error.message} />
       ) : !data?.length ? (
-        <Empty
-          title="You have not raised a request yet"
-          detail="Choosing a request type takes two clicks."
-        />
+        <Empty title="You have no legal requests." />
       ) : (
         <div className="space-y-4">
           {rows.map((request) => (

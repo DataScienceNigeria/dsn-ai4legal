@@ -17,11 +17,8 @@ export default function PortalHome() {
   return (
     <div className="space-y-6">
       <PageTitle
-        title="What do you need?"
-        subtitle={
-          "Choose the closest description. You do not need to know the legal category, and " +
-          "you will only be asked the questions your request actually requires."
-        }
+        title="How can Legal help?"
+        subtitle="Choose the option that best describes your request. We will only ask for the information Legal needs."
       />
 
       {loading ? (
@@ -44,9 +41,6 @@ export default function PortalHome() {
                       {type.description}
                     </p>
                   ) : null}
-                  <p className="mt-3 text-xs text-muted-foreground">
-                    Legal aims to respond within {type.sla_hours} working hours.
-                  </p>
                 </div>
               </Card>
             </Link>
@@ -61,20 +55,14 @@ export default function PortalHome() {
         >
           <Card className="border-dashed transition-colors hover:border-brand">
             <div className="p-4 sm:p-5">
-              <div className="text-base font-semibold">None of these describes it</div>
+              <div className="text-base font-semibold">Something else</div>
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                Describe what you need in your own words. It goes straight to triage and Legal
-                works out the category, so you do not have to.
+                Describe what you need from Legal.
               </p>
             </div>
           </Card>
         </Link>
       ) : null}
-
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        A request is not a matter. Legal reads what you send and either accepts it as a matter,
-        answers it and closes it, or comes back to you for more information.
-      </p>
     </div>
   );
 }

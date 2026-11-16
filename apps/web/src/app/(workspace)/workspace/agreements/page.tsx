@@ -373,11 +373,7 @@ export default function Agreements() {
     <div className="space-y-6">
       <PageTitle
         title="Agreements"
-        subtitle={
-          "Everything signed, and everything that has happened to it since. Each executed copy " +
-          "is immutable for its retention period, and a later upload is a linked amendment " +
-          "rather than a replacement."
-        }
+        subtitle="View signed agreements, amendments, issues and requested changes."
         actions={
           active === "register" ? (
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
@@ -389,7 +385,7 @@ export default function Agreements() {
               />
               {canFile ? (
                 <Button variant="primary" onClick={() => setFiling(true)}>
-                  File signed agreements
+                  Add a signed agreement
                 </Button>
               ) : null}
             </div>
@@ -435,10 +431,7 @@ export default function Agreements() {
             ) : error ? (
               <Empty title="The archive is not available to you" detail={error.message} />
             ) : !data?.length ? (
-              <Empty
-                title="No executed agreement matches"
-                detail="A restricted agreement is absent from this list rather than redacted in it."
-              />
+              <Empty title="No executed agreement matches" />
             ) : (
               rows.map((contract) => (
                 <Row key={contract.id} cols={COLS}>
@@ -585,12 +578,8 @@ export default function Agreements() {
         />
       ) : null}
 
-      <Notice title="What the register holds">
-        For each agreement: the executed copy, every approval that bound to its hash, the
-        signature certificate and the full metadata. <strong>Signed original</strong> marks the
-        file the parties actually signed, set once at execution; a later upload is a linked
-        amendment rather than a replacement, so exactly one record per agreement carries it. The
-        content hash is what ties the file to the approvals that authorised it.
+      <Notice title="About this agreement record">
+        Each signed agreement remains linked to its amendments and approvals.
       </Notice>
       </>
       )}
